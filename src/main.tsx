@@ -10,6 +10,11 @@ if (typeof window !== 'undefined') {
     window.dispatchEvent(new Event('dramawin-pwa-prompt-ready'));
   });
 
+  window.addEventListener('appinstalled', () => {
+    window.__dramawinInstallPrompt = null;
+    window.dispatchEvent(new Event('dramawin-pwa-installed'));
+  });
+
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
       navigator.serviceWorker

@@ -95,12 +95,14 @@ export function usePWAInstall() {
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
     window.addEventListener('dramawin-pwa-prompt-ready', handleCustomReady);
+    window.addEventListener('dramawin-pwa-installed', handleAppInstalled);
     window.addEventListener('appinstalled', handleAppInstalled);
     mediaQuery.addEventListener?.('change', handleDisplayModeChange);
 
     return () => {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
       window.removeEventListener('dramawin-pwa-prompt-ready', handleCustomReady);
+      window.removeEventListener('dramawin-pwa-installed', handleAppInstalled);
       window.removeEventListener('appinstalled', handleAppInstalled);
       mediaQuery.removeEventListener?.('change', handleDisplayModeChange);
     };
@@ -109,14 +111,20 @@ export function usePWAInstall() {
   const install = useCallback(async (): Promise<'accepted' | 'dismissed' | 'unavailable'> => {
     const promptEvt = deferredPrompt || window.__dramawinInstallPrompt;
     if (!promptEvt) return 'unavailable';
-    await promptEvt.prompt();
-    const { outcome } = await promptEvt.userChoice;
-    if (outcome === 'accepted') {
+    try {
+      await promptEvt.prompt();
+      const { outcome } = await promptEvt.userChoice;
       window.__dramawinInstallPrompt = null;
       setDeferredPrompt(null);
-      setIsInstalled(true);
+      if (outcome === 'accepted') {
+        setIsInstalled(true);
+      }
+      return outcome;
+    } catch {
+      window.__dramawinInstallPrompt = null;
+      setDeferredPrompt(null);
+      return 'unavailable';
     }
-    return outcome;
   }, [deferredPrompt]);
 
   const openInExternalBrowser = useCallback(() => {
