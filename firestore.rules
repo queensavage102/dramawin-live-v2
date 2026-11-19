@@ -1,0 +1,475 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Core security primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && isVerified() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && isVerified() && (
+        request.auth.token.email == 'gerinaicker04@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // Entity validation blueprints
+    function isValidLeaderboardPlayer(data) {
+      return data.keys().hasAll(['uid', 'username', 'coins', 'weeklyCoins', 'qualified', 'streakCount', 'isPublic', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'username', 'coins', 'weeklyCoins', 'qualified', 'streakCount', 'sundayBonusZar', 'isPublic', 'createdAt', 'updatedAt'])
+        && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.username is string && data.username.size() >= 2 && data.username.size() <= 32
+        && data.coins is number && data.coins >= 0 && data.coins <= 100000000
+        && data.weeklyCoins is number && data.weeklyCoins >= 0 && data.weeklyCoins <= 100000000
+        && data.qualified is bool
+        && data.streakCount is number && data.streakCount >= 0 && data.streakCount <= 7
+        && (!('sundayBonusZar' in data) || (data.sundayBonusZar is number && data.sundayBonusZar >= 0 && data.sundayBonusZar <= 1000000))
+        && data.isPublic is bool && data.isPublic == true
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPlayerPrivate(data) {
+      return data.keys().hasAll(['uid', 'contact', 'dailyGiftLastClaimed', 'weekKey', 'claimedDays', 'watchedEpisodeIds', 'lastKeepWatchingDate', 'lastBannerClaimAt', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'contact', 'dailyGiftLastClaimed', 'weekKey', 'claimedDays', 'watchedEpisodeIds', 'lastKeepWatchingDate', 'lastBannerClaimAt', 'lastActivityDate', 'lastMysteryPickDate', 'createdAt', 'updatedAt'])
+        && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.contact is string && data.contact.size() >= 4 && data.contact.size() <= 120
+        && data.dailyGiftLastClaimed is string && data.dailyGiftLastClaimed.size() <= 16
+        && data.weekKey is string && data.weekKey.size() <= 16
+        && data.claimedDays is list && data.claimedDays.size() <= 7 && (data.claimedDays.size() == 0 || data.claimedDays[0] is string)
+        && data.watchedEpisodeIds is list && data.watchedEpisodeIds.size() <= 100 && (data.watchedEpisodeIds.size() == 0 || data.watchedEpisodeIds[0] is string)
+        && data.lastKeepWatchingDate is string && data.lastKeepWatchingDate.size() <= 16
+        && data.lastBannerClaimAt is number && data.lastBannerClaimAt >= 0
+        && (!('lastActivityDate' in data) || (data.lastActivityDate is string && data.lastActivityDate.size() <= 16))
+        && (!('lastMysteryPickDate' in data) || (data.lastMysteryPickDate is string && data.lastMysteryPickDate.size() <= 16))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSeries(data) {
+      return data.keys().hasAll(['seriesId', 'title', 'category', 'coverImage', 'synopsis', 'episodeIds', 'sortOrder', 'isPublic', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['seriesId', 'title', 'category', 'coverImage', 'synopsis', 'episodeIds', 'sortOrder', 'isPublic', 'createdAt', 'updatedAt'])
+        && data.seriesId is string && data.seriesId.size() >= 1 && data.seriesId.size() <= 80 && data.seriesId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 60
+        && data.category is string && data.category.size() >= 1 && data.category.size() <= 32
+        && data.coverImage is string && data.coverImage.size() >= 1 && data.coverImage.size() <= 500
+        && data.synopsis is string && data.synopsis.size() >= 1 && data.synopsis.size() <= 240
+        && data.episodeIds is list && data.episodeIds.size() <= 100 && (data.episodeIds.size() == 0 || data.episodeIds[0] is string)
+        && data.sortOrder is number && data.sortOrder >= 0 && data.sortOrder <= 10000
+        && data.isPublic is bool && data.isPublic == true
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidEpisode(data) {
+      return data.keys().hasAll(['title', 'series', 'episodeLabel', 'duration', 'rewardCoins', 'coverImage', 'synopsis', 'sponsorUrl', 'sortOrder', 'isPublic', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['title', 'series', 'seriesId', 'category', 'episodeLabel', 'duration', 'rewardCoins', 'coverImage', 'synopsis', 'sponsorUrl', 'youtubeUrl', 'startTime', 'sortOrder', 'isPublic', 'createdAt', 'updatedAt'])
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 100
+        && data.series is string && data.series.size() >= 1 && data.series.size() <= 60
+        && (!('seriesId' in data) || (data.seriesId is string && data.seriesId.size() >= 1 && data.seriesId.size() <= 80))
+        && (!('category' in data) || (data.category is string && data.category.size() >= 1 && data.category.size() <= 32))
+        && data.episodeLabel is string && data.episodeLabel.size() >= 1 && data.episodeLabel.size() <= 24
+        && data.duration is string && data.duration.size() >= 1 && data.duration.size() <= 16
+        && data.rewardCoins is number && data.rewardCoins >= 1 && data.rewardCoins <= 5000
+        && data.coverImage is string && data.coverImage.size() >= 1 && data.coverImage.size() <= 500
+        && data.synopsis is string && data.synopsis.size() >= 1 && data.synopsis.size() <= 240
+        && data.sponsorUrl is string && data.sponsorUrl.size() <= 500
+        && (!('youtubeUrl' in data) || (data.youtubeUrl is string && data.youtubeUrl.size() <= 500))
+        && (!('startTime' in data) || (data.startTime is number && data.startTime >= 0 && data.startTime <= 86400))
+        && data.sortOrder is number && data.sortOrder >= 0 && data.sortOrder <= 10000
+        && data.isPublic is bool && data.isPublic == true
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAppConfig(data) {
+      return data.keys().hasAll(['sponsorAdUrl', 'poolPrizeZar', 'poolTargetCoins', 'qualificationThreshold', 'episodesSeeded', 'isPublic', 'updatedAt'])
+        && data.keys().hasOnly([
+          'sponsorAdUrl',
+          'embeddedAdHtml',
+          'poolPrizeZar',
+          'rolloverAmountZar',
+          'poolWeekKey',
+          'weekStartTimestamp',
+          'lastPoolWinnerSummary',
+          'lastWinnerUids',
+          'mysteryWinningBoxes',
+          'r5WinnerUsername',
+          'nextPickWinsR5',
+          'liveTickerEnabled',
+          'liveTickerNames',
+          'poolTargetCoins',
+          'qualificationThreshold',
+          'episodesSeeded',
+          'isPublic',
+          'updatedAt'
+        ])
+        && data.sponsorAdUrl is string && data.sponsorAdUrl.size() >= 8 && data.sponsorAdUrl.size() <= 500
+        && (!('embeddedAdHtml' in data) || (data.embeddedAdHtml is string && data.embeddedAdHtml.size() <= 8000))
+        && data.poolPrizeZar is number && data.poolPrizeZar >= 0 && data.poolPrizeZar <= 1000000
+        && (!('rolloverAmountZar' in data) || (data.rolloverAmountZar is number && data.rolloverAmountZar >= 0 && data.rolloverAmountZar <= 1000000))
+        && (!('poolWeekKey' in data) || (data.poolWeekKey is string && data.poolWeekKey.size() <= 16))
+        && (!('weekStartTimestamp' in data) || (data.weekStartTimestamp is number && data.weekStartTimestamp >= 0))
+        && (!('lastPoolWinnerSummary' in data) || (data.lastPoolWinnerSummary is string && data.lastPoolWinnerSummary.size() <= 300))
+        && (!('lastWinnerUids' in data) || (data.lastWinnerUids is list && data.lastWinnerUids.size() <= 3 && (data.lastWinnerUids.size() == 0 || data.lastWinnerUids[0] is string)))
+        && (!('mysteryWinningBoxes' in data) || (data.mysteryWinningBoxes is number && data.mysteryWinningBoxes >= 0 && data.mysteryWinningBoxes <= 12))
+        && (!('r5WinnerUsername' in data) || (data.r5WinnerUsername is string && data.r5WinnerUsername.size() <= 32))
+        && (!('nextPickWinsR5' in data) || (data.nextPickWinsR5 is bool))
+        && (!('liveTickerEnabled' in data) || (data.liveTickerEnabled is bool))
+        && (!('liveTickerNames' in data) || (data.liveTickerNames is list && data.liveTickerNames.size() <= 20 && (data.liveTickerNames.size() == 0 || data.liveTickerNames[0] is string)))
+        && data.poolTargetCoins is number && data.poolTargetCoins >= 100 && data.poolTargetCoins <= 100000000
+        && data.qualificationThreshold is number && data.qualificationThreshold >= 0 && data.qualificationThreshold <= 1000000
+        && data.episodesSeeded is bool
+        && data.isPublic is bool && data.isPublic == true
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMysteryWinner(data) {
+      return data.keys().hasAll(['uid', 'username', 'contact', 'voucherCode', 'amountZar', 'boxNumber', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'username', 'contact', 'voucherCode', 'amountZar', 'boxNumber', 'createdAt'])
+        && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.username is string && data.username.size() >= 2 && data.username.size() <= 32
+        && data.contact is string && data.contact.size() >= 4 && data.contact.size() <= 120
+        && data.voucherCode is string && data.voucherCode.size() >= 4 && data.voucherCode.size() <= 32
+        && data.amountZar is number && (data.amountZar == 3 || data.amountZar == 5)
+        && data.boxNumber is number && data.boxNumber >= 1 && data.boxNumber <= 12
+        && data.createdAt is timestamp;
+    }
+
+    function isValidPrizeWin(data) {
+      return data.keys().hasAll(['uid', 'createdByUid', 'username', 'prizeType', 'amountZar', 'coinsAwarded', 'summary', 'status', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'createdByUid', 'username', 'contact', 'prizeType', 'amountZar', 'coinsAwarded', 'voucherCode', 'boxNumber', 'rank', 'weekKey', 'summary', 'status', 'createdAt'])
+        && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128 && data.createdByUid.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.username is string && data.username.size() >= 2 && data.username.size() <= 32
+        && (!('contact' in data) || (data.contact is string && data.contact.size() <= 120))
+        && data.prizeType in ['sunday_pool', 'mystery_r3_boost', 'mystery_11th_jackpot']
+        && data.amountZar is number && data.amountZar >= 0 && data.amountZar <= 1000000
+        && data.coinsAwarded is number && data.coinsAwarded >= 0 && data.coinsAwarded <= 1000000
+        && (!('voucherCode' in data) || (data.voucherCode is string && data.voucherCode.size() <= 40))
+        && (!('boxNumber' in data) || (data.boxNumber is number && data.boxNumber >= 0 && data.boxNumber <= 12))
+        && (!('rank' in data) || (data.rank is number && data.rank >= 0 && data.rank <= 10))
+        && (!('weekKey' in data) || (data.weekKey is string && data.weekKey.size() <= 16))
+        && data.summary is string && data.summary.size() >= 2 && data.summary.size() <= 300
+        && data.status in ['recorded', 'paid']
+        && data.createdAt is timestamp;
+    }
+
+    function isValidSupportMessage(data) {
+      return data.keys().hasAll(['uid', 'username', 'contact', 'category', 'subject', 'message', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'username', 'contact', 'category', 'subject', 'message', 'status', 'adminNote', 'resolvedBy', 'createdAt', 'updatedAt'])
+        && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.username is string && data.username.size() >= 2 && data.username.size() <= 40
+        && data.contact is string && data.contact.size() >= 2 && data.contact.size() <= 120
+        && data.category in ['claim_prize', 'coins', 'mystery_box', 'sunday_pool', 'feedback', 'other']
+        && data.subject is string && data.subject.size() >= 2 && data.subject.size() <= 120
+        && data.message is string && data.message.size() >= 2 && data.message.size() <= 2000
+        && data.status in ['open', 'resolved']
+        && (!('adminNote' in data) || (data.adminNote is string && data.adminNote.size() <= 500))
+        && (!('resolvedBy' in data) || (data.resolvedBy is string && data.resolvedBy.size() <= 120))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMailNotification(data) {
+      return data.keys().hasAll(['uid', 'to', 'eventType', 'message', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'to', 'eventType', 'message', 'createdAt'])
+        && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.to is list && data.to.size() == 1 && data.to[0] == 'gerinaicker04@gmail.com'
+        && data.eventType in ['prize_win', 'support_message']
+        && data.message is map
+        && data.message.keys().hasAll(['subject', 'text', 'html'])
+        && data.message.keys().hasOnly(['subject', 'text', 'html'])
+        && data.message.subject is string && data.message.subject.size() >= 2 && data.message.subject.size() <= 200
+        && data.message.text is string && data.message.text.size() >= 2 && data.message.text.size() <= 5000
+        && data.message.html is string && data.message.html.size() >= 2 && data.message.html.size() <= 10000
+        && data.createdAt is timestamp;
+    }
+
+    function isValidAdminRecord(data) {
+      return data.keys().hasAll(['role', 'passcode', 'createdAt'])
+        && data.keys().hasOnly(['role', 'passcode', 'createdAt'])
+        && data.role == 'admin'
+        && data.passcode is string && data.passcode.size() >= 1 && data.passcode.size() <= 64
+        && data.createdAt is timestamp;
+    }
+
+    function isValidCoinTransaction(data) {
+      return data.keys().hasAll(['uid', 'type', 'category', 'title', 'amount', 'balanceAfter', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'type', 'category', 'title', 'amount', 'balanceAfter', 'createdAt'])
+        && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.type in ['earn', 'spend', 'adjustment']
+        && data.category is string && data.category.size() >= 1 && data.category.size() <= 32
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 100
+        && data.amount is number && data.amount >= -100000000 && data.amount <= 100000000
+        && data.balanceAfter is number && data.balanceAfter >= 0 && data.balanceAfter <= 100000000
+        && data.createdAt is timestamp;
+    }
+
+    // Public leaderboard (no PII)
+    match /leaderboard/{playerId} {
+      allow get: if isSignedIn() && isValidId(playerId) && (resource == null || existing().isPublic == true);
+      allow list: if isSignedIn() && existing().isPublic == true;
+      allow create: if isOwner(playerId)
+        && isValidId(playerId)
+        && isValidLeaderboardPlayer(incoming())
+        && incoming().uid == request.auth.uid
+        && incoming().coins == 0
+        && incoming().weeklyCoins == 0
+        && incoming().qualified == false
+        && incoming().streakCount == 0
+        && (!('sundayBonusZar' in incoming()) || incoming().sundayBonusZar == 0)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isSignedIn() && isValidId(playerId) && isValidLeaderboardPlayer(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['coins', 'weeklyCoins', 'qualified', 'streakCount', 'sundayBonusZar', 'username', 'updatedAt'])) ||
+          (isOwner(playerId)
+            && incoming().coins >= existing().coins - 250
+            && incoming().coins <= existing().coins + 1000
+            && incoming().weeklyCoins >= existing().weeklyCoins
+            && incoming().weeklyCoins <= existing().weeklyCoins + 1000
+            && incoming().diff(existing()).affectedKeys().hasOnly(['coins', 'weeklyCoins', 'qualified', 'streakCount', 'updatedAt'])) ||
+          (isOwner(playerId)
+            && incoming().coins == 0
+            && incoming().weeklyCoins == 0
+            && incoming().qualified == false
+            && incoming().diff(existing()).affectedKeys().hasOnly(['coins', 'weeklyCoins', 'qualified', 'updatedAt'])) ||
+          (isOwner(playerId)
+            && incoming().diff(existing()).affectedKeys().hasOnly(['username', 'updatedAt']))
+        );
+      allow delete: if isAdmin() && isValidId(playerId);
+    }
+
+    // Private PII & claim records (owner or admin only)
+    match /playerPrivate/{playerId} {
+      allow get: if isValidId(playerId) && (isOwner(playerId) || isAdmin());
+      allow list: if isAdmin() || (isSignedIn() && isVerified() && existing().uid == request.auth.uid);
+      allow create: if isOwner(playerId)
+        && isValidId(playerId)
+        && isValidPlayerPrivate(incoming())
+        && incoming().uid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isSignedIn() && isValidId(playerId) && isValidPlayerPrivate(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (isOwner(playerId)
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'contact',
+              'dailyGiftLastClaimed',
+              'weekKey',
+              'claimedDays',
+              'watchedEpisodeIds',
+              'lastKeepWatchingDate',
+              'lastBannerClaimAt',
+              'lastActivityDate',
+              'lastMysteryPickDate',
+              'updatedAt'
+            ]))
+        );
+      allow delete: if isAdmin() && isValidId(playerId);
+
+      // Private chronological coin earnings & expenditure history
+      match /transactions/{transactionId} {
+        allow get: if isValidId(playerId) && isValidId(transactionId) && (isOwner(playerId) || isAdmin());
+        allow list: if isValidId(playerId) && (isAdmin() || (isSignedIn() && isVerified() && existing().uid == request.auth.uid && playerId == request.auth.uid));
+        allow create: if isValidId(playerId)
+          && isValidId(transactionId)
+          && isValidCoinTransaction(incoming())
+          && incoming().uid == playerId
+          && incoming().createdAt == request.time
+          && exists(/databases/$(database)/documents/playerPrivate/$(playerId))
+          && (
+            isAdmin() ||
+            (isOwner(playerId) && incoming().uid == request.auth.uid && incoming().amount >= -250 && incoming().amount <= 1000)
+          );
+        allow update, delete: if false;
+      }
+    }
+
+    // Featured drama series folders (publicly readable catalog; admin-only writes)
+    match /series/{seriesId} {
+      allow get: if isValidId(seriesId) && (resource == null || existing().isPublic == true);
+      allow list: if existing().isPublic == true;
+      allow create: if isAdmin()
+        && isValidId(seriesId)
+        && isValidSeries(incoming())
+        && incoming().seriesId == seriesId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && isValidId(seriesId)
+        && isValidSeries(incoming())
+        && incoming().seriesId == existing().seriesId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'category', 'coverImage', 'synopsis', 'episodeIds', 'sortOrder', 'updatedAt']);
+      allow delete: if isAdmin() && isValidId(seriesId);
+    }
+
+    // Featured short-drama episodes (publicly readable catalog; admin-only writes)
+    match /episodes/{episodeId} {
+      allow get: if isValidId(episodeId) && (resource == null || existing().isPublic == true);
+      allow list: if existing().isPublic == true;
+      allow create: if isAdmin()
+        && isValidId(episodeId)
+        && isValidEpisode(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && isValidId(episodeId)
+        && isValidEpisode(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if isAdmin() && isValidId(episodeId);
+    }
+
+    // Global app settings (publicly readable Sponsor Ad URL, embedded ad script, Mystery Vault, pool rollover)
+    match /appConfig/{configId} {
+      allow get: if isValidId(configId) && (resource == null || existing().isPublic == true);
+      allow list: if existing().isPublic == true;
+      allow create: if isAdmin()
+        && isValidId(configId)
+        && isValidAppConfig(incoming())
+        && incoming().updatedAt == request.time;
+      allow update: if isSignedIn() && isValidId(configId) && isValidAppConfig(incoming())
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            isVerified()
+            && configId == 'global'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['poolPrizeZar', 'r5WinnerUsername', 'nextPickWinsR5', 'updatedAt'])
+            && (incoming().poolPrizeZar == existing().poolPrizeZar + 3 || incoming().poolPrizeZar == existing().poolPrizeZar + 5)
+            && incoming().r5WinnerUsername == ''
+            && incoming().nextPickWinsR5 == false
+            && (
+              ('nextPickWinsR5' in existing() && existing().nextPickWinsR5 == true) ||
+              (
+                'r5WinnerUsername' in existing()
+                && existing().r5WinnerUsername is string
+                && existing().r5WinnerUsername.size() > 0
+                && get(/databases/$(database)/documents/leaderboard/$(request.auth.uid)).data.username.lower() == existing().r5WinnerUsername.lower()
+              )
+            )
+          )
+        );
+      allow delete: if false;
+    }
+
+    // R3 Progress Bar Boost Mystery Vault winners (contains PII contact; owner or admin only)
+    match /mysteryWinners/{winnerId} {
+      allow get: if isValidId(winnerId) && (isAdmin() || (isSignedIn() && isVerified() && existing().uid == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && isVerified() && existing().uid == request.auth.uid);
+      allow create: if isSignedIn()
+        && isVerified()
+        && isValidId(winnerId)
+        && isValidMysteryWinner(incoming())
+        && incoming().uid == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update, delete: if isAdmin() && isValidId(winnerId);
+    }
+
+    // Main Prize & Sunday Pool payout wins (owner or admin only)
+    match /prize_wins/{winId} {
+      allow get: if isValidId(winId) && (isAdmin() || (isSignedIn() && isVerified() && existing().uid == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && isVerified() && existing().uid == request.auth.uid);
+      allow create: if isSignedIn()
+        && isVerified()
+        && isValidId(winId)
+        && isValidPrizeWin(incoming())
+        && incoming().createdAt == request.time
+        && (
+          isAdmin() ||
+          (incoming().uid == request.auth.uid && incoming().createdByUid == request.auth.uid && incoming().status == 'recorded')
+        );
+      allow update: if isAdmin()
+        && isValidId(winId)
+        && isValidPrizeWin(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'summary']);
+      allow delete: if isAdmin() && isValidId(winId);
+    }
+
+    // Player support messages & Claim Prize Help tickets (owner or admin only)
+    match /support_messages/{messageId} {
+      allow get: if isValidId(messageId) && (isAdmin() || (isSignedIn() && isVerified() && existing().uid == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && isVerified() && existing().uid == request.auth.uid);
+      allow create: if isSignedIn()
+        && isVerified()
+        && isValidId(messageId)
+        && isValidSupportMessage(incoming())
+        && incoming().uid == request.auth.uid
+        && incoming().status == 'open'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && isValidId(messageId)
+        && isValidSupportMessage(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'adminNote', 'resolvedBy', 'updatedAt']);
+      allow delete: if isAdmin() && isValidId(messageId);
+    }
+
+    // Outbound Trigger Email queue addressed strictly to Admin Gmail
+    match /mail/{mailId} {
+      allow get: if isValidId(mailId) && isAdmin();
+      allow list: if isAdmin();
+      allow create: if isSignedIn()
+        && isVerified()
+        && isValidId(mailId)
+        && isValidMailNotification(incoming())
+        && incoming().uid == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    // Admin Studio access grants
+    match /admins/{uid} {
+      allow get: if isSignedIn() && isVerified() && isValidId(uid) && request.auth.uid == uid;
+      allow list: if false;
+      allow create: if isOwner(uid)
+        && isValidId(uid)
+        && isValidAdminRecord(incoming())
+        && incoming().passcode == 'Gideon_123'
+        && incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+  }
+}

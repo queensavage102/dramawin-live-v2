@@ -1,0 +1,226 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  body {
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    background-color: #070709;
+    color: #F6F2E9;
+    letter-spacing: 0.005em;
+  }
+
+  h1, h2, .font-display {
+    font-family: 'Playfair Display', Georgia, serif;
+    text-wrap: balance;
+  }
+
+  .font-mono-num {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Luxury gold shimmer & subtle scrollbars */
+.gold-gradient-bg {
+  background: linear-gradient(135deg, #F3D37A 0%, #D4AF37 52%, #A88220 100%);
+}
+
+.gold-gradient-text {
+  background: linear-gradient(135deg, #FCE7A2 0%, #D4AF37 58%, #B58E29 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.obsidian-card {
+  background: linear-gradient(180deg, #121217 0%, #0D0D11 100%);
+  border: 1px solid rgba(212, 175, 55, 0.16);
+}
+
+.obsidian-surface {
+  background-color: #101014;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+@keyframes goldFoilSweep {
+  0% {
+    transform: translateX(-140%) skewX(-20deg);
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.45;
+  }
+  50% {
+    transform: translateX(160%) skewX(-20deg);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(160%) skewX(-20deg);
+    opacity: 0;
+  }
+}
+
+@keyframes goldHaloPulse {
+  0%, 100% {
+    opacity: 0.55;
+    transform: scale(0.97);
+  }
+  50% {
+    opacity: 0.95;
+    transform: scale(1.04);
+  }
+}
+
+.mystery-box-shimmer {
+  animation: goldFoilSweep 4.8s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+.mystery-box-halo {
+  animation: goldHaloPulse 3.4s ease-in-out infinite;
+}
+
+@keyframes mysteryVaultHighlightPulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 24px rgba(252, 231, 162, 0.35), inset 0 1px 0 rgba(255, 248, 220, 0.65);
+  }
+  50% {
+    transform: scale(1.035);
+    box-shadow: 0 0 40px rgba(252, 231, 162, 0.72), inset 0 1px 0 rgba(255, 250, 224, 0.9);
+  }
+}
+
+.mystery-vault-highlight {
+  animation: mysteryVaultHighlightPulse 0.85s ease-in-out infinite;
+}
+
+@keyframes coinDropIntoPot {
+  0% {
+    transform: translateY(-28px) scale(0.55) rotate(-18deg);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(10px) scale(0.95) rotate(12deg);
+    opacity: 0;
+  }
+}
+
+@keyframes coinPotGlowPulse {
+  0%, 100% {
+    filter: drop-shadow(0 0 12px rgba(243, 211, 122, 0.45));
+    transform: scale(1);
+  }
+  50% {
+    filter: drop-shadow(0 0 24px rgba(252, 231, 162, 0.82));
+    transform: scale(1.04);
+  }
+}
+
+@keyframes coinShootUp {
+  0% {
+    transform: translateY(0) scale(0.8);
+    opacity: 0;
+  }
+  20% {
+    transform: translateY(-18px) scale(1.1);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-140px) scale(0.95);
+    opacity: 0;
+  }
+}
+
+@keyframes crownHaloPulse {
+  0%, 100% {
+    opacity: 0.65;
+    transform: scale(0.95);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}
+
+.vip-crown-halo {
+  animation: crownHaloPulse 2.8s ease-in-out infinite;
+}
+
+@keyframes vipCoinFloat {
+  0% {
+    transform: translate3d(0, 36px, 0) scale(0.75) rotate(-8deg);
+    opacity: 0;
+  }
+  18% {
+    opacity: 0.88;
+  }
+  55% {
+    transform: translate3d(4px, -96px, 0) scale(1) rotate(6deg);
+    opacity: 0.9;
+  }
+  85% {
+    opacity: 0.65;
+  }
+  100% {
+    transform: translate3d(-4px, -210px, 0) scale(0.88) rotate(14deg);
+    opacity: 0;
+  }
+}
+
+.coin-drop-sparkle {
+  animation: coinDropIntoPot 1.9s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.coin-pot-glow {
+  animation: coinPotGlowPulse 2.4s ease-in-out infinite;
+}
+
+.coin-shoot-up {
+  animation: coinShootUp 1.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.vip-floating-coin {
+  animation: vipCoinFloat 3.4s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+  will-change: transform, opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mystery-box-shimmer,
+  .mystery-box-halo,
+  .mystery-vault-highlight,
+  .coin-drop-sparkle,
+  .coin-pot-glow,
+  .coin-shoot-up,
+  .vip-floating-coin,
+  .vip-crown-halo {
+    animation: none;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #070709;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(212, 175, 55, 0.25);
+  border-radius: 9999px;
+}/* Keep top 14px open for the filling sponsor progress bar above injected top notifications */
+body > div[style*="position: fixed"][style*="top: 0"],
+body > iframe[style*="position: fixed"][style*="top: 0"] {
+  top: 14px !important;
+}
+

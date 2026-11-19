@@ -1,0 +1,6 @@
+{
+  "name": "DramaWin Coins",
+  "description": "Dark-luxury black and gold mobile rewards app for short-drama fans. Earn coins daily, climb the weekly leaderboard, and unlock the R50 Sunday Airtime Pool.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
