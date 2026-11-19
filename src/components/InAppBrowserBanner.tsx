@@ -5,7 +5,9 @@ const DISMISS_STORAGE_KEY = 'dramawin_inapp_banner_dismissed';
 
 export function isSocialInAppBrowser(userAgent: string): boolean {
   if (!userAgent) return false;
-  return /WhatsApp|FBAN|FBAV|FB_IAB|FBIOS|FB4A|Instagram/i.test(userAgent);
+  return /WhatsApp|FBAN|FBAV|FB_IAB|FBIOS|FB4A|Messenger|Orca|Instagram|TikTok|BytedanceWebview|Musical_ly|Telegram|Twitter|XApp/i.test(
+    userAgent
+  );
 }
 
 export const InAppBrowserBanner: React.FC = () => {

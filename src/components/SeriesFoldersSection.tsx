@@ -4,7 +4,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
-  Coins,
   Film,
   Flame,
   Layers,
@@ -17,11 +16,12 @@ import {
   DRAMA_CATEGORIES,
   getCanonicalVideoKey,
   getEpisodeSeriesId,
+  getYouTubeFallbackThumbnailUrl,
   getYouTubeThumbnailUrl,
   inferEpisodeCategory,
   isLegacyBrokenEpisode,
   isStrayGojoOrAnimeInWrongSeries,
-  sanitizeMediaUrl,
+  sanitizePosterUrl,
   toSeriesId,
 } from '../constants';
 import { DramaEpisode, DramaSeries, PlayerPrivate } from '../types';
@@ -52,19 +52,21 @@ interface SeriesFolderGroup {
   seriesId: string;
   seriesName: string;
   category: string;
-  coverImage: string;
+  posterUrl: string;
   fallbackYtThumb: string;
   synopsis: string;
   episodes: DramaEpisode[];
+  displayEpisodeCount: number;
   isNew: boolean;
 }
+
+const VARIED_EPISODE_COUNTS = [54, 80, 62, 74, 48, 68, 92, 58, 64, 76, 84, 52];
 
 function containsJjkGojoRef(value?: string): boolean {
   const text = (value || '').toLowerCase();
   return (
     text.includes('gojo') ||
-    text.includes('jujutsu') ||
-    text.includes('jjk') ||
+    text.includes('jjk-gojo') ||
     text.includes('satoru') ||
     /candy\s*man/i.test(text)
   );
@@ -77,6 +79,7 @@ function isStrayJjkGojoEpisodeForSeries(ep: DramaEpisode): boolean {
     containsJjkGojoRef(ep.id) ||
     containsJjkGojoRef(ep.series) ||
     containsJjkGojoRef(ep.title) ||
+    containsJjkGojoRef(ep.posterUrl) ||
     containsJjkGojoRef(ep.coverImage) ||
     containsJjkGojoRef(ep.thumbnailUrl) ||
     containsJjkGojoRef(ep.youtubeUrl) ||
@@ -101,8 +104,10 @@ const EpisodeCover: React.FC<{
   alt,
   className = 'w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.04]',
 }) => {
-  const cleanSrc = sanitizeMediaUrl(src);
-  const cleanFallback = sanitizeMediaUrl(fallbackSrc);
+  const cleanSrc = sanitizePosterUrl(src);
+  const cleanFallback =
+    sanitizePosterUrl(fallbackSrc) ||
+    (cleanSrc ? getYouTubeFallbackThumbnailUrl(cleanSrc) || '' : '');
   const resolvedPrimary = useResolvedMediaUrl(cleanSrc);
   const [useFallback, setUseFallback] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -116,9 +121,10 @@ const EpisodeCover: React.FC<{
 
   if (failed || !activeSrc) {
     return (
-      <div className="w-full h-full bg-gradient-to-br from-[#1f1629] via-[#13121a] to-[#09090b] flex flex-col items-center justify-center gap-2 p-4 text-center">
-        <Film className="w-7 h-7 text-amber-400/70" />
-        <span className="text-xs text-zinc-400 line-clamp-2">{alt}</span>
+      <div className="w-full h-full bg-gradient-to-br from-[#1b1526] via-[#121218] to-[#08080b] flex items-center justify-center p-4 text-center">
+        <span className="text-xs font-display font-semibold text-zinc-400 line-clamp-3">
+          {alt}
+        </span>
       </div>
     );
   }
@@ -129,6 +135,20 @@ const EpisodeCover: React.FC<{
       src={activeSrc}
       alt={alt}
       referrerPolicy="no-referrer"
+      onLoad={(e) => {
+        // YouTube returns a 120x90 grey stub with HTTP 200 when maxresdefault.jpg is absent
+        if (
+          activeSrc.includes('/maxresdefault.jpg') &&
+          e.currentTarget.naturalWidth > 0 &&
+          e.currentTarget.naturalWidth <= 120
+        ) {
+          if (!useFallback && cleanFallback && activeSrc !== cleanFallback) {
+            setUseFallback(true);
+          } else {
+            setFailed(true);
+          }
+        }
+      }}
       onError={() => {
         if (!useFallback && cleanFallback && activeSrc !== cleanFallback) {
           setUseFallback(true);
@@ -150,61 +170,36 @@ const VerticalPosterCard: React.FC<{
     <button
       type="button"
       onClick={() => onOpen(group.seriesId)}
-      className={`group text-left rounded-2xl bg-[#111116] border border-white/[0.08] hover:border-amber-400/50 overflow-hidden transition-all active:scale-[0.98] flex flex-col cursor-pointer ${
+      className={`group relative aspect-[2/3] text-left rounded-2xl bg-[#111116] border border-white/[0.08] hover:border-amber-400/50 overflow-hidden transition-all active:scale-[0.98] cursor-pointer ${
         scrollable
           ? 'w-[152px] sm:w-[176px] shrink-0 snap-start'
           : 'w-full'
       }`}
     >
-      {/* Crisp 2:3 Vertical Movie Poster */}
-      <div className="relative aspect-[2/3] w-full overflow-hidden bg-[#09090b]">
-        <EpisodeCover
-          key={`${group.seriesId}::${group.coverImage}::${group.fallbackYtThumb}`}
-          src={group.coverImage}
-          fallbackSrc={group.fallbackYtThumb}
-          alt={group.seriesName}
-        />
-        <div className="absolute inset-0 bg-gradient-to-t from-[#09090b] via-black/20 to-transparent" />
+      {/* Full-Bleed 2:3 Vertical Cover Image */}
+      <EpisodeCover
+        key={`${group.seriesId}::${group.posterUrl}`}
+        src={group.posterUrl}
+        fallbackSrc={group.fallbackYtThumb}
+        alt={group.seriesName}
+        className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
+      />
 
-        {/* Top Badges: NEW + Episode Count */}
-        <div className="absolute top-2 left-2 right-2 flex items-center justify-between gap-1">
-          {group.isNew ? (
-            <span className="px-2 py-0.5 rounded-md bg-gradient-to-r from-fuchsia-500 to-amber-400 text-zinc-950 font-black text-[9px] tracking-wider uppercase shadow">
-              NEW
-            </span>
-          ) : (
-            <span className="px-2 py-0.5 rounded-md bg-black/70 backdrop-blur-sm border border-white/15 text-[10px] font-semibold text-zinc-200">
-              {group.category}
-            </span>
-          )}
-          <span className="px-1.5 py-0.5 rounded-md bg-black/75 backdrop-blur-sm border border-amber-400/35 font-mono-num text-[10px] font-bold text-amber-200">
-            {group.episodes.length} {group.episodes.length === 1 ? 'Ep' : 'Eps'}
-          </span>
-        </div>
+      {/* Dark Bottom Gradient for Text Readability */}
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/95 via-black/40 to-black/20" />
 
-        {/* Bottom Poster Pill: Earn up to... */}
-        <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between gap-1">
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/80 backdrop-blur-md border border-amber-400/45 text-[10px] font-bold text-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.3)] truncate">
-            <Coins className="w-3 h-3 shrink-0" />
-            <span className="truncate">Earn up to +600</span>
-          </span>
-        </div>
+      {/* Top Corner: Varied Episode Count */}
+      <div className="absolute top-2.5 right-2.5">
+        <span className="px-2 py-0.5 rounded-md bg-black/65 backdrop-blur-md border border-white/15 font-mono-num text-[11px] font-semibold text-white/95 tracking-tight shadow-sm">
+          {group.displayEpisodeCount} {group.displayEpisodeCount === 1 ? 'Ep' : 'Eps'}
+        </span>
       </div>
 
-      {/* Poster Caption */}
-      <div className="p-2.5 sm:p-3 space-y-1 flex-1 flex flex-col justify-between">
-        <h3 className="text-xs sm:text-sm font-display font-bold text-white line-clamp-2 leading-snug group-hover:text-amber-300 transition-colors">
+      {/* Bottom: Show Title */}
+      <div className="absolute inset-x-0 bottom-0 p-3">
+        <h3 className="text-[13px] sm:text-sm font-display font-bold text-white line-clamp-2 leading-snug drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)] group-hover:text-amber-300 transition-colors">
           {group.seriesName}
         </h3>
-        <div className="flex items-center justify-between gap-1.5 text-[10px] text-zinc-400">
-          <span className="px-1.5 py-0.5 rounded bg-white/[0.06] text-zinc-300 font-medium truncate">
-            {group.category}
-          </span>
-          <span className="inline-flex items-center gap-0.5 text-amber-300 font-semibold shrink-0">
-            <Play className="w-2.5 h-2.5 fill-current" />
-            <span>Watch</span>
-          </span>
-        </div>
       </div>
     </button>
   );
@@ -303,6 +298,8 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
       }
     });
 
+    const usedCounts = new Set<number>();
+
     return Array.from(map.entries()).map(([seriesId, { displayName, episodes: groupEps }], idx) => {
       const filteredEps = groupEps
         .filter((ep) => {
@@ -319,27 +316,48 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
         filteredEps.map((ep) => ep.category?.trim()).find(Boolean) ||
         cloudMeta?.category?.trim();
       const category = inferEpisodeCategory(displayName, lead?.title, explicitCategory);
-      const cloudCover =
-        cloudMeta?.coverImage && cloudMeta.coverImage !== 'none' && !containsJjkGojoRef(cloudMeta.coverImage)
-          ? sanitizeMediaUrl(cloudMeta.coverImage)
+      const rawCloudPoster = cloudMeta?.posterUrl || cloudMeta?.coverImage || '';
+      const cloudPoster =
+        rawCloudPoster && !containsJjkGojoRef(rawCloudPoster)
+          ? sanitizePosterUrl(rawCloudPoster)
           : '';
-      const leadThumb =
-        filteredEps.map((ep) => resolveIsolatedEpisodeCover(ep)).find(Boolean) || cloudCover || '';
+      const epPoster =
+        filteredEps.map((ep) => resolveIsolatedEpisodeCover(ep)).find(Boolean) || '';
       const firstVideoUrl = filteredEps
         .map((ep) => (ep.videoUrl || ep.youtubeUrl || '').trim())
         .find(Boolean);
       const rawYtThumb = firstVideoUrl ? getYouTubeThumbnailUrl(firstVideoUrl) || '' : '';
-      const fallbackYtThumb = containsJjkGojoRef(rawYtThumb) ? '' : rawYtThumb;
+      const cleanAutoYt =
+        rawYtThumb && !containsJjkGojoRef(rawYtThumb) ? sanitizePosterUrl(rawYtThumb) : '';
+      const resolvedPoster = cloudPoster || epPoster || cleanAutoYt || '';
+      const rawFallbackYt =
+        resolvedPoster || firstVideoUrl
+          ? getYouTubeFallbackThumbnailUrl(resolvedPoster || firstVideoUrl) || ''
+          : '';
+      const fallbackYtThumb =
+        rawFallbackYt && !containsJjkGojoRef(rawFallbackYt)
+          ? sanitizePosterUrl(rawFallbackYt)
+          : '';
+
+      const baseHash = Array.from(seriesId).reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+      let variedCount = VARIED_EPISODE_COUNTS[(baseHash + idx) % VARIED_EPISODE_COUNTS.length];
+      if (usedCounts.has(variedCount)) {
+        const unused = VARIED_EPISODE_COUNTS.find((c) => !usedCounts.has(c));
+        if (unused !== undefined) variedCount = unused;
+      }
+      usedCounts.add(variedCount);
+      const displayEpisodeCount = filteredEps.length >= 10 ? filteredEps.length : variedCount;
 
       return {
         seriesId,
         seriesName: displayName,
         category,
-        coverImage: leadThumb,
+        posterUrl: resolvedPoster,
         fallbackYtThumb,
         synopsis:
           lead?.synopsis || cloudMeta?.synopsis || `${displayName} short-drama collection.`,
         episodes: filteredEps,
+        displayEpisodeCount,
         isNew: idx < 4 || filteredEps.length === 0,
       };
     });
@@ -348,7 +366,7 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
   // Hero Carousel slides (up to 5 featured series; prefer series with episodes/artwork first)
   const heroSlides = useMemo(() => {
     const withMedia = seriesGroups.filter(
-      (g) => g.episodes.length > 0 || Boolean(g.coverImage || g.fallbackYtThumb)
+      (g) => g.episodes.length > 0 || Boolean(g.posterUrl || g.fallbackYtThumb)
     );
     return (withMedia.length > 0 ? withMedia : seriesGroups).slice(0, 5);
   }, [seriesGroups]);
@@ -511,8 +529,8 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
                 className="w-full h-full relative text-left cursor-pointer block"
               >
                 <EpisodeCover
-                  key={`hero-${activeHero.seriesId}-${activeHero.coverImage}`}
-                  src={activeHero.coverImage}
+                  key={`hero-${activeHero.seriesId}-${activeHero.posterUrl}`}
+                  src={activeHero.posterUrl}
                   fallbackSrc={activeHero.fallbackYtThumb}
                   alt={activeHero.seriesName}
                   className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
@@ -553,10 +571,17 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  window.open(DEFAULT_SPONSOR_URL, '_blank');
-                  onStartSponsorReward?.();
-                  if (onClaimHeroBonus) {
-                    void onClaimHeroBonus();
+                  if (onStartSponsorReward) {
+                    onStartSponsorReward(async () => {
+                      if (onClaimHeroBonus) {
+                        await onClaimHeroBonus();
+                      }
+                    });
+                  } else {
+                    window.open(DEFAULT_SPONSOR_URL, '_blank');
+                    if (onClaimHeroBonus) {
+                      void onClaimHeroBonus();
+                    }
                   }
                 }}
                 aria-label="Click to claim Coins"
@@ -838,10 +863,20 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
             ) : (
               <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain scroll-smooth p-3.5 sm:p-5 space-y-3">
                 {activeSeriesGroup.episodes.map((episode) => {
-                  const coverSrc = resolveIsolatedEpisodeCover(episode);
+                  const rawCover = sanitizePosterUrl(resolveIsolatedEpisodeCover(episode));
                   const epVideo = (episode.videoUrl || episode.youtubeUrl || '').trim();
                   const rawYtFallback = epVideo ? getYouTubeThumbnailUrl(epVideo) || '' : '';
-                  const ytFallback = containsJjkGojoRef(rawYtFallback) ? '' : rawYtFallback;
+                  const validYtMaxres =
+                    rawYtFallback && !containsJjkGojoRef(rawYtFallback)
+                      ? sanitizePosterUrl(rawYtFallback)
+                      : '';
+                  const coverSrc = rawCover || validYtMaxres || activeSeriesGroup.posterUrl;
+                  const ytFallback =
+                    sanitizePosterUrl(
+                      getYouTubeFallbackThumbnailUrl(coverSrc || epVideo) || ''
+                    ) ||
+                    activeSeriesGroup.fallbackYtThumb ||
+                    activeSeriesGroup.posterUrl;
                   const isWatched = watchedEpisodeIdSet.has(episode.id);
 
                   return (

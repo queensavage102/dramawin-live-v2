@@ -41,6 +41,7 @@ import {
   isLegacyBrokenEpisode,
   normalizeEpisodeStartSeconds,
   sanitizeExternalUrl,
+  sanitizePosterUrl,
   toSeriesId,
 } from '../constants';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
@@ -260,13 +261,16 @@ export function subscribeSeries(
       const list = snapshot.docs
         .map((d) => {
           const data = d.data() as Omit<DramaSeries, 'id'>;
+          const posterUrl = sanitizePosterUrl(data.posterUrl || data.coverImage || '');
           return {
             id: d.id,
             ...data,
             seriesId: data.seriesId || d.id,
+            posterUrl,
+            coverImage: posterUrl || 'none',
           };
         })
-        .filter((s) => !/gojo|jujutsu|jjk|candy\s*man/i.test(`${s.seriesId} ${s.title}`))
+        .filter((s) => !/gojo|jjk-gojo|satoru|candy\s*man/i.test(`${s.seriesId} ${s.title}`))
         .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
       onData(list);
     },
@@ -292,12 +296,18 @@ export function subscribeEpisodes(
       const items = deduplicateEpisodeList(
         snapshot.docs.map((d) => {
           const data = d.data() as Omit<DramaEpisode, 'id'>;
+          const mediaLink = (data.videoUrl || data.youtubeUrl || '').trim();
+          const posterUrl =
+            sanitizePosterUrl(data.posterUrl || data.thumbnailUrl || data.coverImage || '') ||
+            (mediaLink ? getYouTubeThumbnailUrl(mediaLink) || '' : '');
           return {
             id: d.id,
             ...data,
             seriesId: getEpisodeSeriesId(data),
             category: inferEpisodeCategory(data.series, data.title, data.category),
-            coverImage: data.coverImage === 'none' ? '' : data.coverImage,
+            posterUrl,
+            coverImage: posterUrl,
+            thumbnailUrl: posterUrl,
           };
         })
       );
@@ -1158,6 +1168,10 @@ function buildFirestoreEpisodeFields(ep: Omit<DramaEpisode, 'id' | 'createdAt' |
   const cleanTitle = (ep.title.trim() || 'Untitled Episode').slice(0, 100);
   const seriesId = getEpisodeSeriesId({ series: cleanSeries, seriesId: ep.seriesId }).slice(0, 80);
   const category = inferEpisodeCategory(cleanSeries, cleanTitle, ep.category).slice(0, 32);
+  const rawVid = (ep.youtubeUrl || ep.videoUrl || '').trim();
+  const explicitPoster = sanitizePosterUrl(ep.posterUrl || ep.thumbnailUrl || ep.coverImage || '');
+  const autoThumb = rawVid ? getYouTubeThumbnailUrl(rawVid) || '' : '';
+  const posterUrl = (explicitPoster || autoThumb).slice(0, 2000);
 
   return {
     title: cleanTitle,
@@ -1167,7 +1181,8 @@ function buildFirestoreEpisodeFields(ep: Omit<DramaEpisode, 'id' | 'createdAt' |
     episodeLabel: (ep.episodeLabel.trim() || 'Series').slice(0, 24),
     duration: (ep.duration.trim() || 'Watch & Earn').slice(0, 16),
     rewardCoins: Math.max(1, Math.min(5000, Math.round(ep.rewardCoins || 100))),
-    coverImage: (ep.coverImage?.trim() || 'none').slice(0, 500),
+    posterUrl,
+    coverImage: (posterUrl || 'none').slice(0, 2000),
     synopsis: (ep.synopsis.trim() || 'Featured drama series.').slice(0, 240),
     sponsorUrl: ep.sponsorUrl ? ep.sponsorUrl.slice(0, 500) : '',
     youtubeUrl: (ep.youtubeUrl || '').slice(0, 500),
@@ -1215,7 +1230,7 @@ export async function purgeLegacyAndStrayEpisodesFromFirestore(): Promise<number
     );
     const straySeries = seriesSnap.docs.filter((d) => {
       const s = d.data() as Partial<DramaSeries>;
-      return /gojo|jujutsu|jjk|candy\s*man/i.test(`${d.id} ${s.title || ''}`);
+      return /gojo|jjk-gojo|satoru|candy\s*man/i.test(`${d.id} ${s.title || ''}`);
     });
     const straySeriesIds = new Set(straySeries.map((d) => d.id));
 
@@ -1261,9 +1276,29 @@ export async function ensureAdminSeededData(): Promise<void> {
     );
 
     const existingIds = new Set(currentEpisodes.docs.map((d) => d.id));
+    const existingById = new Map(
+      currentEpisodes.docs.map((d) => [d.id, d.data() as Partial<DramaEpisode>])
+    );
+    const existingByTitle = new Map(
+      currentEpisodes.docs.map((d) => [
+        ((d.data()?.title as string) || '').trim().toLowerCase(),
+        { id: d.id, data: d.data() as Partial<DramaEpisode> },
+      ])
+    );
     const hasLegacyPlaceholders = LEGACY_PLACEHOLDER_EPISODE_IDS.some((id) =>
       existingIds.has(id)
     );
+
+    const isPlaceholderField = (val?: string) => {
+      const clean = (val || '').trim();
+      return (
+        !clean ||
+        clean === 'none' ||
+        clean === 'about:blank' ||
+        clean.startsWith('/src/assets/') ||
+        /placeholder|example\.com|sample/i.test(clean)
+      );
+    };
 
     const batch = writeBatch(db);
     let hasWrites = false;
@@ -1284,6 +1319,42 @@ export async function ensureAdminSeededData(): Promise<void> {
           batch.delete(doc(db, 'episodes', legacyId));
           hasWrites = true;
         }
+      }
+    }
+
+    for (const ep of CURATED_DEFAULT_EPISODES) {
+      const { id, ...rest } = ep;
+      const byIdData = existingById.get(id);
+      const byTitleMatch = existingByTitle.get(ep.title.trim().toLowerCase());
+      const matchedId = byIdData ? id : byTitleMatch?.id;
+      const matchedData = byIdData || byTitleMatch?.data;
+
+      if (!matchedId || !matchedData) {
+        const payload = buildFirestoreEpisodeFields(rest);
+        batch.set(doc(db, 'episodes', id), {
+          ...payload,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        hasWrites = true;
+      } else if (
+        isPlaceholderField(matchedData.youtubeUrl || matchedData.videoUrl) ||
+        isPlaceholderField(matchedData.coverImage || matchedData.thumbnailUrl)
+      ) {
+        const payload = buildFirestoreEpisodeFields({
+          ...rest,
+          youtubeUrl: isPlaceholderField(matchedData.youtubeUrl || matchedData.videoUrl)
+            ? ep.youtubeUrl
+            : matchedData.youtubeUrl || matchedData.videoUrl,
+          coverImage: isPlaceholderField(matchedData.coverImage || matchedData.thumbnailUrl)
+            ? ep.coverImage
+            : matchedData.coverImage || matchedData.thumbnailUrl || ep.coverImage,
+        });
+        batch.update(doc(db, 'episodes', matchedId), {
+          ...payload,
+          updatedAt: serverTimestamp(),
+        });
+        hasWrites = true;
       }
     }
 
@@ -1674,16 +1745,19 @@ export async function upsertDramaSeries(input: {
   title: string;
   seriesId?: string;
   category?: string;
+  posterUrl?: string;
   coverImage?: string;
   synopsis?: string;
   episodeIdToAdd?: string;
   sortOrder?: number;
+  forcePosterUpdate?: boolean;
 }): Promise<void> {
   const cleanTitle = (input.title.trim() || 'Featured Series').slice(0, 60);
   const seriesId = (input.seriesId?.trim() || toSeriesId(cleanTitle)).slice(0, 80);
   const path = `series/${seriesId}`;
   const category = inferEpisodeCategory(cleanTitle, undefined, input.category).slice(0, 32);
-  const coverImage = (input.coverImage?.trim() || 'none').slice(0, 500);
+  const posterUrl = sanitizePosterUrl(input.posterUrl || input.coverImage || '').slice(0, 2000);
+  const coverImage = (posterUrl || 'none').slice(0, 2000);
   const synopsis = (input.synopsis?.trim() || `${cleanTitle} drama series.`).slice(0, 240);
 
   try {
@@ -1694,6 +1768,7 @@ export async function upsertDramaSeries(input: {
         seriesId,
         title: cleanTitle,
         category,
+        posterUrl,
         coverImage,
         synopsis,
         episodeIds: input.episodeIdToAdd ? [input.episodeIdToAdd] : [],
@@ -1704,13 +1779,21 @@ export async function upsertDramaSeries(input: {
       });
     } else {
       const existingData = snap.data() as Partial<DramaSeries>;
+      const existingPoster = sanitizePosterUrl(existingData.posterUrl || existingData.coverImage || '');
       const updates: Record<string, unknown> = {
         title: cleanTitle,
         category,
         updatedAt: serverTimestamp(),
       };
-      if (coverImage !== 'none' && (!existingData.coverImage || existingData.coverImage === 'none')) {
+      if (input.forcePosterUpdate) {
+        updates.posterUrl = posterUrl;
         updates.coverImage = coverImage;
+      } else if (posterUrl && (!existingPoster || existingPoster !== posterUrl)) {
+        updates.posterUrl = posterUrl;
+        updates.coverImage = coverImage;
+      }
+      if (input.synopsis?.trim()) {
+        updates.synopsis = synopsis;
       }
       if (input.episodeIdToAdd) {
         updates.episodeIds = arrayUnion(input.episodeIdToAdd);
@@ -1767,6 +1850,7 @@ export async function addDramaEpisode(input: {
   episodeLabel: string;
   duration: string;
   rewardCoins: number;
+  posterUrl?: string;
   coverImage: string;
   thumbnailUrl?: string;
   synopsis: string;
@@ -1786,17 +1870,10 @@ export async function addDramaEpisode(input: {
           ? rawVideo.slice(0, 500)
           : sanitizeExternalUrl(rawVideo).slice(0, 500))
     : '';
-  const rawCover = (input.thumbnailUrl || input.coverImage || '').trim();
-  const explicitCover =
-    rawCover && rawCover !== 'none'
-      ? (rawCover.startsWith('idb://') || rawCover.startsWith('/')
-          ? rawCover
-          : rawCover.startsWith('data:') || rawCover.startsWith('blob:')
-            ? rawCover.slice(0, 500)
-            : sanitizeExternalUrl(rawCover))
-      : '';
+  const explicitCover = sanitizePosterUrl(input.posterUrl || input.thumbnailUrl || input.coverImage || '');
   const autoThumb = cleanVideo ? getYouTubeThumbnailUrl(cleanVideo) : null;
-  const finalCover = (explicitCover || autoThumb || 'none').slice(0, 500);
+  const finalPoster = (explicitCover || autoThumb || '').slice(0, 2000);
+  const finalCover = (finalPoster || 'none').slice(0, 2000);
   const cleanTitle = (input.title.trim() || 'Untitled Episode').slice(0, 100);
   const cleanSeries = (input.series.trim() || 'Featured Series').slice(0, 60);
   const seriesId = getEpisodeSeriesId({ series: cleanSeries, seriesId: input.seriesId }).slice(0, 80);
@@ -1813,6 +1890,7 @@ export async function addDramaEpisode(input: {
       episodeLabel: (input.episodeLabel.trim() || 'Series').slice(0, 24),
       duration: (input.duration.trim() || 'Watch & Earn').slice(0, 16),
       rewardCoins: Math.max(1, Math.min(5000, Math.round(input.rewardCoins || 100))),
+      posterUrl: finalPoster,
       coverImage: finalCover,
       synopsis: cleanSynopsis,
       sponsorUrl: input.sponsorUrl.trim() ? sanitizeExternalUrl(input.sponsorUrl).slice(0, 500) : '',
@@ -1831,6 +1909,7 @@ export async function addDramaEpisode(input: {
     title: cleanSeries,
     seriesId,
     category,
+    posterUrl: finalPoster,
     coverImage: finalCover,
     synopsis: cleanSynopsis,
     episodeIdToAdd: id,
@@ -1848,6 +1927,7 @@ export async function updateDramaEpisode(
     episodeLabel: string;
     duration: string;
     rewardCoins: number;
+    posterUrl?: string;
     coverImage: string;
     thumbnailUrl?: string;
     synopsis: string;
@@ -1867,17 +1947,10 @@ export async function updateDramaEpisode(
           ? rawVideo.slice(0, 500)
           : sanitizeExternalUrl(rawVideo).slice(0, 500))
     : '';
-  const rawCover = (input.thumbnailUrl || input.coverImage || '').trim();
-  const explicitCover =
-    rawCover && rawCover !== 'none'
-      ? (rawCover.startsWith('idb://') || rawCover.startsWith('/')
-          ? rawCover
-          : rawCover.startsWith('data:') || rawCover.startsWith('blob:')
-            ? rawCover.slice(0, 500)
-            : sanitizeExternalUrl(rawCover))
-      : '';
+  const explicitCover = sanitizePosterUrl(input.posterUrl || input.thumbnailUrl || input.coverImage || '');
   const autoThumb = cleanVideo ? getYouTubeThumbnailUrl(cleanVideo) : null;
-  const finalCover = (explicitCover || autoThumb || 'none').slice(0, 500);
+  const finalPoster = (explicitCover || autoThumb || '').slice(0, 2000);
+  const finalCover = (finalPoster || 'none').slice(0, 2000);
   const cleanTitle = (input.title.trim() || 'Untitled Episode').slice(0, 100);
   const cleanSeries = (input.series.trim() || 'Featured Series').slice(0, 60);
   const seriesId = getEpisodeSeriesId({ series: cleanSeries, seriesId: input.seriesId }).slice(0, 80);
@@ -1891,6 +1964,7 @@ export async function updateDramaEpisode(
     episodeLabel: (input.episodeLabel.trim() || 'Series').slice(0, 24),
     duration: (input.duration.trim() || 'Watch & Earn').slice(0, 16),
     rewardCoins: Math.max(1, Math.min(5000, Math.round(input.rewardCoins || 100))),
+    posterUrl: finalPoster,
     coverImage: finalCover,
     synopsis: (input.synopsis.trim() || `${cleanSeries} series.`).slice(0, 240),
     sponsorUrl: input.sponsorUrl.trim() ? sanitizeExternalUrl(input.sponsorUrl).slice(0, 500) : '',
@@ -1909,20 +1983,19 @@ export async function updateDramaEpisode(
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
-      return;
+    } else {
+      const existingData = snap.data() as Partial<DramaEpisode>;
+      await setDoc(docRef, {
+        ...fields,
+        sortOrder:
+          typeof existingData.sortOrder === 'number'
+            ? Math.max(0, Math.min(10000, Math.round(existingData.sortOrder)))
+            : 1,
+        isPublic: true,
+        createdAt: existingData.createdAt || serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
     }
-
-    const existingData = snap.data() as Partial<DramaEpisode>;
-    await setDoc(docRef, {
-      ...fields,
-      sortOrder:
-        typeof existingData.sortOrder === 'number'
-          ? Math.max(0, Math.min(10000, Math.round(existingData.sortOrder)))
-          : 1,
-      isPublic: true,
-      createdAt: existingData.createdAt || serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
@@ -1931,10 +2004,12 @@ export async function updateDramaEpisode(
     title: cleanSeries,
     seriesId,
     category,
+    posterUrl: finalPoster,
     coverImage: finalCover,
     synopsis: fields.synopsis,
     episodeIdToAdd: episodeId,
     sortOrder: input.sortOrder,
+    forcePosterUpdate: Boolean(finalPoster),
   });
 }
 

@@ -221,6 +221,7 @@ const WatchVideoStage: React.FC<{
   const [retryCount, setRetryCount] = useState(0);
   const [isRecovering, setIsRecovering] = useState(false);
   const [recoveryFailed, setRecoveryFailed] = useState(false);
+  const prevPausedRef = useRef(paused);
 
   const clearRecoveryTimers = () => {
     if (stallTimerRef.current !== null) {
@@ -293,16 +294,55 @@ const WatchVideoStage: React.FC<{
   };
 
   useEffect(() => {
+    const saveDirectTimestamp = () => {
+      if (videoRef.current && Number.isFinite(videoRef.current.currentTime) && videoRef.current.currentTime > 0) {
+        savedTimeRef.current = videoRef.current.currentTime;
+      }
+    };
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        saveDirectTimestamp();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, []);
+
+  useEffect(() => {
+    const wasPaused = prevPausedRef.current;
+    prevPausedRef.current = paused;
+
     if (embedUrl || (resolvedMediaUrl && !isDirectVideoMediaUrl(resolvedMediaUrl))) {
+      if (!paused && wasPaused && savedTimeRef.current > 0.5) {
+        postYouTubeCommand(iframeRef.current, 'seekTo', [savedTimeRef.current, true]);
+      }
       postYouTubeCommand(iframeRef.current, paused ? 'pauseVideo' : 'playVideo');
     }
     if (videoRef.current) {
       videoRef.current.muted = muted;
       videoRef.current.volume = 1;
       if (paused) {
+        if (Number.isFinite(videoRef.current.currentTime) && videoRef.current.currentTime > 0) {
+          savedTimeRef.current = videoRef.current.currentTime;
+        }
         videoRef.current.pause();
         clearRecoveryTimers();
       } else {
+        if (
+          savedTimeRef.current > 0.5 &&
+          Math.abs(videoRef.current.currentTime - savedTimeRef.current) > 0.75
+        ) {
+          const maxTime = Number.isFinite(videoRef.current.duration)
+            ? Math.max(0, videoRef.current.duration - 0.5)
+            : savedTimeRef.current;
+          try {
+            videoRef.current.currentTime = Math.min(savedTimeRef.current, maxTime);
+          } catch {
+            // Ignore seek errors before readyState
+          }
+        }
         void videoRef.current.play().catch((err: unknown) => {
           if (err instanceof DOMException && err.name === 'NotAllowedError' && videoRef.current) {
             videoRef.current.muted = true;
@@ -352,6 +392,17 @@ const WatchVideoStage: React.FC<{
         onPlayingChangeRef.current?.(false);
         triggerAutoRecover(false);
         return;
+      }
+
+      if (
+        payload.info &&
+        typeof payload.info === 'object' &&
+        typeof (payload.info as { currentTime?: unknown }).currentTime === 'number'
+      ) {
+        const ytTime = (payload.info as { currentTime: number }).currentTime;
+        if (Number.isFinite(ytTime) && ytTime > 0) {
+          savedTimeRef.current = ytTime;
+        }
       }
 
       const playerState =
@@ -488,6 +539,20 @@ const WatchVideoStage: React.FC<{
             onPlay={(e) => {
               e.currentTarget.muted = muted;
               e.currentTarget.volume = 1;
+              if (
+                savedTimeRef.current > 1 &&
+                e.currentTarget.currentTime < 0.5 &&
+                Number.isFinite(e.currentTarget.duration)
+              ) {
+                try {
+                  e.currentTarget.currentTime = Math.min(
+                    savedTimeRef.current,
+                    Math.max(0, e.currentTarget.duration - 0.5)
+                  );
+                } catch {
+                  // Ignore seek errors
+                }
+              }
               clearRecoveryTimers();
               setIsRecovering(false);
               setRecoveryFailed(false);
@@ -522,7 +587,10 @@ const WatchVideoStage: React.FC<{
               onPlayingChangeRef.current?.(false);
               triggerAutoRecover(true);
             }}
-            onPause={() => {
+            onPause={(e) => {
+              if (e.currentTarget.currentTime > 0) {
+                savedTimeRef.current = e.currentTarget.currentTime;
+              }
               clearRecoveryTimers();
               onPlayingChangeRef.current?.(false);
             }}
@@ -615,12 +683,15 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
 
   useEffect(() => {
     episodeRef.current = episode;
+  }, [episode]);
+
+  useEffect(() => {
     isVideoPlayingRef.current = true;
     rewardModalOpenRef.current = false;
     setRewardModalOpen(false);
     setRingProgress(0);
     setIsZoomed(true);
-  }, [episode]);
+  }, [episode.id]);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -686,7 +757,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
     return () => window.clearInterval(interval);
   }, [episode.id, potReward]);
 
-  const handleClaimPotReward = async (amount: number) => {
+  const awardCoinsOnly = async (amount: number) => {
     if (awardingRef.current) return;
     awardingRef.current = true;
 
@@ -702,13 +773,21 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
         setFlyingBurst((curr) => (curr?.id === burstId ? null : curr));
       }, 1250);
     } finally {
-      rewardModalOpenRef.current = false;
-      resetPotTimerRef.current = true;
-      isVideoPlayingRef.current = true;
-      setRewardModalOpen(false);
-      setRingProgress(0);
       awardingRef.current = false;
     }
+  };
+
+  const handleContinueAfterAd = () => {
+    rewardModalOpenRef.current = false;
+    resetPotTimerRef.current = true;
+    isVideoPlayingRef.current = true;
+    setRewardModalOpen(false);
+    setRingProgress(0);
+  };
+
+  const handleClaimBaseReward = async (amount: number) => {
+    await awardCoinsOnly(amount);
+    handleContinueAfterAd();
   };
 
   const handleClose = () => {
@@ -1018,8 +1097,10 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
         sponsorUrl={episode.sponsorUrl || sponsorAdUrl || DEFAULT_SPONSOR_URL}
         episodeTitle={`${episode.series} — ${episode.episodeLabel}`}
         onStartSponsorTimer={() => onStartSponsorReward?.()}
-        onClaimDouble={() => handleClaimPotReward(potReward * 2)}
-        onClaimBase={() => handleClaimPotReward(potReward)}
+        onClaimDouble={() => awardCoinsOnly(potReward * 2)}
+        onContinueAfterAd={handleContinueAfterAd}
+        onCancelAd={handleContinueAfterAd}
+        onClaimBase={() => handleClaimBaseReward(potReward)}
       />
     </div>
   );

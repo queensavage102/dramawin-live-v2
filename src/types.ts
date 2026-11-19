@@ -29,6 +29,7 @@ export interface DramaSeries {
   seriesId: string;
   title: string;
   category: string;
+  posterUrl?: string;
   coverImage: string;
   synopsis: string;
   episodeIds: string[];
@@ -65,6 +66,7 @@ export interface DramaEpisode {
   episodeLabel: string;
   duration: string;
   rewardCoins: number;
+  posterUrl?: string;
   coverImage: string;
   thumbnailUrl?: string;
   synopsis: string;

@@ -148,7 +148,7 @@ export function isStrayGojoOrAnimeInWrongSeries(
     seriesText.includes('anime');
   if (seriesIsAnimeOrGojo) return false;
 
-  const titleAndMedia = `${ep.id || ''} ${ep.title || ''} ${ep.coverImage || ''} ${ep.thumbnailUrl || ''} ${ep.youtubeUrl || ''} ${ep.videoUrl || ''}`.toLowerCase();
+  const titleAndMedia = `${ep.id || ''} ${ep.title || ''} ${ep.posterUrl || ''} ${ep.coverImage || ''} ${ep.thumbnailUrl || ''} ${ep.youtubeUrl || ''} ${ep.videoUrl || ''}`.toLowerCase();
   return (
     titleAndMedia.includes('gojo') ||
     titleAndMedia.includes('jujutsu') ||
@@ -232,45 +232,177 @@ export const STREAK_DAYS: StreakDaySpec[] = [
   { key: 'Sun', label: 'Sunday', reward: 300 },
 ];
 
-export const COVER_GALLERY = [
+export const CURATED_DEFAULT_EPISODES: Omit<DramaEpisode, 'createdAt' | 'updatedAt'>[] = [
   {
-    label: 'Penthouse Velvet',
-    url: '/src/assets/images/drama_velvet_crown_1794573505264.jpg',
+    id: 'ep-jujutsu-kaisen-abridged-0',
+    title: 'Jujutsu Kaisen Abridged 0: THE MOVIE',
+    series: 'Jujutsu Kaisen Abridged 0: THE MOVIE',
+    seriesId: 'series-jujutsu-kaisen-abridged-0-the-movie',
+    category: 'Anime / Comedy',
+    episodeLabel: 'Full Movie',
+    duration: 'Watch & Earn',
+    rewardCoins: 100,
+    coverImage: 'https://ytimg.com',
+    thumbnailUrl: 'https://ytimg.com',
+    synopsis:
+      "A hilarious fan-parody retelling of Yuta Okkotsu's arrival at Jujutsu Tech, his powerful curse Rika, and their showdown against Suguru Geto.",
+    sponsorUrl: DEFAULT_SPONSOR_URL,
+    youtubeUrl: 'https://youtube.com',
+    videoUrl: 'https://youtube.com',
+    startTime: DEFAULT_VIDEO_START_SECONDS,
+    sortOrder: 1,
+    isPublic: true,
   },
   {
-    label: 'Obsidian Skyline',
-    url: '/src/assets/images/drama_obsidian_heir_1794573505731.jpg',
+    id: 'ep-dark-moon-blood-altar-01',
+    title: 'DARK MOON: THE BLOOD ALTAR (Episode 1)',
+    series: 'DARK MOON: THE BLOOD ALTAR',
+    seriesId: 'series-dark-moon-the-blood-altar',
+    category: 'Anime / Vampire Romance',
+    episodeLabel: 'EP 01',
+    duration: 'Watch & Earn',
+    rewardCoins: 100,
+    coverImage: 'https://ytimg.com',
+    thumbnailUrl: 'https://ytimg.com',
+    synopsis:
+      'At Decelis Academy in Riverfield, seven mysterious vampire boys hide their dark pasts until Sooha—a girl who despises vampires—transfers in and changes everything.',
+    sponsorUrl: DEFAULT_SPONSOR_URL,
+    youtubeUrl: 'https://youtube.com',
+    videoUrl: 'https://youtube.com',
+    startTime: DEFAULT_VIDEO_START_SECONDS,
+    sortOrder: 2,
+    isPublic: true,
   },
   {
-    label: 'Candlelit Alibi',
-    url: '/src/assets/images/drama_golden_alibi_1794573506492.jpg',
+    id: 'ep-two-girls-disguised-as-boys-01',
+    title: 'Two Girls Disguised as Boys… Then Fell for Their Handsome Dormmates!',
+    series: 'Two Girls Disguised as Boys',
+    seriesId: 'series-two-girls-disguised-as-boys',
+    category: 'Romance / Comedy',
+    episodeLabel: 'Full Drama',
+    duration: 'Watch & Earn',
+    rewardCoins: 100,
+    coverImage: 'https://ytimg.com',
+    thumbnailUrl: 'https://ytimg.com',
+    synopsis:
+      'Two best friends are transported into a novel and wake up inside an all-boys academy, forced to disguise themselves as male students while sharing a dorm with two handsome leads.',
+    sponsorUrl: DEFAULT_SPONSOR_URL,
+    youtubeUrl: 'https://youtube.com',
+    videoUrl: 'https://youtube.com',
+    startTime: DEFAULT_VIDEO_START_SECONDS,
+    sortOrder: 3,
+    isPublic: true,
   },
   {
-    label: 'Gilded Dynasty',
-    url: '/src/assets/images/drama_silent_dynasty_1794573508735.jpg',
+    id: 'ep-he-chose-ugliest-bride-01',
+    title: 'He Chose the Ugliest Bride… Then Fell Madly in Love!',
+    series: 'He Chose the Ugliest Bride… Then Fell Madly in Love!',
+    seriesId: 'series-he-chose-the-ugliest-bride-then-fell-madly-in-love',
+    category: 'Billionaire Romance / Revenge',
+    episodeLabel: 'Full Drama',
+    duration: 'Watch & Earn',
+    rewardCoins: 100,
+    coverImage: 'https://ytimg.com',
+    thumbnailUrl: 'https://ytimg.com',
+    synopsis:
+      "Sabotaged by her stepsister to look unattractive at a billionaire's bride selection, Ivy shocks everyone when billionaire heir Sebastian Hail chooses her anyway.",
+    sponsorUrl: DEFAULT_SPONSOR_URL,
+    youtubeUrl: 'https://youtube.com',
+    videoUrl: 'https://youtube.com',
+    startTime: DEFAULT_VIDEO_START_SECONDS,
+    sortOrder: 4,
+    isPublic: true,
+  },
+  {
+    id: 'ep-my-bride-is-a-man-01',
+    title: 'My Bride Is A Man',
+    series: 'My Bride Is A Man',
+    seriesId: 'series-my-bride-is-a-man',
+    category: 'Dark Romance / Drama',
+    episodeLabel: 'Full Drama',
+    duration: 'Watch & Earn',
+    rewardCoins: 100,
+    coverImage: 'https://ytimg.com',
+    thumbnailUrl: 'https://ytimg.com',
+    synopsis:
+      "To save his family from ruin after an accident, Elias Voss steps into a wedding dress to take his sister's place at the altar—marrying ruthless heir Orion Gray.",
+    sponsorUrl: DEFAULT_SPONSOR_URL,
+    youtubeUrl: 'https://youtube.com',
+    videoUrl: 'https://youtube.com',
+    startTime: DEFAULT_VIDEO_START_SECONDS,
+    sortOrder: 5,
+    isPublic: true,
+  },
+  {
+    id: 'ep-love-fantasy-romance-comedy-kdrama-01',
+    title: 'Love, Fantasy & Romance Comedy (Korean Drama)',
+    series: 'Love, Fantasy & Romance Comedy (Korean Drama)',
+    seriesId: 'series-love-fantasy-romance-comedy-korean-drama',
+    category: 'K-Drama / Fantasy Romance',
+    episodeLabel: 'Full Drama',
+    duration: 'Watch & Earn',
+    rewardCoins: 100,
+    coverImage: 'https://ytimg.com',
+    thumbnailUrl: 'https://ytimg.com',
+    synopsis:
+      'A narcissistic god seeking his rightful throne comes to Earth in search of a powerful stone and enlists a skeptical psychiatrist destined to become his wife.',
+    sponsorUrl: DEFAULT_SPONSOR_URL,
+    youtubeUrl: 'https://youtube.com',
+    videoUrl: 'https://youtube.com',
+    startTime: DEFAULT_VIDEO_START_SECONDS,
+    sortOrder: 6,
+    isPublic: true,
+  },
+  {
+    id: 'ep-dumped-gold-digging-ex-billionaire-01',
+    title: 'Dumped by Her Gold-Digging Ex, She Married a Stranger—Unaware He Was a Billionaire Heir!',
+    series: 'Dumped by Her Gold-Digging Ex, Married a Billionaire',
+    seriesId: 'series-dumped-by-her-gold-digging-ex-married-a-billionaire',
+    category: 'Billionaire Romance / Revenge',
+    episodeLabel: 'Full Drama',
+    duration: 'Watch & Earn',
+    rewardCoins: 100,
+    coverImage: 'https://ytimg.com',
+    thumbnailUrl: 'https://ytimg.com',
+    synopsis:
+      'After dumping her freeloading fiancé, forensic investigator Natalie marries a mysterious stranger on her wedding day—unaware he is secretly a powerful billionaire heir.',
+    sponsorUrl: DEFAULT_SPONSOR_URL,
+    youtubeUrl: 'https://youtube.com',
+    videoUrl: 'https://youtube.com',
+    startTime: DEFAULT_VIDEO_START_SECONDS,
+    sortOrder: 7,
+    isPublic: true,
   },
 ];
 
-export const CURATED_DEFAULT_EPISODES: Omit<DramaEpisode, 'createdAt' | 'updatedAt'>[] = [];
+const LOCAL_STORAGE_MIGRATION_KEY = 'dramawin_catalog_v12_curated_7_dramas';
 
-const LOCAL_STORAGE_MIGRATION_KEY = 'dramawin_catalog_v10_no_sample_series';
+function isPlaceholderCatalogUrl(value?: string): boolean {
+  const clean = (value || '').trim();
+  if (!clean || clean === 'none' || clean === 'about:blank') return true;
+  if (clean.startsWith('/src/assets/')) return true;
+  return /placeholder|example\.com|sample/i.test(clean);
+}
 
 export function forceSaveDefaultEpisodesToLocalStorage(): DramaEpisode[] {
+  const defaultSections = Array.from(
+    new Set(CURATED_DEFAULT_EPISODES.map((ep) => ep.series.trim()).filter(Boolean))
+  );
   if (typeof window !== 'undefined' && window.localStorage) {
     try {
-      window.localStorage.setItem('dramawin_episodes', JSON.stringify([]));
-      window.localStorage.setItem('dramawin_sections_v1', JSON.stringify([]));
+      window.localStorage.setItem('dramawin_episodes', JSON.stringify(CURATED_DEFAULT_EPISODES));
+      window.localStorage.setItem('dramawin_sections_v1', JSON.stringify(defaultSections));
       window.localStorage.setItem(LOCAL_STORAGE_MIGRATION_KEY, 'true');
     } catch {
       // Ignore storage quota errors in restricted webviews
     }
   }
-  return [];
+  return [...CURATED_DEFAULT_EPISODES];
 }
 
 export function getLocalFallbackEpisodes(): DramaEpisode[] {
   if (typeof window === 'undefined' || !window.localStorage) {
-    return [];
+    return [...CURATED_DEFAULT_EPISODES];
   }
   try {
     const raw = window.localStorage.getItem('dramawin_episodes');
@@ -279,15 +411,28 @@ export function getLocalFallbackEpisodes(): DramaEpisode[] {
       return (parsed as DramaEpisode[]).filter((ep) => !isLegacyBrokenEpisode(ep));
     }
   } catch {
-    // Fall through to empty initial list
+    // Fall through to curated list
   }
-  return [];
+  return [...CURATED_DEFAULT_EPISODES];
 }
 
 export function syncLocalStorageCatalogMigration(): void {
   if (typeof window === 'undefined' || !window.localStorage) return;
   try {
     const alreadyMigrated = window.localStorage.getItem(LOCAL_STORAGE_MIGRATION_KEY);
+
+    let deletedSet = new Set<string>();
+    try {
+      const rawDeleted = window.localStorage.getItem('dramawin_deleted_ids_v1');
+      const parsedDeleted = rawDeleted ? (JSON.parse(rawDeleted) as unknown) : [];
+      if (Array.isArray(parsedDeleted)) {
+        deletedSet = new Set(
+          parsedDeleted.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+        );
+      }
+    } catch {
+      deletedSet = new Set<string>();
+    }
 
     const rawEpisodes = window.localStorage.getItem('dramawin_episodes');
     let customEpisodes: DramaEpisode[] = [];
@@ -301,6 +446,50 @@ export function syncLocalStorageCatalogMigration(): void {
         }
       } catch {
         customEpisodes = [];
+      }
+    }
+
+    if (!alreadyMigrated) {
+      const curatedById = new Map(CURATED_DEFAULT_EPISODES.map((ep) => [ep.id, ep]));
+      const curatedByTitle = new Map(
+        CURATED_DEFAULT_EPISODES.map((ep) => [ep.title.trim().toLowerCase(), ep])
+      );
+
+      customEpisodes = customEpisodes.map((ep) => {
+        const seedMatch =
+          curatedById.get(ep.id) || curatedByTitle.get((ep.title || '').trim().toLowerCase());
+        if (!seedMatch) return ep;
+        const currentVid = (ep.videoUrl || ep.youtubeUrl || '').trim();
+        const currentThumb = (ep.thumbnailUrl || ep.coverImage || '').trim();
+        return {
+          ...ep,
+          category: ep.category?.trim() || seedMatch.category,
+          synopsis: ep.synopsis?.trim() || seedMatch.synopsis,
+          youtubeUrl: isPlaceholderCatalogUrl(currentVid) ? seedMatch.youtubeUrl : ep.youtubeUrl,
+          videoUrl: isPlaceholderCatalogUrl(currentVid) ? seedMatch.videoUrl : ep.videoUrl,
+          coverImage: isPlaceholderCatalogUrl(currentThumb) ? seedMatch.coverImage : ep.coverImage,
+          thumbnailUrl: isPlaceholderCatalogUrl(currentThumb)
+            ? seedMatch.thumbnailUrl
+            : ep.thumbnailUrl,
+        };
+      });
+
+      const existingIds = new Set(customEpisodes.map((ep) => ep.id));
+      const existingTitles = new Set(
+        customEpisodes.map((ep) => (ep.title || '').trim().toLowerCase()).filter(Boolean)
+      );
+      for (const seedEp of CURATED_DEFAULT_EPISODES) {
+        const sId = getEpisodeSeriesId(seedEp);
+        if (
+          existingIds.has(seedEp.id) ||
+          existingTitles.has(seedEp.title.trim().toLowerCase()) ||
+          deletedSet.has(seedEp.id) ||
+          deletedSet.has(sId)
+        ) {
+          continue;
+        }
+        customEpisodes.push({ ...seedEp });
+        existingIds.add(seedEp.id);
       }
     }
 
@@ -451,6 +640,51 @@ export function sanitizeMediaUrl(raw?: string): string {
   return `https://${trimmed}`;
 }
 
+export function isPlaceholderStockOrNonImageUrl(raw?: string): boolean {
+  const clean = sanitizeMediaUrl(raw);
+  if (!clean || clean === 'none' || clean === 'about:blank') return true;
+  if (clean.startsWith('/src/assets/')) return true;
+  if (/picsum\.photos|unsplash\.com|images\.unsplash\.com|source\.unsplash\.com/i.test(clean)) {
+    return true;
+  }
+  if (/placeholder|example\.com/i.test(clean)) return true;
+  if (
+    clean.startsWith('data:image/') ||
+    clean.startsWith('blob:') ||
+    clean.startsWith('idb://') ||
+    clean.startsWith('/')
+  ) {
+    return false;
+  }
+  try {
+    const parsed = new URL(clean);
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname.toLowerCase();
+    if (
+      (host === 'ytimg.com' ||
+        host === 'www.ytimg.com' ||
+        host === 'i.ytimg.com' ||
+        host === 'img.youtube.com' ||
+        host === 'youtube.com' ||
+        host === 'www.youtube.com' ||
+        host === 'youtu.be') &&
+      !path.includes('/vi/') &&
+      !/\.(jpe?g|png|webp|avif|gif)$/i.test(path)
+    ) {
+      return true;
+    }
+  } catch {
+    return true;
+  }
+  return false;
+}
+
+export function sanitizePosterUrl(raw?: string): string {
+  const clean = sanitizeMediaUrl(raw);
+  if (!clean || isPlaceholderStockOrNonImageUrl(clean)) return '';
+  return clean;
+}
+
 function safeDecodeUriComponent(value: string): string {
   try {
     return decodeURIComponent(value);
@@ -580,7 +814,7 @@ export function extractYouTubeMedia(rawUrl: string): YouTubeMediaInfo {
       embedUrl,
       previewEmbedUrl,
       watchUrl: `https://www.youtube.com/watch?v=${trimmed}`,
-      thumbnailUrl: `https://i.ytimg.com/vi/${trimmed}/hqdefault.jpg`,
+      thumbnailUrl: `https://img.youtube.com/vi/${trimmed}/maxresdefault.jpg`,
     };
   }
 
@@ -653,7 +887,7 @@ export function extractYouTubeMedia(rawUrl: string): YouTubeMediaInfo {
     }
 
     const thumbnailUrl = videoId
-      ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
+      ? `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`
       : null;
 
     return {
@@ -674,7 +908,7 @@ export function extractYouTubeMedia(rawUrl: string): YouTubeMediaInfo {
         embedUrl: `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&rel=0&modestbranding=1&playsinline=1&enablejsapi=1`,
         previewEmbedUrl: `https://www.youtube-nocookie.com/embed/${videoId}?rel=0&modestbranding=1&playsinline=1&enablejsapi=1`,
         watchUrl: `https://www.youtube.com/watch?v=${videoId}`,
-        thumbnailUrl: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+        thumbnailUrl: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
       };
     }
     return empty;
@@ -695,6 +929,64 @@ export function isYouTubeDomainOnly(rawUrl: string): boolean {
 
 export function getYouTubeThumbnailUrl(rawUrl: string): string | null {
   return extractYouTubeMedia(rawUrl).thumbnailUrl;
+}
+
+export function getYouTubeFallbackThumbnailUrl(rawUrl?: string): string | null {
+  const clean = (rawUrl || '').trim();
+  if (!clean) return null;
+  const imgMatch = clean.match(/\/vi\/([a-zA-Z0-9_-]{11})\//);
+  const videoId = imgMatch?.[1] || extractYouTubeId(clean);
+  return videoId ? `https://img.youtube.com/vi/${videoId}/hqdefault.jpg` : null;
+}
+
+export async function resolveYouTubeAutoPosterUrl(rawUrl: string): Promise<string | null> {
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return null;
+  const media = extractYouTubeMedia(trimmed);
+  if (media.videoId) {
+    return `https://img.youtube.com/vi/${media.videoId}/maxresdefault.jpg`;
+  }
+  const targetUrl = media.watchUrl || (media.playlistId ? `https://www.youtube.com/playlist?list=${encodeURIComponent(media.playlistId)}` : trimmed);
+  if (!/youtube\.com|youtu\.be|youtube-nocookie\.com/i.test(targetUrl) || isYouTubeDomainOnly(trimmed)) {
+    return null;
+  }
+
+  try {
+    const resp = await fetch(`/api/youtube-thumbnail?url=${encodeURIComponent(targetUrl)}`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (resp.ok) {
+      const data = (await resp.json()) as { videoId?: string | null; posterUrl?: string | null; fallbackUrl?: string | null };
+      if (data.videoId && /^[a-zA-Z0-9_-]{11}$/.test(data.videoId)) {
+        return `https://img.youtube.com/vi/${data.videoId}/maxresdefault.jpg`;
+      }
+      const resolved = sanitizePosterUrl(data.posterUrl || data.fallbackUrl || '');
+      if (resolved) return resolved;
+    }
+  } catch {
+    // Fallback to noembed if backend route is unavailable (e.g. static preview)
+  }
+
+  try {
+    const noembedResp = await fetch(
+      `https://noembed.com/embed?url=${encodeURIComponent(targetUrl)}`,
+      { signal: AbortSignal.timeout(5000) }
+    );
+    if (noembedResp.ok) {
+      const data = (await noembedResp.json()) as { thumbnail_url?: string };
+      const thumb = (data.thumbnail_url || '').trim();
+      const idMatch = thumb.match(/\/vi\/([a-zA-Z0-9_-]{11})\//);
+      if (idMatch?.[1]) {
+        return `https://img.youtube.com/vi/${idMatch[1]}/maxresdefault.jpg`;
+      }
+      const cleanThumb = sanitizePosterUrl(thumb);
+      if (cleanThumb) return cleanThumb;
+    }
+  } catch {
+    // Ignore network errors
+  }
+
+  return null;
 }
 
 

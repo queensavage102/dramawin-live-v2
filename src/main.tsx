@@ -6,11 +6,14 @@ import type { BeforeInstallPromptEvent } from './hooks/usePWAInstall';
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeinstallprompt', (event) => {
     event.preventDefault();
-    window.__dramawinInstallPrompt = event as BeforeInstallPromptEvent;
+    const promptEvent = event as BeforeInstallPromptEvent;
+    window.__deferredPrompt = promptEvent;
+    window.__dramawinInstallPrompt = promptEvent;
     window.dispatchEvent(new Event('dramawin-pwa-prompt-ready'));
   });
 
   window.addEventListener('appinstalled', () => {
+    window.__deferredPrompt = null;
     window.__dramawinInstallPrompt = null;
     window.dispatchEvent(new Event('dramawin-pwa-installed'));
   });

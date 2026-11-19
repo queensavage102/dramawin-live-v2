@@ -15,6 +15,7 @@ import {
   getEpisodeSeriesId,
   inferEpisodeCategory,
   isLegacyBrokenEpisode,
+  sanitizePosterUrl,
   syncLocalStorageCatalogMigration,
   toSeriesId,
 } from '../constants';
@@ -57,6 +58,7 @@ export interface CatalogEpisodeInput {
   episodeLabel: string;
   duration: string;
   rewardCoins: number;
+  posterUrl?: string;
   coverImage: string;
   thumbnailUrl?: string;
   synopsis: string;
@@ -145,6 +147,12 @@ interface CatalogContextValue {
   createSection: (name: string) => Promise<void>;
   renameSection: (oldName: string, newName: string) => Promise<void>;
   deleteSection: (name: string, removeEpisodes?: boolean) => Promise<void>;
+  updateSeriesPoster: (
+    seriesName: string,
+    posterUrl: string,
+    category?: string,
+    synopsis?: string
+  ) => Promise<void>;
   addEpisode: (input: CatalogEpisodeInput & { sortOrder: number }) => Promise<void>;
   updateEpisode: (episodeId: string, input: CatalogEpisodeInput) => Promise<void>;
   deleteEpisode: (episodeId: string) => Promise<void>;
@@ -177,7 +185,7 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
           (s) =>
             !currentDeleted.has(s.seriesId) &&
             !currentDeleted.has(s.id) &&
-            !/gojo|jujutsu|jjk|candy\s*man/i.test(`${s.seriesId} ${s.title}`)
+            !/gojo|jjk-gojo|satoru|candy\s*man/i.test(`${s.seriesId} ${s.title}`)
         );
         setCloudSeriesLoaded(true);
         setCloudSeries(cleanSeries);
@@ -272,7 +280,7 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const map = new Map<string, string>();
     const register = (raw: string) => {
       const clean = raw.trim().replace(/\s+/g, ' ');
-      if (!clean || /gojo|jujutsu|jjk|candy\s*man/i.test(clean)) return;
+      if (!clean || /gojo|jjk-gojo|satoru|candy\s*man/i.test(clean)) return;
       const sId = toSeriesId(clean);
       if (deletedIdSet.has(sId)) return;
       if (!map.has(sId)) map.set(sId, clean);
@@ -313,6 +321,7 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
             seriesId,
             title: cleanName,
             category: inferEpisodeCategory(cleanName),
+            posterUrl: '',
             coverImage: 'none',
             synopsis: `${cleanName} drama series.`,
             episodeIds: [],
@@ -383,6 +392,7 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
             episodeLabel: ep.episodeLabel,
             duration: ep.duration,
             rewardCoins: ep.rewardCoins,
+            posterUrl: ep.posterUrl || ep.thumbnailUrl || ep.coverImage || '',
             coverImage: ep.coverImage,
             thumbnailUrl: ep.thumbnailUrl,
             synopsis: ep.synopsis,
@@ -397,6 +407,73 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
     },
     [cloudEpisodes, ensureFirebaseAdminGrant, episodes]
+  );
+
+  const updateSeriesPoster = useCallback(
+    async (
+      seriesName: string,
+      rawPosterUrl: string,
+      category?: string,
+      synopsis?: string
+    ) => {
+      const cleanName = seriesName.trim().slice(0, 60);
+      if (!cleanName) return;
+      const resolvedSeriesId = toSeriesId(cleanName);
+      const cleanPoster = sanitizePosterUrl(rawPosterUrl);
+      const resolvedCategory = inferEpisodeCategory(cleanName, undefined, category);
+      const resolvedSynopsis = (synopsis?.trim() || `${cleanName} drama series.`).slice(0, 240);
+
+      setDeletedIds(removeDeletedSeriesMarker(cleanName));
+      setLocalSections(saveLocalSection(cleanName));
+
+      setCloudSeries((prev) => {
+        const exists = prev.some(
+          (s) => s.seriesId === resolvedSeriesId || s.title === cleanName
+        );
+        if (!exists) {
+          return [
+            ...prev,
+            {
+              id: resolvedSeriesId,
+              seriesId: resolvedSeriesId,
+              title: cleanName,
+              category: resolvedCategory,
+              posterUrl: cleanPoster,
+              coverImage: cleanPoster || 'none',
+              synopsis: resolvedSynopsis,
+              episodeIds: [],
+              sortOrder: prev.length + 1,
+              isPublic: true,
+            },
+          ];
+        }
+        return prev.map((s) =>
+          s.seriesId === resolvedSeriesId || s.title === cleanName
+            ? {
+                ...s,
+                category: resolvedCategory,
+                posterUrl: cleanPoster,
+                coverImage: cleanPoster || 'none',
+                synopsis: resolvedSynopsis,
+              }
+            : s
+        );
+      });
+
+      const activeUser = await ensureFirebaseAdminGrant();
+      if (activeUser) {
+        await upsertDramaSeries({
+          title: cleanName,
+          seriesId: resolvedSeriesId,
+          category: resolvedCategory,
+          posterUrl: cleanPoster,
+          coverImage: cleanPoster || 'none',
+          synopsis: resolvedSynopsis,
+          forcePosterUpdate: true,
+        });
+      }
+    },
+    [ensureFirebaseAdminGrant]
   );
 
   const deleteSection = useCallback(
@@ -478,6 +555,9 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
       if (createdEp) {
         setCloudEpisodes((prev) => deduplicateEpisodeList([...prev, createdEp]));
+        const createdPoster = sanitizePosterUrl(
+          createdEp.posterUrl || createdEp.thumbnailUrl || createdEp.coverImage || ''
+        );
         setCloudSeries((prev) => {
           const exists = prev.some((s) => s.seriesId === resolvedSeriesId);
           if (!exists) {
@@ -488,7 +568,8 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 seriesId: resolvedSeriesId,
                 title: createdEp.series,
                 category: resolvedCategory,
-                coverImage: createdEp.coverImage || 'none',
+                posterUrl: createdPoster,
+                coverImage: createdPoster || 'none',
                 synopsis: createdEp.synopsis,
                 episodeIds: [episodeId],
                 sortOrder: input.sortOrder,
@@ -500,6 +581,8 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
             s.seriesId === resolvedSeriesId
               ? {
                   ...s,
+                  posterUrl: createdPoster || s.posterUrl || '',
+                  coverImage: createdPoster || s.coverImage || 'none',
                   episodeIds: Array.from(new Set([...(s.episodeIds || []), episodeId])),
                 }
               : s
@@ -554,6 +637,24 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
             ? prev.map((ep) => (ep.id === episodeId ? updatedEp : ep))
             : deduplicateEpisodeList([...prev, updatedEp]);
         });
+        const updatedPoster = sanitizePosterUrl(
+          updatedEp.posterUrl || updatedEp.thumbnailUrl || updatedEp.coverImage || ''
+        );
+        if (updatedPoster) {
+          setCloudSeries((prev) =>
+            prev.map((s) =>
+              s.seriesId === resolvedSeriesId
+                ? {
+                    ...s,
+                    category: resolvedCategory,
+                    posterUrl: updatedPoster,
+                    coverImage: updatedPoster,
+                    synopsis: updatedEp.synopsis || s.synopsis,
+                  }
+                : s
+            )
+          );
+        }
       }
 
       const matchedSortOrder =
@@ -635,13 +736,18 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
   );
 
   const restoreCatalogDefaults = useCallback(async () => {
-    const allIds = episodes.map((ep) => ep.id).filter(Boolean);
-    if (allIds.length > 0) {
-      setDeletedIds(recordDeletedIds(allIds));
+    const restored = forceSaveDefaultEpisodesToLocalStorage();
+    const curatedIdSet = new Set(
+      restored.flatMap((ep) => [ep.id, getEpisodeSeriesId(ep)]).filter(Boolean)
+    );
+    const nonCuratedIds = episodes
+      .map((ep) => ep.id)
+      .filter((id) => id && !curatedIdSet.has(id));
+    if (nonCuratedIds.length > 0) {
+      setDeletedIds(recordDeletedIds(nonCuratedIds));
     }
-    const cleared = forceSaveDefaultEpisodesToLocalStorage();
-    setLocalEpisodes(cleared);
-    setLocalSections([]);
+    setLocalEpisodes(restored);
+    setLocalSections(loadLocalSections(restored));
     setCloudEpisodes([]);
     setCloudSeries([]);
     writeKnownCloudIds([]);
@@ -649,7 +755,9 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const activeUser = await ensureFirebaseAdminGrant();
     if (activeUser) {
       for (const ep of cloudEpisodes) {
-        await deleteDramaEpisode(ep.id);
+        if (!curatedIdSet.has(ep.id)) {
+          await deleteDramaEpisode(ep.id);
+        }
       }
       await restoreDefaultEpisodes();
     }
@@ -664,6 +772,7 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
       createSection,
       renameSection,
       deleteSection,
+      updateSeriesPoster,
       addEpisode,
       updateEpisode,
       deleteEpisode,
@@ -678,6 +787,7 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
       createSection,
       renameSection,
       deleteSection,
+      updateSeriesPoster,
       addEpisode,
       updateEpisode,
       deleteEpisode,

@@ -23,6 +23,7 @@ import {
   normalizeEpisodeStartSeconds,
   sanitizeExternalUrl,
   sanitizeMediaUrl,
+  sanitizePosterUrl,
   toSeriesId,
 } from '../constants';
 import {
@@ -329,7 +330,7 @@ export function loadLocalSections(episodes: DramaEpisode[]): string[] {
   saved.forEach((s) => {
     const clean = typeof s === 'string' ? s.trim().replace(/\s+/g, ' ') : '';
     if (!clean || clean === 'Rang Ngao (แรงเงา) [ENG SUB]') return;
-    if (/gojo|jujutsu|jjk|candy\s*man/i.test(clean)) return;
+    if (/gojo|jjk-gojo|satoru|candy\s*man/i.test(clean)) return;
     if (LEGACY_BROKEN_SERIES_NAMES.includes(clean) && !activeEpisodeSeries.has(clean)) return;
     const sId = toSeriesId(clean);
     if (deletedSet.has(sId) && !activeEpisodeSeries.has(clean)) return;
@@ -338,7 +339,7 @@ export function loadLocalSections(episodes: DramaEpisode[]): string[] {
     }
   });
   activeEpisodeSeries.forEach((clean) => {
-    if (/gojo|jujutsu|jjk|candy\s*man/i.test(clean)) return;
+    if (/gojo|jjk-gojo|satoru|candy\s*man/i.test(clean)) return;
     const sId = toSeriesId(clean);
     if (deletedSet.has(sId)) return;
     if (!canonicalMap.has(sId)) {
@@ -437,10 +438,30 @@ export function loadLocalEpisodes(): DramaEpisode[] {
       try {
         const parsed = JSON.parse(rawStr) as unknown;
         if (Array.isArray(parsed)) {
-          const cleaned = deduplicateEpisodeList(parsed as DramaEpisode[]).filter(
+          let mutated = false;
+          const sanitizedParsed = (parsed as DramaEpisode[]).map((ep) => {
+            const rawPoster = (ep.posterUrl || ep.thumbnailUrl || ep.coverImage || '').trim();
+            const cleanPoster = sanitizePosterUrl(rawPoster);
+            const mediaLink = (ep.videoUrl || ep.youtubeUrl || '').trim();
+            const autoThumb = mediaLink ? getYouTubeThumbnailUrl(mediaLink) || '' : '';
+            const resolvedPoster = cleanPoster || autoThumb || '';
+            if (
+              (ep.posterUrl || '') !== resolvedPoster ||
+              (ep.coverImage && cleanPoster === '' && ep.coverImage !== 'none' && ep.coverImage !== resolvedPoster)
+            ) {
+              mutated = true;
+            }
+            return {
+              ...ep,
+              posterUrl: resolvedPoster,
+              coverImage: resolvedPoster || 'none',
+              thumbnailUrl: resolvedPoster,
+            };
+          });
+          const cleaned = deduplicateEpisodeList(sanitizedParsed).filter(
             (ep) => !isEpisodeDeleted(ep, deletedSet)
           );
-          if (cleaned.length !== parsed.length) {
+          if (cleaned.length !== parsed.length || mutated) {
             safeWriteJson(LOCAL_EPISODES_KEY, cleaned);
           }
           return cleaned;
@@ -493,13 +514,14 @@ export function reorderLocalSeries(orderedSeriesNames: string[]): {
 }
 
 export function resolveEpisodeCover(ep: {
+  posterUrl?: string;
   coverImage?: string;
   thumbnailUrl?: string;
   youtubeUrl?: string;
   videoUrl?: string;
 }): string {
-  const rawCover = (ep.thumbnailUrl || ep.coverImage || '').trim();
-  const explicitCover = sanitizeMediaUrl(rawCover);
+  const rawCover = (ep.posterUrl || ep.thumbnailUrl || ep.coverImage || '').trim();
+  const explicitCover = sanitizePosterUrl(rawCover);
   if (explicitCover) return explicitCover;
   const mediaLink = (ep.videoUrl || ep.youtubeUrl || '').trim();
   const ytThumb = mediaLink ? getYouTubeThumbnailUrl(mediaLink) : null;
@@ -515,6 +537,7 @@ export function addLocalEpisode(input: {
   episodeLabel: string;
   duration: string;
   rewardCoins: number;
+  posterUrl?: string;
   coverImage: string;
   thumbnailUrl?: string;
   synopsis: string;
@@ -530,7 +553,7 @@ export function addLocalEpisode(input: {
   const cleanVideo = rawVideo
     ? sanitizeMediaUrl(rawVideo).slice(0, rawVideo.startsWith('data:') ? 2000000 : 500)
     : '';
-  const explicitCover = sanitizeMediaUrl(input.thumbnailUrl || input.coverImage || '');
+  const explicitCover = sanitizePosterUrl(input.posterUrl || input.thumbnailUrl || input.coverImage || '');
   const autoThumb = cleanVideo ? getYouTubeThumbnailUrl(cleanVideo) : null;
   const finalCover = explicitCover || autoThumb || '';
   const cleanSeries = input.series.trim().slice(0, 60);
@@ -547,7 +570,8 @@ export function addLocalEpisode(input: {
     episodeLabel: input.episodeLabel.trim().slice(0, 24) || 'EP 01',
     duration: input.duration.trim().slice(0, 20) || 'Watch 30s+',
     rewardCoins: Math.max(1, Math.min(5000, Math.round(input.rewardCoins || 100))),
-    coverImage: finalCover,
+    posterUrl: finalCover,
+    coverImage: finalCover || 'none',
     thumbnailUrl: finalCover,
     synopsis: input.synopsis.trim().slice(0, 240) || `${cleanSeries} episode.`,
     sponsorUrl: input.sponsorUrl.trim() ? sanitizeExternalUrl(input.sponsorUrl).slice(0, 500) : '',
@@ -573,6 +597,7 @@ export function updateLocalEpisode(
     episodeLabel: string;
     duration: string;
     rewardCoins: number;
+    posterUrl?: string;
     coverImage: string;
     thumbnailUrl?: string;
     synopsis: string;
@@ -587,7 +612,7 @@ export function updateLocalEpisode(
   const cleanVideo = rawVideo
     ? sanitizeMediaUrl(rawVideo).slice(0, rawVideo.startsWith('data:') ? 2000000 : 500)
     : '';
-  const explicitCover = sanitizeMediaUrl(input.thumbnailUrl || input.coverImage || '');
+  const explicitCover = sanitizePosterUrl(input.posterUrl || input.thumbnailUrl || input.coverImage || '');
   const autoThumb = cleanVideo ? getYouTubeThumbnailUrl(cleanVideo) : null;
   const finalCover = explicitCover || autoThumb || '';
   const cleanSeries = input.series.trim().slice(0, 60);
@@ -606,7 +631,8 @@ export function updateLocalEpisode(
       episodeLabel: input.episodeLabel.trim().slice(0, 24) || ep.episodeLabel,
       duration: input.duration.trim().slice(0, 20) || ep.duration,
       rewardCoins: Math.max(1, Math.min(5000, Math.round(input.rewardCoins || ep.rewardCoins))),
-      coverImage: finalCover,
+      posterUrl: finalCover,
+      coverImage: finalCover || 'none',
       thumbnailUrl: finalCover,
       synopsis: input.synopsis.trim().slice(0, 240) || ep.synopsis,
       sponsorUrl: input.sponsorUrl.trim() ? sanitizeExternalUrl(input.sponsorUrl).slice(0, 500) : '',

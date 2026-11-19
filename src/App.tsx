@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { User, onAuthStateChanged, signInAnonymously, signInWithPopup } from 'firebase/auth';
-import { AlertTriangle, Crown, Flame, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Crown, ExternalLink, Flame, Lock, Play, X } from 'lucide-react';
 import { AdminBoardPage } from './components/AdminBoardPage';
+import { BottomAdBanner } from './components/BottomAdBanner';
 import { BottomNavBar } from './components/BottomNavBar';
 import { CheckInVaultTab } from './components/CheckInVaultTab';
 import { ConfettiExplosion } from './components/ConfettiExplosion';
@@ -39,6 +40,7 @@ import {
   awardMysteryBoxCoins,
   awardWatchPotCoins,
   claimStreakDay,
+  ensureAdminSeededData,
   evaluateSundayPoolRollover,
   fetchPlayerProfile,
   markEpisodeAsWatched,
@@ -137,6 +139,7 @@ function DramaWinApp() {
     createSection,
     renameSection,
     deleteSection,
+    updateSeriesPoster,
     addEpisode,
     updateEpisode,
     deleteEpisode,
@@ -204,6 +207,7 @@ function DramaWinApp() {
   const [sponsorLoading, setSponsorLoading] = useState<{
     progress: number;
     secondsLeft: number;
+    completed?: boolean;
   } | null>(null);
   const [resumePlaybackSignal, setResumePlaybackSignal] = useState(0);
 
@@ -212,17 +216,40 @@ function DramaWinApp() {
   const triedAnonAuthRef = useRef<boolean>(false);
   const pendingGiftBoxNumberRef = useRef<number | null>(null);
   const cloudOpenedBoxesRef = useRef<number[]>(cloudOpenedBoxes);
+  const sponsorIntervalRef = useRef<number | null>(null);
+  const sponsorRafRef = useRef<number | null>(null);
   const sponsorFlowRef = useRef<{
     active: boolean;
     startedAt: number;
+    durationMs: number;
+    activeElapsedMs: number;
+    lastVisibleTick: number;
     leftApp: boolean;
+    isMysteryBox: boolean;
+    pushedHistory: boolean;
     rewardAction: (() => Promise<void>) | null;
   }>({
     active: false,
     startedAt: 0,
+    durationMs: 20000,
+    activeElapsedMs: 0,
+    lastVisibleTick: 0,
     leftApp: false,
+    isMysteryBox: false,
+    pushedHistory: false,
     rewardAction: null,
   });
+
+  const stopSponsorTimers = useCallback(() => {
+    if (sponsorIntervalRef.current !== null) {
+      window.clearInterval(sponsorIntervalRef.current);
+      sponsorIntervalRef.current = null;
+    }
+    if (sponsorRafRef.current !== null) {
+      window.cancelAnimationFrame(sponsorRafRef.current);
+      sponsorRafRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     cloudOpenedBoxesRef.current = cloudOpenedBoxes;
@@ -235,116 +262,243 @@ function DramaWinApp() {
   const finishSponsorRewardFlow = useCallback(() => {
     const flow = sponsorFlowRef.current;
     if (!flow.active) return;
+    const isMystery = flow.isMysteryBox || pendingGiftBoxNumberRef.current !== null;
+    if (!isMystery && (document.hidden || document.visibilityState === 'hidden')) {
+      return;
+    }
     flow.active = false;
     flow.leftApp = false;
+    stopSponsorTimers();
     const pendingReward = flow.rewardAction;
     flow.rewardAction = null;
 
-    setSponsorLoading(null);
-    setPendingGiftBoxNumber(null);
-    setResumePlaybackSignal((prev) => prev + 1);
+    if (isMystery) {
+      setSponsorLoading(null);
+      setPendingGiftBoxNumber(null);
+      setResumePlaybackSignal((prev) => prev + 1);
+    } else {
+      setSponsorLoading({ progress: 100, secondsLeft: 0, completed: true });
+    }
+
     if (pendingReward) {
       void pendingReward().catch(() => {});
     }
-  }, []);
+  }, [stopSponsorTimers]);
 
-  const cancelSponsorRewardFlowEarly = useCallback((showEarlyNotice = false) => {
-    const flow = sponsorFlowRef.current;
-    if (!flow.active) return;
-    flow.active = false;
-    flow.startedAt = 0;
-    flow.leftApp = false;
-    flow.rewardAction = null;
-    setSponsorLoading(null);
-    setPendingGiftBoxNumber(null);
-    setResumePlaybackSignal((prev) => prev + 1);
-    if (showEarlyNotice) {
-      setToast({
-        id: `${Date.now()}-early-ad`,
-        message: 'Sponsor ad closed early — watch for 20s to unlock your Gift Box.',
-        tone: 'neutral',
-      });
-    }
-  }, []);
+  const cancelSponsorRewardFlowEarly = useCallback(
+    (showEarlyNotice = false, fromPopState = false) => {
+      const flow = sponsorFlowRef.current;
+      if (!flow.active) return;
+      flow.active = false;
+      flow.startedAt = 0;
+      flow.activeElapsedMs = 0;
+      flow.lastVisibleTick = 0;
+      flow.leftApp = false;
+      flow.rewardAction = null;
+      stopSponsorTimers();
+      if (!fromPopState && flow.pushedHistory) {
+        flow.pushedHistory = false;
+        try {
+          window.history.back();
+        } catch {
+          // Ignore history back errors
+        }
+      } else {
+        flow.pushedHistory = false;
+      }
+      setSponsorLoading(null);
+      setPendingGiftBoxNumber(null);
+      setResumePlaybackSignal((prev) => prev + 1);
+      if (showEarlyNotice) {
+        setToast({
+          id: `${Date.now()}-early-ad`,
+          message: 'Sponsor ad closed early — watch for 20s to unlock your Gift Box.',
+          tone: 'neutral',
+        });
+      }
+    },
+    [stopSponsorTimers]
+  );
 
-  const startSponsorRewardFlow = useCallback((rewardAction?: () => Promise<void>) => {
-    if (sponsorFlowRef.current.active && sponsorFlowRef.current.rewardAction) {
-      const prevAction = sponsorFlowRef.current.rewardAction;
-      sponsorFlowRef.current.rewardAction = null;
-      void prevAction().catch(() => {});
-    }
-    setPendingGiftBoxNumber(null);
-    sponsorFlowRef.current = {
-      active: true,
-      startedAt: Date.now(),
-      leftApp: false,
-      rewardAction: rewardAction || null,
-    };
-    setSponsorLoading({ progress: 0, secondsLeft: 20 });
-  }, []);
+  const startSponsorRewardFlow = useCallback(
+    (rewardAction?: () => Promise<void>) => {
+      stopSponsorTimers();
+      if (sponsorFlowRef.current.active && sponsorFlowRef.current.rewardAction) {
+        sponsorFlowRef.current.rewardAction = null;
+      }
+      setPendingGiftBoxNumber(null);
+      const durationMs = 20000;
+      sponsorFlowRef.current = {
+        active: true,
+        startedAt: Date.now(),
+        durationMs,
+        activeElapsedMs: 0,
+        lastVisibleTick: document.hidden ? 0 : Date.now(),
+        leftApp: false,
+        isMysteryBox: false,
+        pushedHistory: false,
+        rewardAction: rewardAction || null,
+      };
+      setSponsorLoading({ progress: 0, secondsLeft: 20, completed: false });
+    },
+    [stopSponsorTimers]
+  );
 
-  const isSponsorFlowActive = sponsorLoading !== null;
+  const isSponsorFlowActive = Boolean(sponsorLoading && !sponsorLoading.completed);
 
   useEffect(() => {
     if (!isSponsorFlowActive) return;
 
-    const totalMs = 20000;
-    const interval = window.setInterval(() => {
+    const totalMs = sponsorFlowRef.current.durationMs || 20000;
+    const isMystery = sponsorFlowRef.current.isMysteryBox || pendingGiftBoxNumberRef.current !== null;
+
+    if (!isMystery && typeof window !== 'undefined' && !sponsorFlowRef.current.pushedHistory) {
+      try {
+        window.history.pushState({ dramawinSponsorAd: true }, '');
+        sponsorFlowRef.current.pushedHistory = true;
+      } catch {
+        // Ignore history restrictions
+      }
+    }
+
+    // Strict useRef interval timer enforcing 20s visible completion
+    sponsorIntervalRef.current = window.setInterval(() => {
       const flow = sponsorFlowRef.current;
-      if (!flow.active) return;
+      if (!flow.active) {
+        stopSponsorTimers();
+        return;
+      }
+
+      if (flow.isMysteryBox || pendingGiftBoxNumberRef.current !== null) {
+        const elapsed = Date.now() - flow.startedAt;
+        const progress = Math.min(100, (elapsed / totalMs) * 100);
+        const secondsLeft = Math.max(0, Math.ceil((totalMs - elapsed) / 1000));
+        setSponsorLoading({ progress, secondsLeft, completed: false });
+        if (elapsed >= totalMs) {
+          finishSponsorRewardFlow();
+        }
+        return;
+      }
+
+      // Non-mystery strict mode: immediate zero-coin abort if tab hidden or app switched
+      if (document.hidden || document.visibilityState === 'hidden') {
+        cancelSponsorRewardFlowEarly(false, false);
+        return;
+      }
+
       const elapsed = Date.now() - flow.startedAt;
-      const progress = Math.min(100, (elapsed / totalMs) * 100);
       const secondsLeft = Math.max(0, Math.ceil((totalMs - elapsed) / 1000));
-      setSponsorLoading({ progress, secondsLeft });
+      setSponsorLoading((prev) =>
+        prev && !prev.completed
+          ? { ...prev, secondsLeft }
+          : { progress: Math.min(100, (elapsed / totalMs) * 100), secondsLeft, completed: false }
+      );
 
       if (elapsed >= totalMs) {
         finishSponsorRewardFlow();
       }
-    }, 50);
+    }, 100);
+
+    // Smooth 60fps progress & circular countdown ring updates
+    if (!isMystery) {
+      const tick60fps = () => {
+        const flow = sponsorFlowRef.current;
+        if (!flow.active || flow.isMysteryBox || pendingGiftBoxNumberRef.current !== null) return;
+        if (document.hidden || document.visibilityState === 'hidden') {
+          cancelSponsorRewardFlowEarly(false, false);
+          return;
+        }
+        const elapsed = Date.now() - flow.startedAt;
+        const progress = Math.min(100, Math.max(0, (elapsed / totalMs) * 100));
+        const secondsLeft = Math.max(0, Math.ceil((totalMs - elapsed) / 1000));
+        setSponsorLoading({ progress, secondsLeft, completed: false });
+
+        if (elapsed >= totalMs) {
+          finishSponsorRewardFlow();
+          return;
+        }
+        sponsorRafRef.current = window.requestAnimationFrame(tick60fps);
+      };
+      sponsorRafRef.current = window.requestAnimationFrame(tick60fps);
+    }
 
     const handleLeave = () => {
-      if (sponsorFlowRef.current.active) {
+      if (sponsorFlowRef.current.active && pendingGiftBoxNumberRef.current !== null) {
         sponsorFlowRef.current.leftApp = true;
       }
     };
 
     const handleVisibility = () => {
-      if (!sponsorFlowRef.current.active) return;
-      if (document.visibilityState === 'hidden') {
-        sponsorFlowRef.current.leftApp = true;
+      const flow = sponsorFlowRef.current;
+      if (!flow.active) return;
+
+      if (flow.isMysteryBox || pendingGiftBoxNumberRef.current !== null) {
+        if (document.visibilityState === 'hidden') {
+          flow.leftApp = true;
+          return;
+        }
+        if (document.visibilityState === 'visible' && flow.leftApp) {
+          const elapsed = Date.now() - flow.startedAt;
+          if (elapsed >= totalMs) {
+            finishSponsorRewardFlow();
+          } else {
+            cancelSponsorRewardFlowEarly(true);
+          }
+        }
         return;
       }
-      if (document.visibilityState === 'visible' && sponsorFlowRef.current.leftApp) {
-        const elapsed = Date.now() - sponsorFlowRef.current.startedAt;
-        if (elapsed >= totalMs) {
-          finishSponsorRewardFlow();
-        } else {
-          cancelSponsorRewardFlowEarly(pendingGiftBoxNumberRef.current !== null);
-        }
+
+      if (document.hidden || document.visibilityState === 'hidden') {
+        cancelSponsorRewardFlowEarly(false, false);
+      }
+    };
+
+    const handlePageHide = () => {
+      const flow = sponsorFlowRef.current;
+      if (!flow.active) return;
+      if (!flow.isMysteryBox && pendingGiftBoxNumberRef.current === null) {
+        cancelSponsorRewardFlowEarly(false, false);
       }
     };
 
     const handleFocusReturn = () => {
-      if (!sponsorFlowRef.current.active || !sponsorFlowRef.current.leftApp) return;
+      if (
+        !sponsorFlowRef.current.active ||
+        !sponsorFlowRef.current.leftApp ||
+        pendingGiftBoxNumberRef.current === null
+      ) {
+        return;
+      }
       const elapsed = Date.now() - sponsorFlowRef.current.startedAt;
       if (elapsed >= totalMs) {
         finishSponsorRewardFlow();
       } else {
-        cancelSponsorRewardFlowEarly(pendingGiftBoxNumberRef.current !== null);
+        cancelSponsorRewardFlowEarly(true);
       }
+    };
+
+    const handlePopState = () => {
+      const flow = sponsorFlowRef.current;
+      if (!flow.active || pendingGiftBoxNumberRef.current !== null) return;
+      flow.pushedHistory = false;
+      cancelSponsorRewardFlowEarly(false, true);
     };
 
     window.addEventListener('blur', handleLeave);
     window.addEventListener('focus', handleFocusReturn);
+    window.addEventListener('pagehide', handlePageHide);
+    window.addEventListener('popstate', handlePopState);
     document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
-      window.clearInterval(interval);
+      stopSponsorTimers();
       window.removeEventListener('blur', handleLeave);
       window.removeEventListener('focus', handleFocusReturn);
+      window.removeEventListener('pagehide', handlePageHide);
+      window.removeEventListener('popstate', handlePopState);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [isSponsorFlowActive, finishSponsorRewardFlow, cancelSponsorRewardFlowEarly]);
+  }, [isSponsorFlowActive, finishSponsorRewardFlow, cancelSponsorRewardFlowEarly, stopSponsorTimers]);
 
   // Use cloud session only if user is signed into Firebase Auth AND has a cloud profile;
   // otherwise run 100% seamlessly in instant localStorage mode with zero auth wall.
@@ -587,7 +741,9 @@ function DramaWinApp() {
       firebaseUser.email === 'gerinaicker04@gmail.com' || adminUnlocked;
     if (!isOwnerOrAdmin) return;
     purgedStrayFirestoreRef.current = true;
-    void purgeLegacyAndStrayEpisodesFromFirestore();
+    void purgeLegacyAndStrayEpisodesFromFirestore().then(() =>
+      ensureAdminSeededData().catch(() => {})
+    );
   }, [firebaseUser, adminUnlocked]);
 
   useEffect(() => {
@@ -1026,9 +1182,20 @@ function DramaWinApp() {
 
     setMysteryReveal(null);
     window.open(DEFAULT_SPONSOR_URL, '_blank');
-    startSponsorRewardFlow(async () => {
-      resolveGiftBoxOutcome(boxNumber);
-    });
+    sponsorFlowRef.current = {
+      active: true,
+      startedAt: Date.now(),
+      durationMs: 20000,
+      activeElapsedMs: 0,
+      lastVisibleTick: Date.now(),
+      leftApp: false,
+      isMysteryBox: true,
+      pushedHistory: false,
+      rewardAction: async () => {
+        resolveGiftBoxOutcome(boxNumber);
+      },
+    };
+    setSponsorLoading({ progress: 0, secondsLeft: 20, completed: false });
     setPendingGiftBoxNumber(boxNumber);
   };
 
@@ -1051,9 +1218,20 @@ function DramaWinApp() {
 
     setMysteryReveal(null);
     window.open(DEFAULT_SPONSOR_URL, '_blank');
-    startSponsorRewardFlow(async () => {
-      resolveGiftBoxOutcome(targetBox);
-    });
+    sponsorFlowRef.current = {
+      active: true,
+      startedAt: Date.now(),
+      durationMs: 20000,
+      activeElapsedMs: 0,
+      lastVisibleTick: Date.now(),
+      leftApp: false,
+      isMysteryBox: true,
+      pushedHistory: false,
+      rewardAction: async () => {
+        resolveGiftBoxOutcome(targetBox);
+      },
+    };
+    setSponsorLoading({ progress: 0, secondsLeft: 20, completed: false });
     setPendingGiftBoxNumber(targetBox);
   };
 
@@ -1628,6 +1806,7 @@ function DramaWinApp() {
         appConfig={appConfig}
         sections={sections}
         episodes={episodes}
+        cloudSeries={cloudSeries}
         players={leaderboard}
         mysteryWinners={mysteryWinners}
         supportMessages={supportMessages}
@@ -1639,6 +1818,7 @@ function DramaWinApp() {
         onCreateSection={createSection}
         onRenameSection={renameSection}
         onDeleteSection={deleteSection}
+        onUpdateSeriesPoster={updateSeriesPoster}
         onUpdateSponsorUrl={handleUpdateSponsorUrl}
         onUpdateEmbeddedAdHtml={handleUpdateEmbeddedAdHtml}
         onUpdateLiveTicker={handleUpdateLiveTicker}
@@ -1673,22 +1853,221 @@ function DramaWinApp() {
         onComplete={() => setConfettiActive(false)}
       />
 
-      {/* Global 20-Second Top Ad Progress Line (Hidden while Mystery Vault handles its own in-modal progress bar) */}
-      {sponsorLoading && pendingGiftBoxNumber === null && (
-        <>
-          <div className="fixed top-0 left-0 right-0 h-1.5 z-[9999] bg-black/45 pointer-events-none">
-            <div
-              className="h-full bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 shadow-[0_0_12px_rgba(251,191,36,0.9)] transition-[width] duration-75 ease-linear"
-              style={{ width: `${sponsorLoading.progress}%` }}
-            />
+      {/* Clear Sponsored Ad Countdown & "Ad Complete! +Coins Earned" Overlay */}
+      {sponsorLoading && pendingGiftBoxNumber === null && (() => {
+        const isComplete = sponsorLoading.completed;
+        const ringSize = 84;
+        const strokeWidth = 5;
+        const radius = (ringSize - strokeWidth) / 2;
+        const circumference = 2 * Math.PI * radius;
+        const activePct = isComplete ? 100 : sponsorLoading.progress;
+        const dashOffset = circumference * (1 - activePct / 100);
+
+        return (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={isComplete ? 'Ad Complete! +Coins Earned' : 'Sponsored Ad Countdown'}
+            className="fixed inset-0 z-[2147483600] bg-black/92 backdrop-blur-md flex flex-col justify-between p-3 sm:p-6 overflow-y-auto"
+          >
+            <div className="w-full max-w-lg mx-auto rounded-2xl border border-[#D4AF37]/45 bg-[#12100B]/95 shadow-[0_10px_40px_rgba(0,0,0,0.85)] overflow-hidden shrink-0">
+              <div className="px-4 py-3 flex items-center justify-between gap-3">
+                {isComplete ? (
+                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-400 text-emerald-300 text-xs sm:text-sm font-extrabold shadow-[0_0_20px_rgba(16,185,129,0.35)]">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span>Ad Complete! +Coins Earned</span>
+                  </div>
+                ) : (
+                  <div className="inline-flex items-center gap-2 text-xs sm:text-sm font-extrabold text-[#FCE7A2]">
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping shrink-0" />
+                    <span>
+                      Sponsored Ad • Reward in{' '}
+                      <span className="font-mono-num text-amber-300">
+                        {sponsorLoading.secondsLeft}s
+                      </span>
+                      ...
+                    </span>
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  disabled={!isComplete}
+                  aria-disabled={!isComplete}
+                  onClick={() => {
+                    if (!isComplete) return;
+                    if (sponsorFlowRef.current.pushedHistory) {
+                      sponsorFlowRef.current.pushedHistory = false;
+                      try {
+                        window.history.back();
+                      } catch {
+                        // Ignore history back errors
+                      }
+                    }
+                    setSponsorLoading(null);
+                    setResumePlaybackSignal((prev) => prev + 1);
+                  }}
+                  aria-label={
+                    isComplete
+                      ? 'Close ad overlay'
+                      : `Close locked until countdown reaches 0 (${sponsorLoading.secondsLeft}s)`
+                  }
+                  className={`min-h-[36px] px-2.5 rounded-xl border text-xs font-bold inline-flex items-center gap-1 transition-all shrink-0 ${
+                    isComplete
+                      ? 'border-emerald-400/60 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25 cursor-pointer'
+                      : 'border-white/10 bg-white/[0.04] text-zinc-500 opacity-50 cursor-not-allowed'
+                  }`}
+                >
+                  {isComplete ? (
+                    <X className="w-4 h-4" />
+                  ) : (
+                    <Lock className="w-3.5 h-3.5" />
+                  )}
+                </button>
+              </div>
+
+              <div className="h-2.5 w-full bg-black/70 overflow-hidden">
+                <div
+                  className={`h-full will-change-[width] ${
+                    isComplete
+                      ? 'bg-gradient-to-r from-emerald-400 via-green-400 to-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.8)]'
+                      : 'bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 shadow-[0_0_12px_rgba(251,191,36,0.9)]'
+                  }`}
+                  style={{ width: `${activePct}%` }}
+                />
+              </div>
+            </div>
+
+            <div className="my-auto w-full max-w-sm mx-auto rounded-3xl bg-gradient-to-b from-[#17121E] via-[#0F0D14] to-[#09090b] border border-amber-400/45 shadow-[0_0_70px_rgba(245,158,11,0.3)] p-5 text-center space-y-4">
+              {isComplete ? (
+                <>
+                  <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-emerald-500/20 border border-emerald-400/70 text-emerald-300 text-xs font-extrabold">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    <span>Ad Complete! +Coins Earned</span>
+                  </div>
+                  <p className="text-xs text-zinc-300">
+                    Your coin reward has been added to your tournament wallet.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (sponsorFlowRef.current.pushedHistory) {
+                        sponsorFlowRef.current.pushedHistory = false;
+                        try {
+                          window.history.back();
+                        } catch {
+                          // Ignore history back errors
+                        }
+                      }
+                      setSponsorLoading(null);
+                      setResumePlaybackSignal((prev) => prev + 1);
+                    }}
+                    className="w-full min-h-[48px] px-4 rounded-2xl bg-gradient-to-r from-emerald-400 via-green-400 to-emerald-500 text-zinc-950 font-extrabold text-sm shadow-[0_0_28px_rgba(16,185,129,0.5)] hover:brightness-105 active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <Play className="w-4 h-4 fill-current" />
+                    <span>Continue Movie ▶</span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  {/* Animated 60fps Circular Countdown Ring (20s -> 0s) */}
+                  <div className="flex flex-col items-center gap-2.5">
+                    <div className="relative w-[84px] h-[84px] flex items-center justify-center">
+                      <svg
+                        width={ringSize}
+                        height={ringSize}
+                        viewBox={`0 0 ${ringSize} ${ringSize}`}
+                        className="-rotate-90 absolute inset-0"
+                        aria-hidden="true"
+                      >
+                        <defs>
+                          <linearGradient id="app-ad-ring-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <stop offset="0%" stopColor="#FEF08A" />
+                            <stop offset="50%" stopColor="#FBBF24" />
+                            <stop offset="100%" stopColor="#F59E0B" />
+                          </linearGradient>
+                        </defs>
+                        <circle
+                          cx={ringSize / 2}
+                          cy={ringSize / 2}
+                          r={radius}
+                          fill="rgba(0,0,0,0.55)"
+                          stroke="rgba(255,255,255,0.12)"
+                          strokeWidth={strokeWidth}
+                        />
+                        <circle
+                          cx={ringSize / 2}
+                          cy={ringSize / 2}
+                          r={radius}
+                          fill="none"
+                          stroke="url(#app-ad-ring-grad)"
+                          strokeWidth={strokeWidth}
+                          strokeLinecap="round"
+                          strokeDasharray={circumference}
+                          strokeDashoffset={dashOffset}
+                        />
+                      </svg>
+                      <div className="relative flex flex-col items-center">
+                        <span className="font-mono-num text-2xl font-black text-amber-300 leading-none">
+                          {sponsorLoading.secondsLeft}s
+                        </span>
+                        <span className="text-[9px] font-bold uppercase tracking-wider text-zinc-400 mt-0.5">
+                          Stay Active
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Pulsing Anti-Freeze Badge Around Live Ad Container */}
+                    <div className="w-full rounded-2xl border border-amber-400/50 bg-[#0A0A0F] p-2.5 space-y-2 shadow-[0_0_24px_rgba(251,191,36,0.18)] animate-pulse">
+                      <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-400/15 border border-amber-400/40 text-[11px] font-extrabold text-amber-200">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
+                        <span>Ad Playing • Stay 20s for Bonus Coins</span>
+                      </div>
+                      <div className="rounded-xl overflow-hidden bg-[#09090b] border border-white/10 py-1">
+                        <BottomAdBanner />
+                      </div>
+                    </div>
+
+                    <p className="text-xs text-zinc-300 leading-relaxed">
+                      Sponsored Ad active — wait {sponsorLoading.secondsLeft}s to unlock your coin
+                      reward.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => window.open(DEFAULT_SPONSOR_URL, '_blank')}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-amber-400/35 bg-amber-400/10 text-amber-200 text-xs font-semibold hover:bg-amber-400/20 cursor-pointer"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>View Sponsor Page</span>
+                  </button>
+
+                  <div className="space-y-2">
+                    <button
+                      type="button"
+                      disabled
+                      className="w-full min-h-[46px] px-4 rounded-2xl bg-white/[0.06] border border-white/10 text-zinc-400 font-bold text-xs flex items-center justify-center gap-2 cursor-not-allowed"
+                    >
+                      <Lock className="w-3.5 h-3.5" />
+                      <span>Reward unlocks in {sponsorLoading.secondsLeft}s...</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => cancelSponsorRewardFlowEarly(false)}
+                      className="w-full py-1.5 text-[11px] font-medium text-zinc-400 hover:text-zinc-200 underline underline-offset-4 transition-colors cursor-pointer"
+                    >
+                      Exit Ad (No Coins)
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="h-2 shrink-0" aria-hidden="true" />
           </div>
-          <div className="fixed top-2.5 left-1/2 -translate-x-1/2 z-[9999] pointer-events-none inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-[#09090b]/95 border border-amber-400/55 text-[11px] font-bold text-amber-200 shadow-[0_6px_24px_rgba(0,0,0,0.85)] backdrop-blur-md whitespace-nowrap">
-            <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping shrink-0" />
-            <span>Sponsor Active</span>
-            <span className="font-mono-num text-amber-300">{sponsorLoading.secondsLeft}s</span>
-          </div>
-        </>
-      )}
+        );
+      })()}
 
       <InAppBrowserBanner />
 

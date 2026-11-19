@@ -68,6 +68,43 @@ async function startServer() {
     res.json({ ok: true, service: 'dramawin-server' });
   });
 
+  app.get('/api/youtube-thumbnail', async (req, res) => {
+    const rawUrl = typeof req.query.url === 'string' ? req.query.url.trim() : '';
+    if (!rawUrl || !/^https?:\/\/([^/]*\.)?(youtube\.com|youtu\.be|youtube-nocookie\.com)\//i.test(rawUrl)) {
+      res.status(400).json({ error: 'Valid YouTube URL required.' });
+      return;
+    }
+    try {
+      const oembedResp = await fetch(
+        `https://www.youtube.com/oembed?url=${encodeURIComponent(rawUrl)}&format=json`,
+        {
+          signal: AbortSignal.timeout(5000),
+          headers: { Accept: 'application/json' },
+        }
+      );
+      if (!oembedResp.ok) {
+        res.status(404).json({ error: 'YouTube metadata not found.' });
+        return;
+      }
+      const data = (await oembedResp.json()) as {
+        thumbnail_url?: string;
+        title?: string;
+      };
+      const rawThumb = (data.thumbnail_url || '').trim();
+      const idMatch = rawThumb.match(/\/vi\/([a-zA-Z0-9_-]{11})\//);
+      const videoId = idMatch?.[1] || null;
+      const posterUrl = videoId
+        ? `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`
+        : rawThumb || null;
+      const fallbackUrl = videoId
+        ? `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`
+        : rawThumb || null;
+      res.json({ videoId, posterUrl, fallbackUrl, title: data.title || '' });
+    } catch {
+      res.status(502).json({ error: 'Failed to resolve YouTube thumbnail.' });
+    }
+  });
+
   app.post('/api/support-chat', async (req, res) => {
     const ai = getGeminiClient();
     if (!ai) {

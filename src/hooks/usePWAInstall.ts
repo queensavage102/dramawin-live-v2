@@ -7,6 +7,7 @@ export interface BeforeInstallPromptEvent extends Event {
 
 declare global {
   interface Window {
+    __deferredPrompt?: BeforeInstallPromptEvent | null;
     __dramawinInstallPrompt?: BeforeInstallPromptEvent | null;
   }
 }
@@ -23,14 +24,22 @@ function detectIOS(): boolean {
 function detectInAppBrowser(): boolean {
   if (typeof window === 'undefined') return false;
   const ua = window.navigator.userAgent || '';
-  return /FBAN|FBAV|Instagram|WhatsApp|TikTok|BytedanceWebview|Musical_ly|Snapchat|Line\/|MicroMessenger|wv\)/i.test(
+  return /WhatsApp|FBAN|FBAV|FB_IAB|FBIOS|FB4A|Messenger|Orca|Instagram|TikTok|BytedanceWebview|Musical_ly|Telegram|Twitter|XApp|Snapchat|Line\/|MicroMessenger/i.test(
     ua
   );
 }
 
+const UNIVERSAL_ANDROID_BROWSER_INTENT =
+  'intent://drama-win-tornement.vercel.app/#Intent;scheme=https;action=android.intent.action.VIEW;category=android.intent.category.BROWSABLE;end';
+const IOS_SAFARI_EXTERNAL_URL = 'x-safari-https://drama-win-tornement.vercel.app';
+const CHROME_SCHEME_FALLBACK =
+  'googlechrome://navigate?url=https://drama-win-tornement.vercel.app';
+
 export function usePWAInstall() {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(() =>
-    typeof window !== 'undefined' ? window.__dramawinInstallPrompt || null : null
+    typeof window !== 'undefined'
+      ? window.__deferredPrompt || window.__dramawinInstallPrompt || null
+      : null
   );
   const [isInstalled, setIsInstalled] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
@@ -67,24 +76,28 @@ export function usePWAInstall() {
       setInIframe(true);
     }
 
-    if (window.__dramawinInstallPrompt) {
-      setDeferredPrompt(window.__dramawinInstallPrompt);
+    const existingPrompt = window.__deferredPrompt || window.__dramawinInstallPrompt;
+    if (existingPrompt) {
+      setDeferredPrompt(existingPrompt);
     }
 
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
       const promptEvt = e as BeforeInstallPromptEvent;
+      window.__deferredPrompt = promptEvt;
       window.__dramawinInstallPrompt = promptEvt;
       setDeferredPrompt(promptEvt);
     };
 
     const handleCustomReady = () => {
-      if (window.__dramawinInstallPrompt) {
-        setDeferredPrompt(window.__dramawinInstallPrompt);
+      const readyPrompt = window.__deferredPrompt || window.__dramawinInstallPrompt;
+      if (readyPrompt) {
+        setDeferredPrompt(readyPrompt);
       }
     };
 
     const handleAppInstalled = () => {
+      window.__deferredPrompt = null;
       window.__dramawinInstallPrompt = null;
       setDeferredPrompt(null);
       setIsInstalled(true);
@@ -109,11 +122,13 @@ export function usePWAInstall() {
   }, []);
 
   const install = useCallback(async (): Promise<'accepted' | 'dismissed' | 'unavailable'> => {
-    const promptEvt = deferredPrompt || window.__dramawinInstallPrompt;
+    const promptEvt =
+      window.__deferredPrompt || window.__dramawinInstallPrompt || deferredPrompt;
     if (!promptEvt) return 'unavailable';
     try {
       await promptEvt.prompt();
       const { outcome } = await promptEvt.userChoice;
+      window.__deferredPrompt = null;
       window.__dramawinInstallPrompt = null;
       setDeferredPrompt(null);
       if (outcome === 'accepted') {
@@ -121,6 +136,7 @@ export function usePWAInstall() {
       }
       return outcome;
     } catch {
+      window.__deferredPrompt = null;
       window.__dramawinInstallPrompt = null;
       setDeferredPrompt(null);
       return 'unavailable';
@@ -129,19 +145,24 @@ export function usePWAInstall() {
 
   const openInExternalBrowser = useCallback(() => {
     if (typeof window === 'undefined') return;
-    const currentUrl = window.location.href;
     if (!isIOS) {
-      const strippedUrl = currentUrl.replace(/^https?:\/\//, '');
-      window.location.href = `intent://${strippedUrl}#Intent;scheme=https;package=com.android.chrome;end`;
+      window.location.href = UNIVERSAL_ANDROID_BROWSER_INTENT;
+      window.setTimeout(() => {
+        if (!document.hidden) {
+          window.location.href = CHROME_SCHEME_FALLBACK;
+        }
+      }, 800);
     } else {
-      window.location.href = currentUrl.replace(/^https?:\/\//i, 'x-safari-https://');
-
-      
+      window.location.href = IOS_SAFARI_EXTERNAL_URL;
     }
   }, [isIOS]);
 
   return {
-    isInstallable: Boolean(deferredPrompt),
+    isInstallable: Boolean(
+      deferredPrompt ||
+        (typeof window !== 'undefined' &&
+          (window.__deferredPrompt || window.__dramawinInstallPrompt))
+    ),
     isInstalled,
     isIOS,
     isInAppBrowser,

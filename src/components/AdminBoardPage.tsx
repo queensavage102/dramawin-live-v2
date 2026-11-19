@@ -42,17 +42,21 @@ import {
   extractYouTubePlaylistId,
   getCanonicalVideoKey,
   getEpisodeSeriesId,
+  getYouTubeFallbackThumbnailUrl,
   getYouTubePreviewEmbedUrl,
   getYouTubeThumbnailUrl,
   inferEpisodeCategory,
   isYouTubeDomainOnly,
   normalizeEpisodeStartSeconds,
+  resolveYouTubeAutoPosterUrl,
   sanitizeMediaUrl,
+  sanitizePosterUrl,
   toSeriesId,
 } from '../constants';
 import {
   AppConfig,
   DramaEpisode,
+  DramaSeries,
   LeaderboardPlayer,
   MysteryWinnerRecord,
   PrizeWinRecord,
@@ -60,7 +64,11 @@ import {
   SupportStatus,
 } from '../types';
 import { resolveEpisodeCover } from '../utils/localState';
-import { saveMediaFile, useResolvedMediaUrl } from '../utils/mediaStore';
+import {
+  saveMediaFile,
+  uploadPosterImageToFirebaseStorage,
+  useResolvedMediaUrl,
+} from '../utils/mediaStore';
 
 export interface AdminEpisodeFormInput {
   title: string;
@@ -70,6 +78,7 @@ export interface AdminEpisodeFormInput {
   episodeLabel: string;
   duration: string;
   rewardCoins: number;
+  posterUrl?: string;
   coverImage: string;
   thumbnailUrl?: string;
   synopsis: string;
@@ -84,6 +93,7 @@ interface AdminBoardPageProps {
   firebaseUserEmail?: string | null;
   appConfig: AppConfig;
   sections: string[];
+  cloudSeries?: DramaSeries[];
   episodes: DramaEpisode[];
   players: LeaderboardPlayer[];
   mysteryWinners: MysteryWinnerRecord[];
@@ -117,6 +127,12 @@ interface AdminBoardPageProps {
   onUpdateEpisode: (episodeId: string, input: AdminEpisodeFormInput) => Promise<void>;
   onDeleteEpisode: (episodeId: string) => Promise<void>;
   onReorderSeries: (orderedSeriesNames: string[]) => Promise<void>;
+  onUpdateSeriesPoster?: (
+    seriesName: string,
+    posterUrl: string,
+    category?: string,
+    synopsis?: string
+  ) => Promise<void>;
   onRestoreDefaultEpisodes: () => Promise<void>;
   onAdjustPlayerCoins: (
     player: LeaderboardPlayer,
@@ -135,17 +151,56 @@ const ResolvedThumb: React.FC<{ src: string; alt: string; className?: string }> 
   alt,
   className = 'w-full h-full object-cover',
 }) => {
-  const cleanSrc = src === 'none' ? '' : src;
+  const cleanSrc = sanitizePosterUrl(src);
   const resolved = useResolvedMediaUrl(cleanSrc);
-  if (!resolved) {
+  const fallbackHq = sanitizePosterUrl(getYouTubeFallbackThumbnailUrl(cleanSrc) || '');
+  const [useFallback, setUseFallback] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setUseFallback(false);
+    setFailed(false);
+  }, [cleanSrc, resolved, fallbackHq]);
+
+  const activeSrc = useFallback && fallbackHq ? fallbackHq : resolved || fallbackHq;
+
+  if (!activeSrc || failed) {
     return (
-      <div className="w-full h-full flex flex-col items-center justify-center bg-[#0C0C10] text-[#8D867A] gap-1 p-2 text-center">
-        <ImageIcon className="w-5 h-5" />
-        <span className="text-[10px]">No Thumbnail</span>
+      <div className="w-full h-full flex flex-col items-center justify-center bg-[#0C0C10] text-[#8D867A] gap-1 p-1.5 text-center">
+        <ImageIcon className="w-4 h-4 text-[#D4AF37]/50" />
+        <span className="text-[9px] leading-tight">No Poster</span>
       </div>
     );
   }
-  return <img src={resolved} alt={alt} referrerPolicy="no-referrer" className={className} />;
+  return (
+    <img
+      key={activeSrc}
+      src={activeSrc}
+      alt={alt}
+      referrerPolicy="no-referrer"
+      onLoad={(e) => {
+        if (
+          activeSrc.includes('/maxresdefault.jpg') &&
+          e.currentTarget.naturalWidth > 0 &&
+          e.currentTarget.naturalWidth <= 120
+        ) {
+          if (!useFallback && fallbackHq && activeSrc !== fallbackHq) {
+            setUseFallback(true);
+          } else {
+            setFailed(true);
+          }
+        }
+      }}
+      onError={() => {
+        if (!useFallback && fallbackHq && activeSrc !== fallbackHq) {
+          setUseFallback(true);
+        } else {
+          setFailed(true);
+        }
+      }}
+      className={className}
+    />
+  );
 };
 
 const AdminVideoPreview: React.FC<{ videoUrl: string; title: string }> = ({
@@ -234,6 +289,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
   firebaseUserEmail = null,
   appConfig,
   sections,
+  cloudSeries = [],
   episodes,
   players,
   mysteryWinners,
@@ -255,6 +311,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
   onUpdateEpisode,
   onDeleteEpisode,
   onReorderSeries,
+  onUpdateSeriesPoster,
   onRestoreDefaultEpisodes,
   onAdjustPlayerCoins,
   onResolveSupportMessage,
@@ -406,6 +463,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
   const [wsVideoUrl, setWsVideoUrl] = useState('');
   const [wsDescription, setWsDescription] = useState('');
   const [wsUploadingThumb, setWsUploadingThumb] = useState(false);
+  const [wsUploadingSeries, setWsUploadingSeries] = useState<string | null>(null);
   const [wsAdding, setWsAdding] = useState(false);
   const [wsDrafts, setWsDrafts] = useState<
     Record<
@@ -413,13 +471,17 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
       {
         title: string;
         category: string;
-        thumbUrl: string;
+        posterUrl: string;
         videoUrl: string;
         description: string;
       }
     >
   >({});
   const [wsSavingSeries, setWsSavingSeries] = useState<string | null>(null);
+  const [resolvedWsAutoThumb, setResolvedWsAutoThumb] = useState('');
+  const [resolvedEpAutoThumb, setResolvedEpAutoThumb] = useState('');
+  const [wsRowAutoThumbs, setWsRowAutoThumbs] = useState<Record<string, string>>({});
+  const playlistThumbCacheRef = useRef<Record<string, string>>({});
 
   const episodeFormRef = useRef<HTMLElement | null>(null);
 
@@ -470,15 +532,80 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
     };
   }, []);
 
+  // Auto-resolve YouTube video OR playlist thumbnail live preview for Episode Form
+  useEffect(() => {
+    const cleanVid = epVideoUrl.trim();
+    if (!cleanVid || sanitizePosterUrl(epCoverUrl)) {
+      setResolvedEpAutoThumb('');
+      return;
+    }
+    const syncThumb = getYouTubeThumbnailUrl(cleanVid);
+    if (syncThumb) {
+      setResolvedEpAutoThumb(syncThumb);
+      return;
+    }
+    if (playlistThumbCacheRef.current[cleanVid]) {
+      setResolvedEpAutoThumb(playlistThumbCacheRef.current[cleanVid]);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      const fetched = await resolveYouTubeAutoPosterUrl(cleanVid);
+      if (!cancelled) {
+        if (fetched) playlistThumbCacheRef.current[cleanVid] = fetched;
+        setResolvedEpAutoThumb(fetched || '');
+      }
+    }, 320);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [epVideoUrl, epCoverUrl]);
+
+  // Auto-resolve YouTube video OR playlist thumbnail live preview for Watch Sheet Quick-Add
+  useEffect(() => {
+    const cleanVid = wsVideoUrl.trim();
+    if (!cleanVid || sanitizePosterUrl(wsThumbUrl)) {
+      setResolvedWsAutoThumb('');
+      return;
+    }
+    const syncThumb = getYouTubeThumbnailUrl(cleanVid);
+    if (syncThumb) {
+      setResolvedWsAutoThumb(syncThumb);
+      return;
+    }
+    if (playlistThumbCacheRef.current[cleanVid]) {
+      setResolvedWsAutoThumb(playlistThumbCacheRef.current[cleanVid]);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      const fetched = await resolveYouTubeAutoPosterUrl(cleanVid);
+      if (!cancelled) {
+        if (fetched) playlistThumbCacheRef.current[cleanVid] = fetched;
+        setResolvedWsAutoThumb(fetched || '');
+      }
+    }, 320);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [wsVideoUrl, wsThumbUrl]);
+
   const extractedVideoId = epVideoUrl.trim() ? extractYouTubeId(epVideoUrl) : null;
   const extractedPlaylistId = epVideoUrl.trim()
     ? extractYouTubePlaylistId(epVideoUrl)
     : null;
-  const autoYoutubeThumb = epVideoUrl.trim()
-    ? getYouTubeThumbnailUrl(epVideoUrl)
-    : null;
-  // Strictly prioritize user-supplied or uploaded thumbnail over auto-YouTube fallback
-  const previewThumb = epCoverUrl.trim() || autoYoutubeThumb || '';
+  const autoYoutubeThumb =
+    (epVideoUrl.trim() ? getYouTubeThumbnailUrl(epVideoUrl) : null) ||
+    resolvedEpAutoThumb ||
+    null;
+  // Prioritize valid user-supplied/uploaded posterUrl over auto-YouTube maxresdefault fallback
+  const previewThumb = sanitizePosterUrl(epCoverUrl) || autoYoutubeThumb || '';
+  const wsPreviewThumb =
+    sanitizePosterUrl(wsThumbUrl) ||
+    (wsVideoUrl.trim() ? getYouTubeThumbnailUrl(wsVideoUrl) || resolvedWsAutoThumb : '') ||
+    '';
 
   const resolvedSeriesName =
     seriesSelect === NEW_SERIES_OPTION ? customSeriesName.trim() : seriesSelect;
@@ -546,7 +673,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
   const handleStartEditEpisode = (ep: DramaEpisode) => {
     setEditingEpisodeId(ep.id);
     setEpVideoUrl((ep.videoUrl || ep.youtubeUrl || '').trim());
-    setEpCoverUrl((ep.thumbnailUrl || ep.coverImage || '').trim());
+    setEpCoverUrl(sanitizePosterUrl(ep.posterUrl || ep.thumbnailUrl || ep.coverImage || ''));
     setEpTitle(ep.title);
     if (existingSeriesList.includes(ep.series)) {
       setSeriesSelect(ep.series);
@@ -613,15 +740,22 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
     setUploadingThumb(true);
+    const localPreview = URL.createObjectURL(file);
+    setEpCoverUrl(localPreview);
     try {
-      const refUrl = await saveMediaFile(file);
-      setEpCoverUrl(refUrl);
-      setStatusMessage(`Uploaded custom thumbnail "${file.name}".`);
+      const storageUrl = await uploadPosterImageToFirebaseStorage(
+        file,
+        resolvedSeriesName || epTitle || 'poster'
+      );
+      setEpCoverUrl(storageUrl);
+      setStatusMessage(`Uploaded 2:3 poster "${file.name}" to Firebase Storage.`);
     } catch (err) {
+      setEpCoverUrl('');
       setStatusMessage(
-        err instanceof Error ? err.message : 'Failed to upload thumbnail image.'
+        err instanceof Error ? err.message : 'Failed to upload 2:3 poster image.'
       );
     } finally {
+      URL.revokeObjectURL(localPreview);
       setUploadingThumb(false);
       e.target.value = '';
     }
@@ -887,12 +1021,15 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
       epCategory.trim() || inferEpisodeCategory(resolvedSeriesName, finalTitle);
 
     const cleanVideo = sanitizeMediaUrl(epVideoUrl.trim());
-    const explicitThumb = sanitizeMediaUrl(epCoverUrl.trim());
-    const finalThumb =
+    const explicitThumb = sanitizePosterUrl(epCoverUrl);
+    let finalThumb =
       explicitThumb ||
       (cleanVideo ? getYouTubeThumbnailUrl(cleanVideo) || '' : '') ||
-      autoYoutubeThumb ||
+      resolvedEpAutoThumb ||
       '';
+    if (!finalThumb && cleanVideo) {
+      finalThumb = (await resolveYouTubeAutoPosterUrl(cleanVideo)) || '';
+    }
 
     const payload: AdminEpisodeFormInput = {
       title: finalTitle,
@@ -902,6 +1039,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
       episodeLabel: finalEpLabel,
       duration: epDuration.trim() || 'Watch 30s+',
       rewardCoins: Number(epReward) || 100,
+      posterUrl: finalThumb,
       coverImage: finalThumb,
       thumbnailUrl: finalThumb,
       synopsis:
@@ -985,16 +1123,29 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
     }
   };
 
-  // Watch Sheet helpers: one clean row per series folder
+  const cloudSeriesById = useMemo(() => {
+    const map = new Map<string, DramaSeries>();
+    cloudSeries.forEach((s) => {
+      if (s?.seriesId) map.set(s.seriesId, s);
+    });
+    return map;
+  }, [cloudSeries]);
+
+  // Watch Sheet helpers: one clean row per series folder (canonical posterUrl)
   const watchSheetRows = useMemo(() => {
     return existingSeriesCatalog.map((catalogItem) => {
       const seriesEps = catalogItem.episodes;
       const lead = seriesEps[0] || null;
-      const thumb = lead ? resolveEpisodeCover(lead) : '';
+      const cloudMeta = cloudSeriesById.get(catalogItem.seriesId);
+      const cloudPoster = cloudMeta
+        ? sanitizePosterUrl(cloudMeta.posterUrl || cloudMeta.coverImage)
+        : '';
+      const leadPoster = lead ? resolveEpisodeCover(lead) : '';
+      const posterUrl = cloudPoster || leadPoster || '';
       const rawVid = lead ? (lead.videoUrl || lead.youtubeUrl || '').trim() : '';
       const desc = lead
         ? lead.synopsis || lead.episodeLabel || `${seriesEps.length} Episode(s)`
-        : '0 Episodes';
+        : cloudMeta?.synopsis || '0 Episodes';
       return {
         seriesId: catalogItem.seriesId,
         seriesName: catalogItem.seriesName,
@@ -1002,24 +1153,72 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
         episodeCount: seriesEps.length,
         episodes: seriesEps,
         leadEpisode: lead,
-        thumbUrl: thumb,
+        posterUrl,
         videoUrl: rawVid,
         description: desc,
       };
     });
-  }, [existingSeriesCatalog]);
+  }, [existingSeriesCatalog, cloudSeriesById]);
+
+  // Auto-resolve YouTube playlist posters in Watch Sheet rows when posterUrl is blank
+  useEffect(() => {
+    const pending: { seriesName: string; videoUrl: string }[] = [];
+    for (const row of watchSheetRows) {
+      const draft = wsDrafts[row.seriesName];
+      const activePoster = sanitizePosterUrl(draft ? draft.posterUrl : row.posterUrl);
+      const activeVideo = (draft ? draft.videoUrl : row.videoUrl).trim();
+      if (
+        !activePoster &&
+        activeVideo &&
+        !getYouTubeThumbnailUrl(activeVideo) &&
+        !playlistThumbCacheRef.current[activeVideo]
+      ) {
+        pending.push({ seriesName: row.seriesName, videoUrl: activeVideo });
+      }
+    }
+    if (pending.length === 0) return;
+
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      const updates: Record<string, string> = {};
+      await Promise.all(
+        pending.slice(0, 6).map(async ({ seriesName, videoUrl }) => {
+          const fetched = await resolveYouTubeAutoPosterUrl(videoUrl);
+          if (fetched) {
+            playlistThumbCacheRef.current[videoUrl] = fetched;
+            updates[seriesName] = fetched;
+          }
+        })
+      );
+      if (!cancelled && Object.keys(updates).length > 0) {
+        setWsRowAutoThumbs((prev) => ({ ...prev, ...updates }));
+      }
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [watchSheetRows, wsDrafts]);
 
   const handleWsQuickThumbUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setWsUploadingThumb(true);
+    const localPreview = URL.createObjectURL(file);
+    setWsThumbUrl(localPreview);
     try {
-      const refUrl = await saveMediaFile(file);
-      setWsThumbUrl(refUrl);
-      setStatusMessage(`Uploaded Watch Sheet cover "${file.name}".`);
+      const storageUrl = await uploadPosterImageToFirebaseStorage(
+        file,
+        wsTitle.trim() || 'quick-add-poster'
+      );
+      setWsThumbUrl(storageUrl);
+      setStatusMessage(`Uploaded 2:3 poster "${file.name}" to Firebase Storage.`);
     } catch (err) {
-      setStatusMessage(err instanceof Error ? err.message : 'Failed to upload cover image.');
+      setWsThumbUrl('');
+      setStatusMessage(err instanceof Error ? err.message : 'Failed to upload 2:3 poster image.');
     } finally {
+      URL.revokeObjectURL(localPreview);
       setWsUploadingThumb(false);
       e.target.value = '';
     }
@@ -1030,7 +1229,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
     baseDraft: {
       title: string;
       category: string;
-      thumbUrl: string;
+      posterUrl: string;
       videoUrl: string;
       description: string;
     },
@@ -1038,16 +1237,28 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setWsUploadingSeries(seriesKey);
+    const localPreview = URL.createObjectURL(file);
+    setWsDrafts((prev) => ({
+      ...prev,
+      [seriesKey]: { ...baseDraft, posterUrl: localPreview },
+    }));
     try {
-      const refUrl = await saveMediaFile(file);
+      const storageUrl = await uploadPosterImageToFirebaseStorage(file, seriesKey);
       setWsDrafts((prev) => ({
         ...prev,
-        [seriesKey]: { ...baseDraft, thumbUrl: refUrl },
+        [seriesKey]: { ...baseDraft, posterUrl: storageUrl },
       }));
-      setStatusMessage(`Ready to save uploaded cover for "${seriesKey}". Click Save Row.`);
+      setStatusMessage(`Uploaded 2:3 poster for "${seriesKey}" to Firebase Storage. Click Save to apply.`);
     } catch (err) {
-      setStatusMessage(err instanceof Error ? err.message : 'Failed to upload image.');
+      setWsDrafts((prev) => ({
+        ...prev,
+        [seriesKey]: baseDraft,
+      }));
+      setStatusMessage(err instanceof Error ? err.message : 'Failed to upload 2:3 poster image.');
     } finally {
+      URL.revokeObjectURL(localPreview);
+      setWsUploadingSeries(null);
       e.target.value = '';
     }
   };
@@ -1060,8 +1271,14 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
     setStatusMessage(null);
     try {
       const cleanVideo = sanitizeMediaUrl(wsVideoUrl.trim());
-      const autoThumb = cleanVideo ? getYouTubeThumbnailUrl(cleanVideo) : null;
-      const finalThumb = sanitizeMediaUrl(wsThumbUrl.trim()) || autoThumb || '';
+      let finalThumb = sanitizePosterUrl(wsThumbUrl);
+      if (!finalThumb && cleanVideo) {
+        finalThumb =
+          getYouTubeThumbnailUrl(cleanVideo) ||
+          resolvedWsAutoThumb ||
+          (await resolveYouTubeAutoPosterUrl(cleanVideo)) ||
+          '';
+      }
       const cleanDesc = wsDescription.trim() || `${cleanTitle} drama series playlist.`;
       const targetSeriesId = toSeriesId(cleanTitle);
       const targetCategory = wsCategory.trim() || inferEpisodeCategory(cleanTitle);
@@ -1076,6 +1293,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
         episodeLabel: 'EP 01',
         duration: 'Watch & Earn',
         rewardCoins: 100,
+        posterUrl: finalThumb,
         coverImage: finalThumb,
         thumbnailUrl: finalThumb,
         synopsis: cleanDesc.slice(0, 240),
@@ -1085,6 +1303,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
         startTime: DEFAULT_VIDEO_START_SECONDS,
         sortOrder: episodes.length + 1,
       });
+      await onUpdateSeriesPoster?.(cleanTitle, finalThumb, targetCategory, cleanDesc.slice(0, 240));
 
       setWsDrafts((prev) => {
         const next = { ...prev };
@@ -1115,14 +1334,14 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
       category: string;
       episodes: DramaEpisode[];
       leadEpisode: DramaEpisode | null;
-      thumbUrl: string;
+      posterUrl: string;
       videoUrl: string;
       description: string;
     },
     draft: {
       title: string;
       category: string;
-      thumbUrl: string;
+      posterUrl: string;
       videoUrl: string;
       description: string;
     }
@@ -1142,8 +1361,14 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
       const targetCategory =
         draft.category.trim() || inferEpisodeCategory(targetSeries);
       const cleanVideo = sanitizeMediaUrl(draft.videoUrl.trim());
-      const autoThumb = cleanVideo ? getYouTubeThumbnailUrl(cleanVideo) : null;
-      const finalThumb = sanitizeMediaUrl(draft.thumbUrl.trim()) || autoThumb || '';
+      let finalThumb = sanitizePosterUrl(draft.posterUrl);
+      if (!finalThumb && cleanVideo) {
+        finalThumb =
+          getYouTubeThumbnailUrl(cleanVideo) ||
+          wsRowAutoThumbs[row.seriesName] ||
+          (await resolveYouTubeAutoPosterUrl(cleanVideo)) ||
+          '';
+      }
       const cleanDesc = draft.description.trim() || `${targetSeries} drama series.`;
 
       const incomingWsVideoKey = getCanonicalVideoKey(cleanVideo);
@@ -1170,6 +1395,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
           episodeLabel: row.leadEpisode.episodeLabel || 'EP 01',
           duration: row.leadEpisode.duration || 'Watch & Earn',
           rewardCoins: row.leadEpisode.rewardCoins || 100,
+          posterUrl: finalThumb,
           coverImage: finalThumb,
           thumbnailUrl: finalThumb,
           synopsis: cleanDesc.slice(0, 240),
@@ -1190,6 +1416,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
               episodeLabel: sibling.episodeLabel,
               duration: sibling.duration,
               rewardCoins: sibling.rewardCoins,
+              posterUrl: sibling.posterUrl || sibling.coverImage,
               coverImage: sibling.coverImage,
               thumbnailUrl: sibling.thumbnailUrl,
               synopsis: sibling.synopsis,
@@ -1209,6 +1436,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
           episodeLabel: 'EP 01',
           duration: 'Watch & Earn',
           rewardCoins: 100,
+          posterUrl: finalThumb,
           coverImage: finalThumb,
           thumbnailUrl: finalThumb,
           synopsis: cleanDesc.slice(0, 240),
@@ -1220,12 +1448,14 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
         });
       }
 
+      await onUpdateSeriesPoster?.(targetSeries, finalThumb, targetCategory, cleanDesc.slice(0, 240));
+
       setWsDrafts((prev) => {
         const next = { ...prev };
         delete next[row.seriesName];
         return next;
       });
-      showAdminToast(`Saved "${targetSeries}" (${targetCategory}).`);
+      showAdminToast(`Saved "${targetSeries}" (${targetCategory}) posterUrl!`);
     } catch (err) {
       setStatusMessage(err instanceof Error ? err.message : 'Unable to save Watch Sheet row.');
     } finally {
@@ -1489,18 +1719,29 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                   </div>
 
                   <div className="md:col-span-3 space-y-1">
-                    <label className="text-[11px] text-[#A69F91]">Cover Thumbnail URL / Upload</label>
-                    <div className="flex gap-1.5">
+                    <label className="text-[11px] text-[#A69F91]">
+                      Poster URL (posterUrl) / Upload 2:3
+                    </label>
+                    <div className="flex gap-1.5 items-center">
+                      <div
+                        title="Live 2:3 Poster Preview"
+                        className="w-10 aspect-[2/3] rounded-md overflow-hidden border border-[#D4AF37]/35 bg-[#070709] shrink-0"
+                      >
+                        <ResolvedThumb src={wsPreviewThumb} alt={wsTitle || 'Poster Preview'} />
+                      </div>
                       <input
                         type="text"
                         value={wsThumbUrl}
                         onChange={(e) => setWsThumbUrl(e.target.value)}
-                        placeholder="https://... or upload"
+                        placeholder="https://... or blank = auto YT"
                         className="flex-1 min-w-0 min-h-[42px] px-3 rounded-lg bg-[#070709] border border-white/[0.12] text-xs text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
                       />
-                      <label className="min-h-[42px] px-2.5 rounded-lg border border-[#D4AF37]/40 bg-[#15120A] text-[#FCE7A2] hover:bg-[#1F1A0D] text-[11px] font-semibold inline-flex items-center justify-center cursor-pointer shrink-0">
+                      <label
+                        title="Upload 2:3 Poster Image to Firebase Storage"
+                        className="min-h-[42px] px-2.5 rounded-lg border border-[#D4AF37]/40 bg-[#15120A] text-[#FCE7A2] hover:bg-[#1F1A0D] text-[11px] font-semibold inline-flex items-center justify-center cursor-pointer shrink-0"
+                      >
                         <Upload className="w-3.5 h-3.5" />
-                        <span className="sr-only">Upload cover image</span>
+                        <span className="sr-only">Upload 2:3 poster image</span>
                         <input
                           type="file"
                           accept="image/*"
@@ -1512,7 +1753,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                   </div>
 
                   <div className="md:col-span-2 space-y-1">
-                    <label className="text-[11px] text-[#A69F91]">EP 01 Video URL</label>
+                    <label className="text-[11px] text-[#A69F91]">EP 01 Video / Playlist URL</label>
                     <input
                       type="text"
                       value={wsVideoUrl}
@@ -1534,7 +1775,18 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                   </div>
                 </div>
 
-                <div className="flex justify-end">
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                  <div className="flex items-center gap-2 text-[11px] text-[#A69F91]">
+                    <span className="font-mono-num text-[#E8C96D]">
+                      {wsUploadingThumb
+                        ? 'Uploading 2:3 poster to Firebase Storage...'
+                        : sanitizePosterUrl(wsThumbUrl)
+                          ? 'Live Preview: Custom Poster URL ready'
+                          : wsPreviewThumb
+                            ? 'Live Preview: Auto YouTube maxresdefault.jpg'
+                            : 'Leave Poster URL blank to auto-fetch YouTube thumbnail'}
+                    </span>
+                  </div>
                   <button
                     type="submit"
                     disabled={wsAdding || wsUploadingThumb}
@@ -1548,13 +1800,13 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
 
               {/* Spreadsheet Table Rows */}
               <div className="overflow-x-auto rounded-xl border border-white/[0.08] bg-[#070709]">
-                <table className="w-full text-left border-collapse min-w-[940px]">
+                <table className="w-full text-left border-collapse min-w-[960px]">
                   <thead>
                     <tr className="border-b border-white/[0.08] bg-[#0D0D13] text-[11px] font-semibold uppercase tracking-wider text-[#A69F91]">
                       <th className="py-2.5 px-3 w-20">Order</th>
                       <th className="py-2.5 px-3">Series Title</th>
                       <th className="py-2.5 px-3 w-32">Genre</th>
-                      <th className="py-2.5 px-3">Cover Thumbnail</th>
+                      <th className="py-2.5 px-3">Poster (posterUrl · 2:3)</th>
                       <th className="py-2.5 px-3">Lead Video URL</th>
                       <th className="py-2.5 px-3">Description</th>
                       <th className="py-2.5 px-3 text-right w-52">Actions</th>
@@ -1565,7 +1817,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                       const draft = wsDrafts[row.seriesName] || {
                         title: row.seriesName,
                         category: row.category,
-                        thumbUrl: row.thumbUrl,
+                        posterUrl: row.posterUrl,
                         videoUrl: row.videoUrl,
                         description: row.description,
                       };
@@ -1576,6 +1828,12 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                         }));
                       };
                       const isRowSaving = wsSavingSeries === row.seriesName;
+                      const isRowUploading = wsUploadingSeries === row.seriesName;
+                      const rowPreviewPoster =
+                        sanitizePosterUrl(draft.posterUrl) ||
+                        (draft.videoUrl.trim() ? getYouTubeThumbnailUrl(draft.videoUrl) || '' : '') ||
+                        wsRowAutoThumbs[row.seriesName] ||
+                        '';
 
                       return (
                         <tr key={row.seriesId} className="hover:bg-white/[0.02] align-middle">
@@ -1637,21 +1895,26 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
 
                           <td className="py-2.5 px-3">
                             <div className="flex items-center gap-2">
-                              <div className="w-12 h-8 rounded overflow-hidden border border-white/10 bg-[#0D0D13] shrink-0">
-                                <ResolvedThumb src={draft.thumbUrl} alt={draft.title} />
+                              <div className="w-10 aspect-[2/3] rounded overflow-hidden border border-[#D4AF37]/30 bg-[#0D0D13] shrink-0">
+                                <ResolvedThumb src={rowPreviewPoster} alt={draft.title} />
                               </div>
                               <input
                                 type="text"
-                                value={draft.thumbUrl}
-                                onChange={(e) => updateDraft({ thumbUrl: e.target.value })}
-                                placeholder="Cover URL"
-                                className="w-24 min-h-[36px] px-2 rounded-lg bg-[#0D0D13] border border-white/[0.1] text-[11px] text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
+                                value={draft.posterUrl}
+                                onChange={(e) => updateDraft({ posterUrl: e.target.value })}
+                                placeholder="Poster URL (or auto YT)"
+                                className="w-28 min-h-[36px] px-2 rounded-lg bg-[#0D0D13] border border-white/[0.1] text-[11px] text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
                               />
-                              <label className="min-h-[36px] px-2 rounded-lg border border-[#D4AF37]/35 text-[#FCE7A2] hover:bg-[#D4AF37]/10 inline-flex items-center cursor-pointer shrink-0">
+                              <label
+                                title="Upload 2:3 Poster Image to Firebase Storage"
+                                className="min-h-[36px] px-2 rounded-lg border border-[#D4AF37]/35 text-[#FCE7A2] hover:bg-[#D4AF37]/10 inline-flex items-center gap-1 cursor-pointer shrink-0 text-[10px] font-semibold"
+                              >
                                 <Upload className="w-3 h-3" />
+                                {isRowUploading && <span>...</span>}
                                 <input
                                   type="file"
                                   accept="image/*"
+                                  disabled={isRowUploading}
                                   onChange={(e) => void handleWsRowThumbUpload(row.seriesName, draft, e)}
                                   className="sr-only"
                                 />
@@ -1691,7 +1954,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                               </button>
                               <button
                                 type="button"
-                                disabled={isRowSaving}
+                                disabled={isRowSaving || isRowUploading}
                                 onClick={() => void handleWsSaveRow(row, draft)}
                                 className="min-h-[34px] px-3 rounded-lg gold-gradient-bg text-[#181307] font-bold text-[11px] hover:brightness-105 disabled:opacity-60 cursor-pointer"
                               >
@@ -2105,14 +2368,14 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                   </div>
                 </div>
 
-                {/* Thumbnail URL OR Local Image Upload + Live Preview */}
+                {/* Poster URL OR 2:3 Firebase Storage Upload + Live Preview */}
                 <div className="sm:col-span-2 rounded-xl bg-[#09090D] border border-white/[0.08] p-4 space-y-2.5">
                   <label
                     htmlFor="ep-cover-url"
                     className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#E8C96D]"
                   >
                     <ImageIcon className="w-3.5 h-3.5" />
-                    <span>Episode Thumbnail (Custom Image URL or Upload Thumbnail)</span>
+                    <span>Series / Episode Poster (posterUrl — Direct URL or Upload 2:3 Image)</span>
                   </label>
 
                   <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
@@ -2121,21 +2384,22 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                       type="text"
                       value={epCoverUrl}
                       onChange={(e) => setEpCoverUrl(e.target.value)}
-                      placeholder="https://... image URL (or leave blank for YouTube thumbnail)"
+                      placeholder="https://... poster image URL (or leave blank to auto-fetch YouTube maxresdefault.jpg)"
                       className="flex-1 min-h-[44px] px-3.5 rounded-xl bg-[#070709] border border-[#D4AF37]/25 text-sm text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
                     />
                     <label className="min-h-[44px] px-4 rounded-xl border border-[#D4AF37]/45 bg-[#15120A] text-[#FCE7A2] hover:bg-[#1F1A0D] text-xs font-semibold inline-flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0">
                       <Upload className="w-3.5 h-3.5" />
-                      <span>{uploadingThumb ? 'Uploading...' : 'Upload Image'}</span>
+                      <span>{uploadingThumb ? 'Uploading 2:3...' : 'Upload 2:3 Poster'}</span>
                       <input
                         type="file"
                         accept="image/*"
+                        disabled={uploadingThumb}
                         onChange={(e) => void handleThumbUpload(e)}
                         className="sr-only"
                       />
                     </label>
-                    <div className="w-28 h-16 rounded-lg overflow-hidden border border-[#D4AF37]/30 bg-[#070709] shrink-0">
-                      <ResolvedThumb src={previewThumb} alt="Episode thumbnail preview" />
+                    <div className="w-14 aspect-[2/3] rounded-lg overflow-hidden border border-[#D4AF37]/30 bg-[#070709] shrink-0 mx-auto sm:mx-0">
+                      <ResolvedThumb src={previewThumb} alt="Poster preview" />
                     </div>
                   </div>
                 </div>
@@ -2240,14 +2504,16 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                       {resolvedSeriesName || 'Select Section'}
                     </span>
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <p className="text-[11px] text-[#A69F91]">Thumbnail Preview</p>
-                      <div className="aspect-video w-full rounded-xl overflow-hidden border border-white/[0.1] bg-[#070709]">
-                        <ResolvedThumb src={previewThumb} alt={epTitle || 'Thumbnail Preview'} />
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-start">
+                    <div className="md:col-span-4 space-y-1.5">
+                      <p className="text-[11px] text-[#A69F91]">
+                        2:3 Series Card Poster Preview
+                      </p>
+                      <div className="w-full max-w-[170px] aspect-[2/3] rounded-xl overflow-hidden border border-white/[0.1] bg-[#070709]">
+                        <ResolvedThumb src={previewThumb} alt={epTitle || 'Poster Preview'} />
                       </div>
                     </div>
-                    <div className="space-y-1.5">
+                    <div className="md:col-span-8 space-y-1.5">
                       <p className="text-[11px] text-[#A69F91]">Video Player Preview</p>
                       <div className="aspect-video w-full rounded-xl overflow-hidden border border-white/[0.1] bg-black">
                         <AdminVideoPreview videoUrl={epVideoUrl} title={epTitle} />

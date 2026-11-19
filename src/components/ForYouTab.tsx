@@ -22,10 +22,12 @@ import {
   DEFAULT_VIDEO_START_SECONDS,
   getEpisodeSeriesId,
   getYouTubeEmbedUrl,
+  getYouTubeFallbackThumbnailUrl,
   inferEpisodeCategory,
   isYouTubeDomainOnly,
   normalizeEpisodeStartSeconds,
   sanitizeMediaUrl,
+  sanitizePosterUrl,
 } from '../constants';
 import { DramaEpisode, PlayerPrivate } from '../types';
 import { resolveEpisodeCover } from '../utils/localState';
@@ -187,6 +189,19 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
   const fallbackCoverUrl = useResolvedMediaUrl(
     currentEpisode ? resolveEpisodeCover(currentEpisode) : ''
   );
+  const sanitizedPoster = sanitizePosterUrl(fallbackCoverUrl);
+  const posterHqFallback =
+    sanitizePosterUrl(getYouTubeFallbackThumbnailUrl(sanitizedPoster || rawVideoUrl) || '') || '';
+  const [usePosterHqFallback, setUsePosterHqFallback] = useState(false);
+  const [posterHidden, setPosterHidden] = useState(false);
+
+  useEffect(() => {
+    setUsePosterHqFallback(false);
+    setPosterHidden(false);
+  }, [sanitizedPoster, posterHqFallback, currentEpisode?.id]);
+
+  const activeBackdropPoster =
+    usePosterHqFallback && posterHqFallback ? posterHqFallback : sanitizedPoster || posterHqFallback;
 
   useEffect(() => {
     clearRecoveryTimers();
@@ -203,13 +218,49 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
     return () => clearRecoveryTimers();
   }, [currentEpisode?.id]);
 
+  const prevIsPlayingRef = useRef(true);
+
   useEffect(() => {
+    const saveDirectTimestamp = () => {
+      if (videoRef.current && Number.isFinite(videoRef.current.currentTime) && videoRef.current.currentTime > 0) {
+        savedTimeRef.current = videoRef.current.currentTime;
+      }
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        saveDirectTimestamp();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, []);
+
+  useEffect(() => {
+    const wasPlaying = prevIsPlayingRef.current;
+    prevIsPlayingRef.current = isPlaying;
     isPlayingRef.current = isPlaying;
+
     if (embedUrl || (resolvedMediaUrl && !isDirectVideoMediaUrl(resolvedMediaUrl))) {
+      if (isPlaying && !wasPlaying && savedTimeRef.current > 0.5) {
+        postYouTubeCommand(iframeRef.current, 'seekTo', [savedTimeRef.current, true]);
+      }
       postYouTubeCommand(iframeRef.current, isPlaying ? 'playVideo' : 'pauseVideo');
     }
     if (videoRef.current) {
       if (isPlaying) {
+        if (
+          savedTimeRef.current > 0.5 &&
+          Math.abs(videoRef.current.currentTime - savedTimeRef.current) > 0.75
+        ) {
+          const maxTime = Number.isFinite(videoRef.current.duration)
+            ? Math.max(0, videoRef.current.duration - 0.5)
+            : savedTimeRef.current;
+          try {
+            videoRef.current.currentTime = Math.min(savedTimeRef.current, maxTime);
+          } catch {
+            // Ignore seek error before readyState
+          }
+        }
         void videoRef.current.play().catch((err: unknown) => {
           if (err instanceof DOMException && err.name === 'NotAllowedError' && videoRef.current) {
             videoRef.current.muted = true;
@@ -217,6 +268,9 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
           }
         });
       } else {
+        if (Number.isFinite(videoRef.current.currentTime) && videoRef.current.currentTime > 0) {
+          savedTimeRef.current = videoRef.current.currentTime;
+        }
         videoRef.current.pause();
         clearRecoveryTimers();
       }
@@ -261,6 +315,17 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
       if (payload.event === 'onError') {
         triggerAutoRecover(false);
         return;
+      }
+
+      if (
+        payload.info &&
+        typeof payload.info === 'object' &&
+        typeof (payload.info as { currentTime?: unknown }).currentTime === 'number'
+      ) {
+        const ytTime = (payload.info as { currentTime: number }).currentTime;
+        if (Number.isFinite(ytTime) && ytTime > 0) {
+          savedTimeRef.current = ytTime;
+        }
       }
 
       const playerState =
@@ -350,17 +415,26 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
     setActiveIndex((prev) => (prev + 1) % episodes.length);
   }, [episodes.length]);
 
+  const handleAwardDoubleCoinsOnly = async (amount: number) => {
+    if (!currentEpisode) return;
+    await onAwardRef.current(currentEpisode, amount);
+  };
+
+  const handleContinueAfterAd = () => {
+    elapsedMsRef.current = 0;
+    setRingProgress(0);
+    setRewardModalOpen(false);
+    rewardModalOpenRef.current = false;
+    setIsPlaying(true);
+    isPlayingRef.current = true;
+  };
+
   const handleClaimReward = async (amount: number) => {
     if (!currentEpisode) return;
     try {
       await onAwardRef.current(currentEpisode, amount);
     } finally {
-      elapsedMsRef.current = 0;
-      setRingProgress(0);
-      setRewardModalOpen(false);
-      rewardModalOpenRef.current = false;
-      setIsPlaying(true);
-      isPlayingRef.current = true;
+      handleContinueAfterAd();
     }
   };
 
@@ -440,11 +514,33 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
         className="fixed inset-0 z-[35] h-screen h-[100dvh] w-full overflow-hidden bg-black select-none"
       >
         {/* Background fallback poster */}
-        {fallbackCoverUrl && (
+        {activeBackdropPoster && !posterHidden && (
           <img
-            src={fallbackCoverUrl}
+            key={activeBackdropPoster}
+            src={activeBackdropPoster}
             alt=""
             aria-hidden="true"
+            referrerPolicy="no-referrer"
+            onLoad={(e) => {
+              if (
+                activeBackdropPoster.includes('/maxresdefault.jpg') &&
+                e.currentTarget.naturalWidth > 0 &&
+                e.currentTarget.naturalWidth <= 120
+              ) {
+                if (!usePosterHqFallback && posterHqFallback && activeBackdropPoster !== posterHqFallback) {
+                  setUsePosterHqFallback(true);
+                } else {
+                  setPosterHidden(true);
+                }
+              }
+            }}
+            onError={() => {
+              if (!usePosterHqFallback && posterHqFallback && activeBackdropPoster !== posterHqFallback) {
+                setUsePosterHqFallback(true);
+              } else {
+                setPosterHidden(true);
+              }
+            }}
             className="absolute inset-0 w-full h-full object-cover opacity-30 blur-md scale-110 pointer-events-none"
           />
         )}
@@ -516,6 +612,20 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
               onPlay={(e) => {
                 e.currentTarget.muted = muted;
                 e.currentTarget.volume = 1;
+                if (
+                  savedTimeRef.current > 1 &&
+                  e.currentTarget.currentTime < 0.5 &&
+                  Number.isFinite(e.currentTarget.duration)
+                ) {
+                  try {
+                    e.currentTarget.currentTime = Math.min(
+                      savedTimeRef.current,
+                      Math.max(0, e.currentTarget.duration - 0.5)
+                    );
+                  } catch {
+                    // Ignore seek errors
+                  }
+                }
                 clearRecoveryTimers();
                 setIsRecovering(false);
                 setRecoveryFailed(false);
@@ -550,7 +660,10 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
                 setIsPlaying(false);
                 triggerAutoRecover(true);
               }}
-              onPause={() => {
+              onPause={(e) => {
+                if (e.currentTarget.currentTime > 0) {
+                  savedTimeRef.current = e.currentTarget.currentTime;
+                }
                 clearRecoveryTimers();
                 setIsPlaying(false);
               }}
@@ -877,7 +990,9 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
         sponsorUrl={currentEpisode.sponsorUrl || sponsorAdUrl || DEFAULT_SPONSOR_URL}
         episodeTitle={`${currentEpisode.series} — ${currentEpisode.episodeLabel}`}
         onStartSponsorTimer={() => onStartSponsorReward?.()}
-        onClaimDouble={() => handleClaimReward(COIN_POT_BASE_REWARD * 2)}
+        onClaimDouble={() => handleAwardDoubleCoinsOnly(COIN_POT_BASE_REWARD * 2)}
+        onContinueAfterAd={handleContinueAfterAd}
+        onCancelAd={handleContinueAfterAd}
         onClaimBase={() => handleClaimReward(COIN_POT_BASE_REWARD)}
       />
 

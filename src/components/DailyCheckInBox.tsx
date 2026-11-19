@@ -31,8 +31,20 @@ export const DailyCheckInBox: React.FC<DailyCheckInBoxProps> = ({
     if (claimedDays.includes(day.key) || day.key !== todayWeekday || collecting) {
       return;
     }
+    if (onStartSponsorReward) {
+      onStartSponsorReward(async () => {
+        setCollecting(true);
+        try {
+          await onCompleteCheckIn(day.key, day.reward);
+        } finally {
+          setCollecting(false);
+        }
+      });
+      return;
+    }
+
     window.open(DEFAULT_SPONSOR_URL, '_blank');
-    onStartSponsorReward?.();
+
     setCollecting(true);
     try {
       await onCompleteCheckIn(day.key, day.reward);
