@@ -12,9 +12,14 @@ if (typeof window !== 'undefined') {
 
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/sw.js').catch(() => {
-        // Ignore service worker registration errors
-      });
+      navigator.serviceWorker
+        .register('/sw.js', { updateViaCache: 'none' })
+        .then((registration) => {
+          void registration.update().catch(() => {});
+        })
+        .catch(() => {
+          // Ignore service worker registration errors
+        });
     });
   }
 }

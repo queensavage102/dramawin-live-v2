@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { User, onAuthStateChanged, signInWithPopup } from 'firebase/auth';
+import { User, onAuthStateChanged, signInAnonymously, signInWithPopup } from 'firebase/auth';
 import { AlertTriangle, Crown, Flame, X } from 'lucide-react';
 import { AdminBoardPage } from './components/AdminBoardPage';
 import { BottomNavBar } from './components/BottomNavBar';
@@ -7,6 +7,7 @@ import { CheckInVaultTab } from './components/CheckInVaultTab';
 import { ConfettiExplosion } from './components/ConfettiExplosion';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ForYouTab } from './components/ForYouTab';
+import { InAppBrowserBanner } from './components/InAppBrowserBanner';
 import { MeTab } from './components/MeTab';
 import { MysteryRevealState, MysteryVaultCard } from './components/MysteryVaultCard';
 import { RealisticGoldCoin } from './components/RealisticGoldCoin';
@@ -208,6 +209,8 @@ function DramaWinApp() {
 
   const streakReminderShownRef = useRef<string | null>(null);
   const purgedStrayFirestoreRef = useRef<boolean>(false);
+  const triedAnonAuthRef = useRef<boolean>(false);
+  const pendingGiftBoxNumberRef = useRef<number | null>(null);
   const cloudOpenedBoxesRef = useRef<number[]>(cloudOpenedBoxes);
   const sponsorFlowRef = useRef<{
     active: boolean;
@@ -225,10 +228,15 @@ function DramaWinApp() {
     cloudOpenedBoxesRef.current = cloudOpenedBoxes;
   }, [cloudOpenedBoxes]);
 
+  useEffect(() => {
+    pendingGiftBoxNumberRef.current = pendingGiftBoxNumber;
+  }, [pendingGiftBoxNumber]);
+
   const finishSponsorRewardFlow = useCallback(() => {
     const flow = sponsorFlowRef.current;
     if (!flow.active) return;
     flow.active = false;
+    flow.leftApp = false;
     const pendingReward = flow.rewardAction;
     flow.rewardAction = null;
 
@@ -237,6 +245,25 @@ function DramaWinApp() {
     setResumePlaybackSignal((prev) => prev + 1);
     if (pendingReward) {
       void pendingReward().catch(() => {});
+    }
+  }, []);
+
+  const cancelSponsorRewardFlowEarly = useCallback((showEarlyNotice = false) => {
+    const flow = sponsorFlowRef.current;
+    if (!flow.active) return;
+    flow.active = false;
+    flow.startedAt = 0;
+    flow.leftApp = false;
+    flow.rewardAction = null;
+    setSponsorLoading(null);
+    setPendingGiftBoxNumber(null);
+    setResumePlaybackSignal((prev) => prev + 1);
+    if (showEarlyNotice) {
+      setToast({
+        id: `${Date.now()}-early-ad`,
+        message: 'Sponsor ad closed early — watch for 20s to unlock your Gift Box.',
+        tone: 'neutral',
+      });
     }
   }, []);
 
@@ -275,10 +302,49 @@ function DramaWinApp() {
       }
     }, 50);
 
+    const handleLeave = () => {
+      if (sponsorFlowRef.current.active) {
+        sponsorFlowRef.current.leftApp = true;
+      }
+    };
+
+    const handleVisibility = () => {
+      if (!sponsorFlowRef.current.active) return;
+      if (document.visibilityState === 'hidden') {
+        sponsorFlowRef.current.leftApp = true;
+        return;
+      }
+      if (document.visibilityState === 'visible' && sponsorFlowRef.current.leftApp) {
+        const elapsed = Date.now() - sponsorFlowRef.current.startedAt;
+        if (elapsed >= totalMs) {
+          finishSponsorRewardFlow();
+        } else {
+          cancelSponsorRewardFlowEarly(pendingGiftBoxNumberRef.current !== null);
+        }
+      }
+    };
+
+    const handleFocusReturn = () => {
+      if (!sponsorFlowRef.current.active || !sponsorFlowRef.current.leftApp) return;
+      const elapsed = Date.now() - sponsorFlowRef.current.startedAt;
+      if (elapsed >= totalMs) {
+        finishSponsorRewardFlow();
+      } else {
+        cancelSponsorRewardFlowEarly(pendingGiftBoxNumberRef.current !== null);
+      }
+    };
+
+    window.addEventListener('blur', handleLeave);
+    window.addEventListener('focus', handleFocusReturn);
+    document.addEventListener('visibilitychange', handleVisibility);
+
     return () => {
       window.clearInterval(interval);
+      window.removeEventListener('blur', handleLeave);
+      window.removeEventListener('focus', handleFocusReturn);
+      document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [isSponsorFlowActive, finishSponsorRewardFlow]);
+  }, [isSponsorFlowActive, finishSponsorRewardFlow, cancelSponsorRewardFlowEarly]);
 
   // Use cloud session only if user is signed into Firebase Auth AND has a cloud profile;
   // otherwise run 100% seamlessly in instant localStorage mode with zero auth wall.
@@ -475,7 +541,7 @@ function DramaWinApp() {
     };
   }, []);
 
-  // Optional background Firebase auth listener for authenticated players & admin sync
+  // Silent background Firebase guest auth + full cloud sync for verified Google players & admin
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
       setFirebaseUser(user);
@@ -486,8 +552,23 @@ function DramaWinApp() {
         setCloudTransactions([]);
         setCloudPrizeWins([]);
         setCloudOpenedBoxes([]);
+        if (!triedAnonAuthRef.current) {
+          triedAnonAuthRef.current = true;
+          void signInAnonymously(auth).catch(() => {
+            // Keep instant local play active even if anonymous auth is unavailable
+          });
+        }
         return;
       }
+
+      // Anonymous guest users stay in instant local coin mode with zero permission errors,
+      // while remaining authenticated in Firebase for Support Messages & Prize Claims.
+      if (user.isAnonymous) {
+        setCloudPrivateProfile(null);
+        setCloudOpenedBoxes([]);
+        return;
+      }
+
       setCloudOpenedBoxes(readCloudOpenedBoxes(user.uid, getTodayDateKey()));
       try {
         const { privateProfile: loadedPrivate } = await fetchPlayerProfile(user.uid);
@@ -801,10 +882,43 @@ function DramaWinApp() {
         };
         setMysteryReveal(revealPayload);
 
+        const safeCloudUsername =
+          player.username.trim().length >= 2 ? player.username.trim().slice(0, 32) : 'Player';
+
+        const syncGuestPrizeToCloud = async (params: {
+          prizeType: 'mystery_11th_jackpot' | 'mystery_r3_boost';
+          coinsAwarded: number;
+          voucherCode?: string;
+          summary: string;
+        }) => {
+          try {
+            let activeUid = auth.currentUser?.uid;
+            if (!activeUid) {
+              const cred = await signInAnonymously(auth);
+              activeUid = cred.user.uid;
+            }
+            await recordPrizeWinAndNotifyEmail({
+              uid: activeUid,
+              username: safeCloudUsername,
+              contact: priv.contact,
+              prizeType: params.prizeType,
+              amountZar: R3_BOOST_ZAR,
+              coinsAwarded: params.coinsAwarded,
+              voucherCode: params.voucherCode,
+              boxNumber,
+              weekKey: getCurrentWeekKey(),
+              summary: params.summary,
+            });
+          } catch {
+            // Keep local prize win recorded if offline/unavailable
+          }
+        };
+
         if (result.outcome.kind === 'jackpot') {
           setConfettiActive(true);
           playCoinPotCashChime(isMutedNow);
           playVictoryFanfare(isMutedNow);
+          const summary = `11th Ad Complete — R${R3_BOOST_ZAR} Progress Bar Boost (+1,000 Coins) on Box #${boxNumber}`;
           setLocalPrizeWins(
             addLocalPrizeWin({
               id: `pw-loc-${Date.now()}`,
@@ -817,11 +931,16 @@ function DramaWinApp() {
               coinsAwarded: 1000,
               boxNumber,
               weekKey: getCurrentWeekKey(),
-              summary: `11th Ad Complete — R${R3_BOOST_ZAR} Progress Bar Boost (+1,000 Coins) on Box #${boxNumber}`,
+              summary,
               status: 'recorded',
               createdAtMs: Date.now(),
             })
           );
+          void syncGuestPrizeToCloud({
+            prizeType: 'mystery_11th_jackpot',
+            coinsAwarded: 1000,
+            summary,
+          });
           showToast(
             `🎉 11th Ad Complete! R${R3_BOOST_ZAR} Progress Bar Boost (+1,000 Coins)! Grid reset to Box #1 — repeat to earn more!`,
             1000
@@ -838,6 +957,7 @@ function DramaWinApp() {
           setConfettiActive(true);
           playCoinChime(isMutedNow);
           playVictoryFanfare(isMutedNow);
+          const summary = `Box #${boxNumber} R${R3_BOOST_ZAR} Progress Bar Boost — Voucher ${result.winnerRecord.voucherCode}`;
           setLocalPrizeWins(
             addLocalPrizeWin({
               id: result.winnerRecord.id,
@@ -851,11 +971,17 @@ function DramaWinApp() {
               voucherCode: result.winnerRecord.voucherCode,
               boxNumber,
               weekKey: getCurrentWeekKey(),
-              summary: `Box #${boxNumber} R${R3_BOOST_ZAR} Progress Bar Boost — Voucher ${result.winnerRecord.voucherCode}`,
+              summary,
               status: 'recorded',
               createdAtMs: Date.now(),
             })
           );
+          void syncGuestPrizeToCloud({
+            prizeType: 'mystery_r3_boost',
+            coinsAwarded: result.outcome.coins,
+            voucherCode: result.winnerRecord.voucherCode,
+            summary,
+          });
           setMysteryVoucherModal({
             winner: result.winnerRecord,
             newPoolPrizeZar: result.newPoolPrizeZar,
@@ -1563,6 +1689,8 @@ function DramaWinApp() {
           </div>
         </>
       )}
+
+      <InAppBrowserBanner />
 
       <TopHeader
         coins={currentPlayer.coins}

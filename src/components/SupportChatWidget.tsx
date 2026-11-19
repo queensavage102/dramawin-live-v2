@@ -11,7 +11,9 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { signInAnonymously } from 'firebase/auth';
 import { R3_BOOST_ZAR, R3_MYSTERY_CYCLE_ADS } from '../constants';
+import { auth } from '../firebase';
 import { SupportCategory, SupportMessageRecord } from '../types';
 import { addLocalSupportMessage } from '../utils/localState';
 import { submitSupportMessageAndNotifyEmail } from '../services/dramawinService';
@@ -235,6 +237,7 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
   const [ticketSubject, setTicketSubject] = useState('');
   const [ticketMessage, setTicketMessage] = useState('');
   const [ticketError, setTicketError] = useState<string | null>(null);
+  const [submittingTicket, setSubmittingTicket] = useState(false);
   const [submittedReceipt, setSubmittedReceipt] = useState<{
     id: string;
     syncedToCloud: boolean;
@@ -260,11 +263,6 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
     }
   }, [contact, firebaseEmail, ticketContact]);
 
-  useEffect(() => {
-    if (open && activeMode === 'ai' && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [open, activeMode, messages, isTyping]);
   useEffect(() => {
     if (open && activeMode === 'ai' && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -300,15 +298,22 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
       updatedAtMs: now,
     });
     onTicketsUpdated?.(nextTickets);
-    submitSupportMessageAndNotifyEmail({
-      id: chatTicketId,
-      uid: uid || '',
-      username: (username || 'Player').trim(),
-      contact: (contact || firebaseEmail || 'In-App Chat').trim(),
-      category: 'other',
-      subject: 'AI Chat Message',
-      message: trimmed,
-    }).catch((err) => console.error('Cloud chat sync failed:', err));
+
+    const syncChatTicket = async () => {
+      if (!auth.currentUser) {
+        await signInAnonymously(auth);
+      }
+      await submitSupportMessageAndNotifyEmail({
+        id: chatTicketId,
+        uid: auth.currentUser?.uid || uid || '',
+        username: (username || 'Player').trim(),
+        contact: (contact || firebaseEmail || 'In-App Chat').trim(),
+        category: 'other',
+        subject: 'AI Chat Message',
+        message: trimmed,
+      });
+    };
+    void syncChatTicket().catch((err) => console.error('Cloud chat sync failed:', err));
 
     setTimeout(() => {
       const reply = buildConversationalReply(trimmed, {
@@ -346,8 +351,9 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
     sendAiPrompt(chatInput);
   };
 
-  const handleTicketSubmit = (e: React.FormEvent) => {
+  const handleTicketSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submittingTicket) return;
     setTicketError(null);
     setSubmittedReceipt(null);
 
@@ -368,30 +374,58 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
       return;
     }
 
+    setSubmittingTicket(true);
     const nowMs = Date.now();
     const ticketId = `msg-${nowMs}-${Math.random().toString(36).slice(2, 6)}`;
-    const nextTickets = addLocalSupportMessage({
-      id: ticketId,
-      uid,
-      username: ticketName.trim(),
-      contact: ticketContact.trim(),
-      category: ticketCategory,
-      subject: ticketSubject.trim(),
-      message: ticketMessage.trim(),
-      status: 'open',
-      source: 'local',
-      createdAtMs: nowMs,
-      updatedAtMs: nowMs,
-    });
 
-    onTicketsUpdated?.(nextTickets);
-    setSubmittedReceipt({
-      id: ticketId,
-      syncedToCloud: false,
-    });
-    setTicketSubject('');
-    setTicketMessage('');
-    return;
+    try {
+      if (!auth.currentUser) {
+        await signInAnonymously(auth);
+      }
+      const resolvedUid = auth.currentUser?.uid || uid;
+
+      await submitSupportMessageAndNotifyEmail({
+        id: ticketId,
+        uid: resolvedUid,
+        username: ticketName.trim(),
+        contact: ticketContact.trim(),
+        category: ticketCategory,
+        subject: ticketSubject.trim(),
+        message: ticketMessage.trim(),
+      });
+
+      const nextTickets = addLocalSupportMessage({
+        id: ticketId,
+        uid: resolvedUid,
+        username: ticketName.trim(),
+        contact: ticketContact.trim(),
+        category: ticketCategory,
+        subject: ticketSubject.trim(),
+        message: ticketMessage.trim(),
+        status: 'open',
+        source: 'cloud',
+        createdAtMs: nowMs,
+        updatedAtMs: nowMs,
+      });
+
+      onTicketsUpdated?.(nextTickets);
+      setSubmittedReceipt({
+        id: ticketId,
+        syncedToCloud: true,
+      });
+      setTicketSubject('');
+      setTicketMessage('');
+    } catch (err) {
+      const reason =
+        err instanceof Error && err.message
+          ? err.message
+          : 'Unable to reach support server.';
+      setTicketError(
+        `Failed to send support message (${reason}). Please check your internet connection and try again.`
+      );
+    } finally {
+      setSubmittingTicket(false);
+    }
   };
   return (
     <>
@@ -578,7 +612,10 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
                   )}
 
                   {ticketError && (
-                    <div className="p-2 rounded-xl bg-red-500/15 border border-red-500/40 text-red-200 text-[11px]">
+                    <div
+                      role="alert"
+                      className="p-2.5 rounded-xl bg-red-500/20 border border-red-500/60 text-red-100 text-xs font-medium leading-snug"
+                    >
                       {ticketError}
                     </div>
                   )}
@@ -648,10 +685,11 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
 
                   <button
                     type="submit"
-                    className="w-full py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-black font-bold text-xs flex items-center justify-center gap-1.5 transition"
+                    disabled={submittingTicket}
+                    className="w-full py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 disabled:opacity-60 text-black font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer"
                   >
                     <MessageSquareHeart className="w-4 h-4" />
-                    Send to Admin
+                    {submittingTicket ? 'Sending...' : 'Send to Admin'}
                   </button>
                 </form>
               </div>

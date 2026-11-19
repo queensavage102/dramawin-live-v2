@@ -3,6 +3,7 @@ import {
   Film,
   Maximize2,
   Minimize2,
+  RotateCcw,
   Scan,
   Sparkles,
   Trophy,
@@ -189,6 +190,8 @@ function postYouTubeCommand(
   }
 }
 
+const MAX_VIDEO_RETRIES = 3;
+
 const WatchVideoStage: React.FC<{
   episode: DramaEpisode;
   zoomed: boolean;
@@ -211,6 +214,33 @@ const WatchVideoStage: React.FC<{
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const onPlayingChangeRef = useRef(onPlayingChange);
   const onVideoEndedRef = useRef(onVideoEnded);
+  const stallTimerRef = useRef<number | null>(null);
+  const retryDelayTimerRef = useRef<number | null>(null);
+  const savedTimeRef = useRef<number>(0);
+
+  const [retryCount, setRetryCount] = useState(0);
+  const [isRecovering, setIsRecovering] = useState(false);
+  const [recoveryFailed, setRecoveryFailed] = useState(false);
+
+  const clearRecoveryTimers = () => {
+    if (stallTimerRef.current !== null) {
+      window.clearTimeout(stallTimerRef.current);
+      stallTimerRef.current = null;
+    }
+    if (retryDelayTimerRef.current !== null) {
+      window.clearTimeout(retryDelayTimerRef.current);
+      retryDelayTimerRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    clearRecoveryTimers();
+    savedTimeRef.current = 0;
+    setRetryCount(0);
+    setIsRecovering(false);
+    setRecoveryFailed(false);
+    return () => clearRecoveryTimers();
+  }, [episode.id, rawVideoUrl]);
 
   useEffect(() => {
     onPlayingChangeRef.current = onPlayingChange;
@@ -219,6 +249,48 @@ const WatchVideoStage: React.FC<{
   useEffect(() => {
     onVideoEndedRef.current = onVideoEnded;
   }, [onVideoEnded]);
+
+  const triggerAutoRecover = (isDirect: boolean) => {
+    if (paused) return;
+    if (stallTimerRef.current !== null) {
+      window.clearTimeout(stallTimerRef.current);
+      stallTimerRef.current = null;
+    }
+    if (retryDelayTimerRef.current !== null) return;
+
+    if (isDirect && videoRef.current && Number.isFinite(videoRef.current.currentTime)) {
+      savedTimeRef.current = videoRef.current.currentTime;
+    }
+
+    setRetryCount((prev) => {
+      if (prev >= MAX_VIDEO_RETRIES) {
+        setIsRecovering(false);
+        setRecoveryFailed(true);
+        return prev;
+      }
+      setIsRecovering(true);
+      setRecoveryFailed(false);
+      retryDelayTimerRef.current = window.setTimeout(() => {
+        retryDelayTimerRef.current = null;
+        if (isDirect && videoRef.current) {
+          try {
+            videoRef.current.load();
+            void videoRef.current.play().catch(() => {});
+          } catch {
+            // Remount via retryCount increment handles fallback
+          }
+        }
+      }, 900);
+      return prev + 1;
+    });
+  };
+
+  const handleManualRetry = () => {
+    clearRecoveryTimers();
+    setRecoveryFailed(false);
+    setIsRecovering(true);
+    setRetryCount((prev) => prev + 1);
+  };
 
   useEffect(() => {
     if (embedUrl || (resolvedMediaUrl && !isDirectVideoMediaUrl(resolvedMediaUrl))) {
@@ -229,11 +301,17 @@ const WatchVideoStage: React.FC<{
       videoRef.current.volume = 1;
       if (paused) {
         videoRef.current.pause();
+        clearRecoveryTimers();
       } else {
-        void videoRef.current.play().catch(() => {});
+        void videoRef.current.play().catch((err: unknown) => {
+          if (err instanceof DOMException && err.name === 'NotAllowedError' && videoRef.current) {
+            videoRef.current.muted = true;
+            void videoRef.current.play().catch(() => {});
+          }
+        });
       }
     }
-  }, [paused, resumePlaybackSignal, embedUrl, resolvedMediaUrl, muted]);
+  }, [paused, resumePlaybackSignal, embedUrl, resolvedMediaUrl, muted, retryCount]);
 
   useEffect(() => {
     if (embedUrl || (resolvedMediaUrl && !isDirectVideoMediaUrl(resolvedMediaUrl))) {
@@ -270,6 +348,12 @@ const WatchVideoStage: React.FC<{
       }
       if (!payload) return;
 
+      if (payload.event === 'onError') {
+        onPlayingChangeRef.current?.(false);
+        triggerAutoRecover(false);
+        return;
+      }
+
       const playerState =
         typeof payload.info === 'number'
           ? payload.info
@@ -280,10 +364,23 @@ const WatchVideoStage: React.FC<{
             : null;
 
       if (playerState === 1) {
+        clearRecoveryTimers();
+        setIsRecovering(false);
+        setRecoveryFailed(false);
         onPlayingChangeRef.current?.(true);
       } else if (playerState === 2) {
+        clearRecoveryTimers();
         onPlayingChangeRef.current?.(false);
+      } else if (playerState === 3) {
+        if (!paused && stallTimerRef.current === null) {
+          stallTimerRef.current = window.setTimeout(() => {
+            stallTimerRef.current = null;
+            postYouTubeCommand(iframeRef.current, 'playVideo');
+            triggerAutoRecover(false);
+          }, 7500);
+        }
       } else if (playerState === 0) {
+        clearRecoveryTimers();
         onPlayingChangeRef.current?.(false);
         onVideoEndedRef.current?.();
       }
@@ -291,9 +388,10 @@ const WatchVideoStage: React.FC<{
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [embedUrl, resolvedMediaUrl]);
+  }, [embedUrl, resolvedMediaUrl, paused]);
 
   const handleIframeLoad = () => {
+    setIsRecovering(false);
     try {
       iframeRef.current?.contentWindow?.postMessage(
         '{"event":"listening","id":"dramawin-watch-player"}',
@@ -310,53 +408,135 @@ const WatchVideoStage: React.FC<{
     }
   };
 
+  const recoveryOverlay = (isRecovering || recoveryFailed) && (
+    <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center p-4">
+      {recoveryFailed ? (
+        <button
+          type="button"
+          onClick={handleManualRetry}
+          className="pointer-events-auto inline-flex items-center gap-2 px-4 py-2.5 rounded-full bg-black/85 border border-amber-400/70 text-amber-200 text-xs font-bold shadow-2xl hover:bg-black cursor-pointer"
+        >
+          <RotateCcw className="w-4 h-4 text-amber-300" />
+          <span>Stream stalled — Tap to Retry</span>
+        </button>
+      ) : (
+        <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-black/75 border border-amber-400/40 text-amber-200 text-xs font-semibold backdrop-blur-md">
+          <RotateCcw className="w-3.5 h-3.5 animate-spin text-amber-300" />
+          <span>Reconnecting video...</span>
+        </div>
+      )}
+    </div>
+  );
+
   if (embedUrl) {
     return (
-      <iframe
-        ref={iframeRef}
-        key={`${episode.id}-${embedUrl}`}
-        src={embedUrl}
-        title={episode.title}
-        onLoad={handleIframeLoad}
-        referrerPolicy="strict-origin-when-cross-origin"
-        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
-        allowFullScreen
-        className={`absolute inset-0 w-full h-full border-0 block pointer-events-auto transition-transform duration-300 ease-out origin-center ${
-          zoomed ? 'object-cover scale-[1.95]' : 'object-contain scale-100'
-        }`}
-      />
+      <>
+        <iframe
+          ref={iframeRef}
+          key={`${episode.id}-${embedUrl}-r${retryCount}`}
+          src={embedUrl}
+          title={episode.title}
+          onLoad={handleIframeLoad}
+          referrerPolicy="strict-origin-when-cross-origin"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
+          allowFullScreen
+          className={`absolute inset-0 w-full h-full border-0 block pointer-events-auto transition-transform duration-300 ease-out origin-center ${
+            zoomed ? 'object-cover scale-[1.95]' : 'object-contain scale-100'
+          }`}
+        />
+        {recoveryOverlay}
+      </>
     );
   }
 
   if (resolvedMediaUrl) {
     if (isDirectVideoMediaUrl(rawVideoUrl) || isDirectVideoMediaUrl(resolvedMediaUrl)) {
       return (
-        <video
-          ref={videoRef}
-          key={`${episode.id}-${resolvedMediaUrl}`}
-          src={resolvedMediaUrl}
-          controls
-          autoPlay
-          muted={muted}
-          playsInline
-          onLoadedMetadata={(e) => {
-            e.currentTarget.muted = muted;
-            e.currentTarget.volume = 1;
-          }}
-          onPlay={(e) => {
-            e.currentTarget.muted = muted;
-            e.currentTarget.volume = 1;
-            onPlayingChangeRef.current?.(true);
-          }}
-          onPause={() => onPlayingChangeRef.current?.(false)}
-          onEnded={() => {
-            onPlayingChangeRef.current?.(false);
-            onVideoEndedRef.current?.();
-          }}
-          className={`absolute inset-0 w-full h-full bg-black transition-transform duration-300 ease-out origin-center ${
-            zoomed ? 'object-cover scale-[1.95]' : 'object-contain scale-100'
-          }`}
-        />
+        <>
+          <video
+            ref={videoRef}
+            key={`${episode.id}-${resolvedMediaUrl}-r${retryCount}`}
+            src={resolvedMediaUrl}
+            controls
+            autoPlay
+            muted={muted}
+            playsInline
+            preload="auto"
+            onLoadedMetadata={(e) => {
+              e.currentTarget.muted = muted;
+              e.currentTarget.volume = 1;
+              if (savedTimeRef.current > 1 && Number.isFinite(e.currentTarget.duration)) {
+                const targetTime = Math.min(savedTimeRef.current, Math.max(0, e.currentTarget.duration - 1));
+                try {
+                  e.currentTarget.currentTime = targetTime;
+                } catch {
+                  // Ignore seek errors before readyState
+                }
+              }
+            }}
+            onCanPlay={() => {
+              clearRecoveryTimers();
+              setIsRecovering(false);
+              setRecoveryFailed(false);
+            }}
+            onPlaying={() => {
+              clearRecoveryTimers();
+              setIsRecovering(false);
+              setRecoveryFailed(false);
+              onPlayingChangeRef.current?.(true);
+            }}
+            onPlay={(e) => {
+              e.currentTarget.muted = muted;
+              e.currentTarget.volume = 1;
+              clearRecoveryTimers();
+              setIsRecovering(false);
+              setRecoveryFailed(false);
+              onPlayingChangeRef.current?.(true);
+            }}
+            onTimeUpdate={(e) => {
+              if (e.currentTarget.currentTime > 0) {
+                savedTimeRef.current = e.currentTarget.currentTime;
+              }
+              if (stallTimerRef.current !== null) {
+                clearRecoveryTimers();
+                setIsRecovering(false);
+              }
+            }}
+            onWaiting={() => {
+              if (!paused && stallTimerRef.current === null) {
+                stallTimerRef.current = window.setTimeout(() => {
+                  stallTimerRef.current = null;
+                  triggerAutoRecover(true);
+                }, 4500);
+              }
+            }}
+            onStalled={() => {
+              if (!paused && stallTimerRef.current === null) {
+                stallTimerRef.current = window.setTimeout(() => {
+                  stallTimerRef.current = null;
+                  triggerAutoRecover(true);
+                }, 4500);
+              }
+            }}
+            onError={() => {
+              onPlayingChangeRef.current?.(false);
+              triggerAutoRecover(true);
+            }}
+            onPause={() => {
+              clearRecoveryTimers();
+              onPlayingChangeRef.current?.(false);
+            }}
+            onEnded={() => {
+              clearRecoveryTimers();
+              onPlayingChangeRef.current?.(false);
+              onVideoEndedRef.current?.();
+            }}
+            className={`absolute inset-0 w-full h-full bg-black transition-transform duration-300 ease-out origin-center ${
+              zoomed ? 'object-cover scale-[1.95]' : 'object-contain scale-100'
+            }`}
+          />
+          {recoveryOverlay}
+        </>
       );
     }
 
@@ -367,19 +547,22 @@ const WatchVideoStage: React.FC<{
         : resolvedMediaUrl;
 
     return (
-      <iframe
-        ref={iframeRef}
-        key={`${episode.id}-${finalIframeUrl}`}
-        src={finalIframeUrl}
-        title={episode.title}
-        onLoad={handleIframeLoad}
-        referrerPolicy="strict-origin-when-cross-origin"
-        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
-        allowFullScreen
-        className={`absolute inset-0 w-full h-full border-0 block pointer-events-auto transition-transform duration-300 ease-out origin-center ${
-          zoomed ? 'object-cover scale-[1.95]' : 'object-contain scale-100'
-        }`}
-      />
+      <>
+        <iframe
+          ref={iframeRef}
+          key={`${episode.id}-${finalIframeUrl}-r${retryCount}`}
+          src={finalIframeUrl}
+          title={episode.title}
+          onLoad={handleIframeLoad}
+          referrerPolicy="strict-origin-when-cross-origin"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
+          allowFullScreen
+          className={`absolute inset-0 w-full h-full border-0 block pointer-events-auto transition-transform duration-300 ease-out origin-center ${
+            zoomed ? 'object-cover scale-[1.95]' : 'object-contain scale-100'
+          }`}
+        />
+        {recoveryOverlay}
+      </>
     );
   }
 
@@ -596,12 +779,12 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
     >
       <div
         ref={playerContainerRef}
-        className="h-screen h-[100dvh] w-full flex flex-col bg-[#09090b] overflow-hidden"
+        className="min-h-[100dvh] h-[100dvh] w-full flex flex-col bg-[#09090b] overflow-hidden"
       >
         {/* Top Episode Title Bar + Controls + Sunday Tournament Progress Bar */}
-        <header className="flex-none bg-[#09090b] border-b border-[#D4AF37]/25 px-3 sm:px-5 pt-2 pb-2 space-y-1.5 z-30">
-          <div className="flex items-center justify-between gap-2">
-            <div className="min-w-0">
+        <header className="flex-none bg-[#09090b] border-b border-[#D4AF37]/25 px-2.5 sm:px-5 pt-[max(0.5rem,env(safe-area-inset-top))] pb-2 space-y-1.5 z-40 relative">
+          <div className="flex items-center justify-between gap-1.5 sm:gap-2">
+            <div className="flex-1 min-w-0">
               <p className="text-[11px] text-[#E8C96D] font-medium truncate">
                 {episode.series} · {episode.episodeLabel}
               </p>
@@ -610,13 +793,13 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
               </h2>
             </div>
 
-            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            <div className="flex items-center gap-1 sm:gap-2 shrink-0">
               <button
                 type="button"
                 onClick={onToggleMute}
                 aria-pressed={!muted}
                 aria-label={muted ? 'Sound Off' : 'Sound On'}
-                className={`min-h-[38px] px-2.5 rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap cursor-pointer ${
+                className={`min-h-[36px] px-2 sm:px-2.5 rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap cursor-pointer ${
                   muted
                     ? 'border-white/[0.14] text-[#8D867A] hover:text-[#F6F2E9]'
                     : 'border-[#D4AF37]/40 bg-[#17130A] text-[#FCE7A2]'
@@ -632,7 +815,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
                 aria-pressed={isZoomed}
                 aria-label={isZoomed ? 'Zoomed full-screen — tap to switch to Fit' : 'Standard Fit — tap to Zoom'}
                 title={isZoomed ? 'Zoomed (1.95x) — tap for Fit' : 'Fit — tap for Zoom'}
-                className={`min-h-[38px] px-2.5 rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap cursor-pointer ${
+                className={`min-h-[36px] px-2 sm:px-2.5 rounded-xl border text-[11px] sm:text-xs font-semibold inline-flex items-center gap-1 sm:gap-1.5 transition-colors whitespace-nowrap cursor-pointer ${
                   isZoomed
                     ? 'border-[#D4AF37]/45 bg-[#17130A] text-[#FCE7A2]'
                     : 'border-white/[0.14] text-[#A69F91] hover:text-[#F6F2E9]'
@@ -656,7 +839,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
                 onClick={() => void handleToggleFullscreen()}
                 aria-label={isExpandedFull ? 'Exit full screen' : 'Full screen'}
                 title={isExpandedFull ? 'Exit full screen' : 'Full screen'}
-                className="min-h-[38px] px-2.5 rounded-xl border border-[#D4AF37]/30 text-[#E8C96D] hover:bg-[#D4AF37]/10 text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                className="min-h-[36px] px-2 sm:px-2.5 rounded-xl border border-[#D4AF37]/30 text-[#E8C96D] hover:bg-[#D4AF37]/10 text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer"
               >
                 {isExpandedFull ? (
                   <>
@@ -675,7 +858,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
                 type="button"
                 onClick={handleClose}
                 aria-label="Close video player"
-                className="min-h-[38px] min-w-[38px] rounded-xl border border-white/[0.15] flex items-center justify-center text-[#A69F91] hover:text-[#F6F2E9] hover:border-[#D4AF37]/45 transition-colors cursor-pointer"
+                className="min-h-[36px] min-w-[36px] rounded-xl border border-white/[0.15] flex items-center justify-center text-[#A69F91] hover:text-[#F6F2E9] hover:border-[#D4AF37]/45 transition-colors cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -823,7 +1006,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
         </div>
 
         {/* Dedicated Bottom Banner Footer cleanly beneath the video frame */}
-        <footer className="h-[62px] shrink-0 w-full bg-[#09090b] border-t border-white/10 flex items-center justify-center z-30">
+        <footer className="min-h-[62px] pb-[max(0.25rem,env(safe-area-inset-bottom))] pt-1 shrink-0 w-full bg-[#09090b] border-t border-white/10 flex items-center justify-center z-40 relative">
           <BottomAdBanner />
         </footer>
       </div>

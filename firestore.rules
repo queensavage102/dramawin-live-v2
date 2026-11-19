@@ -392,10 +392,9 @@ service cloud.firestore {
 
     // R3 Progress Bar Boost Mystery Vault winners (contains PII contact; owner or admin only)
     match /mysteryWinners/{winnerId} {
-      allow get: if isValidId(winnerId) && (isAdmin() || (isSignedIn() && isVerified() && existing().uid == request.auth.uid));
-      allow list: if isAdmin() || (isSignedIn() && isVerified() && existing().uid == request.auth.uid);
+      allow get: if isValidId(winnerId) && (isAdmin() || (isSignedIn() && existing().uid == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && existing().uid == request.auth.uid);
       allow create: if isSignedIn()
-        && isVerified()
         && isValidId(winnerId)
         && isValidMysteryWinner(incoming())
         && incoming().uid == request.auth.uid
@@ -405,10 +404,9 @@ service cloud.firestore {
 
     // Main Prize & Sunday Pool payout wins (owner or admin only)
     match /prize_wins/{winId} {
-      allow get: if isValidId(winId) && (isAdmin() || (isSignedIn() && isVerified() && existing().uid == request.auth.uid));
-      allow list: if isAdmin() || (isSignedIn() && isVerified() && existing().uid == request.auth.uid);
+      allow get: if isValidId(winId) && (isAdmin() || (isSignedIn() && existing().uid == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && existing().uid == request.auth.uid);
       allow create: if isSignedIn()
-        && isVerified()
         && isValidId(winId)
         && isValidPrizeWin(incoming())
         && incoming().createdAt == request.time
@@ -427,10 +425,9 @@ service cloud.firestore {
 
     // Player support messages & Claim Prize Help tickets (owner or admin only)
     match /support_messages/{messageId} {
-      allow get: if isValidId(messageId) && (isAdmin() || (isSignedIn() && isVerified() && existing().uid == request.auth.uid));
-      allow list: if isAdmin() || (isSignedIn() && isVerified() && existing().uid == request.auth.uid);
+      allow get: if isValidId(messageId) && (isAdmin() || (isSignedIn() && existing().uid == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && existing().uid == request.auth.uid);
       allow create: if isSignedIn()
-        && isVerified()
         && isValidId(messageId)
         && isValidSupportMessage(incoming())
         && incoming().uid == request.auth.uid
@@ -452,7 +449,6 @@ service cloud.firestore {
       allow get: if isValidId(mailId) && isAdmin();
       allow list: if isAdmin();
       allow create: if isSignedIn()
-        && isVerified()
         && isValidId(mailId)
         && isValidMailNotification(incoming())
         && incoming().uid == request.auth.uid

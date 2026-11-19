@@ -8,6 +8,7 @@ import {
   Film,
   Layers,
   Play,
+  RotateCcw,
   Share2,
   Sparkles,
   Volume2,
@@ -98,6 +99,9 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
   const [rewardModalOpen, setRewardModalOpen] = useState(false);
   const [drawerSeriesId, setDrawerSeriesId] = useState<string | null>(null);
   const [fullScreenEpisode, setFullScreenEpisode] = useState<DramaEpisode | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
+  const [isRecovering, setIsRecovering] = useState(false);
+  const [recoveryFailed, setRecoveryFailed] = useState(false);
 
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -106,6 +110,55 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
   const isPlayingRef = useRef(true);
   const rewardModalOpenRef = useRef(false);
   const onAwardRef = useRef(onAwardCoinPot);
+  const stallTimerRef = useRef<number | null>(null);
+  const retryDelayTimerRef = useRef<number | null>(null);
+  const savedTimeRef = useRef<number>(0);
+
+  const clearRecoveryTimers = () => {
+    if (stallTimerRef.current !== null) {
+      window.clearTimeout(stallTimerRef.current);
+      stallTimerRef.current = null;
+    }
+    if (retryDelayTimerRef.current !== null) {
+      window.clearTimeout(retryDelayTimerRef.current);
+      retryDelayTimerRef.current = null;
+    }
+  };
+
+  const triggerAutoRecover = useCallback((isDirect: boolean) => {
+    if (!isPlayingRef.current || rewardModalOpenRef.current) return;
+    if (stallTimerRef.current !== null) {
+      window.clearTimeout(stallTimerRef.current);
+      stallTimerRef.current = null;
+    }
+    if (retryDelayTimerRef.current !== null) return;
+
+    if (isDirect && videoRef.current && Number.isFinite(videoRef.current.currentTime)) {
+      savedTimeRef.current = videoRef.current.currentTime;
+    }
+
+    setRetryCount((prev) => {
+      if (prev >= 3) {
+        setIsRecovering(false);
+        setRecoveryFailed(true);
+        return prev;
+      }
+      setIsRecovering(true);
+      setRecoveryFailed(false);
+      retryDelayTimerRef.current = window.setTimeout(() => {
+        retryDelayTimerRef.current = null;
+        if (isDirect && videoRef.current) {
+          try {
+            videoRef.current.load();
+            void videoRef.current.play().catch(() => {});
+          } catch {
+            // Remount handles fallback
+          }
+        }
+      }, 900);
+      return prev + 1;
+    });
+  }, []);
 
   useEffect(() => {
     onAwardRef.current = onAwardCoinPot;
@@ -136,12 +189,18 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
   );
 
   useEffect(() => {
+    clearRecoveryTimers();
+    savedTimeRef.current = 0;
+    setRetryCount(0);
+    setIsRecovering(false);
+    setRecoveryFailed(false);
     setIsPlaying(true);
     isPlayingRef.current = true;
     setRewardModalOpen(false);
     rewardModalOpenRef.current = false;
     elapsedMsRef.current = 0;
     setRingProgress(0);
+    return () => clearRecoveryTimers();
   }, [currentEpisode?.id]);
 
   useEffect(() => {
@@ -151,12 +210,18 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
     }
     if (videoRef.current) {
       if (isPlaying) {
-        void videoRef.current.play().catch(() => {});
+        void videoRef.current.play().catch((err: unknown) => {
+          if (err instanceof DOMException && err.name === 'NotAllowedError' && videoRef.current) {
+            videoRef.current.muted = true;
+            void videoRef.current.play().catch(() => {});
+          }
+        });
       } else {
         videoRef.current.pause();
+        clearRecoveryTimers();
       }
     }
-  }, [isPlaying, embedUrl, resolvedMediaUrl]);
+  }, [isPlaying, embedUrl, resolvedMediaUrl, retryCount]);
 
   useEffect(() => {
     if (embedUrl || (resolvedMediaUrl && !isDirectVideoMediaUrl(resolvedMediaUrl))) {
@@ -193,6 +258,11 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
       }
       if (!payload) return;
 
+      if (payload.event === 'onError') {
+        triggerAutoRecover(false);
+        return;
+      }
+
       const playerState =
         typeof payload.info === 'number'
           ? payload.info
@@ -203,19 +273,32 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
             : null;
 
       if (playerState === 1 && !rewardModalOpenRef.current && !fullScreenEpisode) {
+        clearRecoveryTimers();
+        setIsRecovering(false);
+        setRecoveryFailed(false);
         setIsPlaying(true);
         isPlayingRef.current = true;
       } else if (playerState === 2) {
+        clearRecoveryTimers();
         setIsPlaying(false);
         isPlayingRef.current = false;
+      } else if (playerState === 3) {
+        if (isPlayingRef.current && stallTimerRef.current === null) {
+          stallTimerRef.current = window.setTimeout(() => {
+            stallTimerRef.current = null;
+            postYouTubeCommand(iframeRef.current, 'playVideo');
+            triggerAutoRecover(false);
+          }, 7500);
+        }
       } else if (playerState === 0 && currentEpisode) {
+        clearRecoveryTimers();
         void onMarkEpisodeWatched?.(currentEpisode);
       }
     };
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [embedUrl, resolvedMediaUrl, currentEpisode, onMarkEpisodeWatched, fullScreenEpisode]);
+  }, [embedUrl, resolvedMediaUrl, currentEpisode, onMarkEpisodeWatched, fullScreenEpisode, triggerAutoRecover]);
 
   // Smooth circular Coin Progress Ring timer
   useEffect(() => {
@@ -371,10 +454,11 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
           {embedUrl ? (
             <iframe
               ref={iframeRef}
-              key={`fy-${currentEpisode.id}-${embedUrl}`}
+              key={`fy-${currentEpisode.id}-${embedUrl}-r${retryCount}`}
               src={embedUrl}
               title={currentEpisode.title}
               onLoad={() => {
+                setIsRecovering(false);
                 try {
                   iframeRef.current?.contentWindow?.postMessage(
                     '{"event":"listening","id":"dramawin-foryou-player"}',
@@ -399,28 +483,110 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
             (isDirectVideoMediaUrl(rawVideoUrl) || isDirectVideoMediaUrl(resolvedMediaUrl)) ? (
             <video
               ref={videoRef}
-              key={`fy-vid-${currentEpisode.id}-${resolvedMediaUrl}`}
+              key={`fy-vid-${currentEpisode.id}-${resolvedMediaUrl}-r${retryCount}`}
               src={resolvedMediaUrl}
               autoPlay
               loop
               muted={muted}
               playsInline
+              preload="auto"
               onLoadedMetadata={(e) => {
                 e.currentTarget.muted = muted;
                 e.currentTarget.volume = 1;
+                if (savedTimeRef.current > 1 && Number.isFinite(e.currentTarget.duration)) {
+                  const targetTime = Math.min(savedTimeRef.current, Math.max(0, e.currentTarget.duration - 1));
+                  try {
+                    e.currentTarget.currentTime = targetTime;
+                  } catch {
+                    // Ignore seek errors before readyState
+                  }
+                }
+              }}
+              onCanPlay={() => {
+                clearRecoveryTimers();
+                setIsRecovering(false);
+                setRecoveryFailed(false);
+              }}
+              onPlaying={() => {
+                clearRecoveryTimers();
+                setIsRecovering(false);
+                setRecoveryFailed(false);
+                setIsPlaying(true);
               }}
               onPlay={(e) => {
                 e.currentTarget.muted = muted;
                 e.currentTarget.volume = 1;
+                clearRecoveryTimers();
+                setIsRecovering(false);
+                setRecoveryFailed(false);
                 setIsPlaying(true);
               }}
-              onPause={() => setIsPlaying(false)}
+              onTimeUpdate={(e) => {
+                if (e.currentTarget.currentTime > 0) {
+                  savedTimeRef.current = e.currentTarget.currentTime;
+                }
+                if (stallTimerRef.current !== null) {
+                  clearRecoveryTimers();
+                  setIsRecovering(false);
+                }
+              }}
+              onWaiting={() => {
+                if (isPlayingRef.current && stallTimerRef.current === null) {
+                  stallTimerRef.current = window.setTimeout(() => {
+                    stallTimerRef.current = null;
+                    triggerAutoRecover(true);
+                  }, 4500);
+                }
+              }}
+              onStalled={() => {
+                if (isPlayingRef.current && stallTimerRef.current === null) {
+                  stallTimerRef.current = window.setTimeout(() => {
+                    stallTimerRef.current = null;
+                    triggerAutoRecover(true);
+                  }, 4500);
+                }
+              }}
+              onError={() => {
+                setIsPlaying(false);
+                triggerAutoRecover(true);
+              }}
+              onPause={() => {
+                clearRecoveryTimers();
+                setIsPlaying(false);
+              }}
               className="pointer-events-none w-full h-full object-cover"
             />
           ) : (
             <div className="flex flex-col items-center justify-center p-6 text-center gap-3">
               <Film className="w-10 h-10 text-amber-400" />
               <p className="text-xs text-zinc-400">Video ready in /admin</p>
+            </div>
+          )}
+
+          {(isRecovering || recoveryFailed) && (
+            <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center p-4">
+              {recoveryFailed ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearRecoveryTimers();
+                    setRecoveryFailed(false);
+                    setIsRecovering(true);
+                    setIsPlaying(true);
+                    isPlayingRef.current = true;
+                    setRetryCount((prev) => prev + 1);
+                  }}
+                  className="pointer-events-auto inline-flex items-center gap-2 px-4 py-2.5 rounded-full bg-black/85 border border-amber-400/70 text-amber-200 text-xs font-bold shadow-2xl cursor-pointer"
+                >
+                  <RotateCcw className="w-4 h-4 text-amber-300" />
+                  <span>Stream stalled — Tap to Retry</span>
+                </button>
+              ) : (
+                <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-black/75 border border-amber-400/40 text-amber-200 text-xs font-semibold backdrop-blur-md">
+                  <RotateCcw className="w-3.5 h-3.5 animate-spin text-amber-300" />
+                  <span>Reconnecting video...</span>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -450,7 +616,7 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
         />
 
         {/* Top Bar Inside Player: Feed Tag + Prev/Next + Sound Toggle */}
-        <div className="absolute top-0 inset-x-0 z-20 bg-gradient-to-b from-[#09090b] via-[#09090b]/95 to-transparent px-3 pt-3 pb-6 flex items-center justify-between gap-2">
+        <div className="absolute top-0 inset-x-0 z-20 bg-gradient-to-b from-[#09090b] via-[#09090b]/95 to-transparent px-3 pt-[max(0.75rem,env(safe-area-inset-top))] pb-6 flex items-center justify-between gap-2">
           <div className="inline-flex items-center gap-1.5 rounded-full bg-black/55 backdrop-blur-md border border-white/15 px-3 py-1 text-[11px] font-semibold text-white">
             <Sparkles className="w-3.5 h-3.5 text-amber-300" />
             <span>For You</span>
