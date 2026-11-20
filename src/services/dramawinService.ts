@@ -419,7 +419,7 @@ export async function awardPlayerCoins(
   const newCoins = Math.max(0, player.coins + roundedDelta);
   const weeklyGain = Math.max(
     0,
-    Math.min(1000, Math.round(weeklyBonusDelta !== undefined ? weeklyBonusDelta : Math.max(0, walletDelta)))
+    Math.min(5000, Math.round(weeklyBonusDelta !== undefined ? weeklyBonusDelta : Math.max(0, walletDelta)))
   );
   const newWeekly = player.weeklyCoins + weeklyGain;
   const qualified = newWeekly >= qualificationThreshold;
@@ -772,7 +772,7 @@ export async function awardMysteryBoxCoins(
   isJackpot = false
 ): Promise<void> {
   const todayKey = getTodayDateKey();
-  const safeReward = Math.max(100, Math.min(1000, Math.round(rewardCoins)));
+  const safeReward = Math.max(100, Math.min(5000, Math.round(rewardCoins)));
   await awardPlayerCoins(
     player,
     privateState,
@@ -786,8 +786,8 @@ export async function awardMysteryBoxCoins(
     {
       category: 'mystery-box',
       title: isJackpot
-        ? `Mystery Box #${boxNumber} — 11th Ad R3 Boost (+1,000 Coins)`
-        : `Mystery Box #${boxNumber} Bonus`,
+        ? `Mystery Box #${boxNumber} — 11th Box Mega Surprise (+1,500 Coins)`
+        : `Mystery Box #${boxNumber} Bonus (+100 Coins)`,
     }
   );
 }

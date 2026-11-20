@@ -21,8 +21,7 @@ import {
   BRAND_NAME,
   DEFAULT_POOL_PRIZE_ZAR,
   DEFAULT_QUALIFICATION_THRESHOLD,
-  R3_BOOST_ZAR,
-  R3_MYSTERY_CYCLE_ADS,
+  MYSTERY_CYCLE_BOXES,
   STREAK_DAYS,
   getCurrentWeekKey,
   getMondayStartTimestampSAST,
@@ -35,7 +34,6 @@ import { CatalogProvider, useCatalog } from './context/CatalogContext';
 import { auth, googleProvider } from './firebase';
 import {
   adminAdjustPlayerCoins,
-  awardCloudR3BoostPrize,
   awardHeroBonusCoins,
   awardMysteryBoxCoins,
   awardWatchPotCoins,
@@ -108,7 +106,7 @@ function readCloudOpenedBoxes(uid: string, dateKey: string): number[] {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     const cleaned = parsed.filter((n): n is number => typeof n === 'number');
-    return cleaned.length >= R3_MYSTERY_CYCLE_ADS ? [] : cleaned;
+    return cleaned.length >= MYSTERY_CYCLE_BOXES ? [] : cleaned;
   } catch {
     return [];
   }
@@ -884,113 +882,43 @@ function DramaWinApp() {
 
       if (cloudNow && activeUser) {
         const rawOpened = cloudOpenedBoxesRef.current;
-        const currentOpened = rawOpened.length >= R3_MYSTERY_CYCLE_ADS ? [] : rawOpened;
+        const currentOpened = rawOpened.length >= MYSTERY_CYCLE_BOXES ? [] : rawOpened;
         if (currentOpened.includes(boxNumber)) {
           return;
         }
 
         const nextOpenedRaw = Array.from(new Set([...currentOpened, boxNumber]));
-        const is11thBoxJackpot = nextOpenedRaw.length >= R3_MYSTERY_CYCLE_ADS;
-        // Auto-reset immediately back to Box #1 on the 11th video ad so the cycle can repeat endlessly
+        const is11thBoxJackpot = nextOpenedRaw.length >= MYSTERY_CYCLE_BOXES;
+        // Auto-reset immediately back to 0 / 11 Boxes Opened on Box #11
         const persistedOpened = is11thBoxJackpot ? [] : nextOpenedRaw;
         cloudOpenedBoxesRef.current = persistedOpened;
         setCloudOpenedBoxes(persistedOpened);
         writeCloudOpenedBoxes(activeUser.uid, todayKey, persistedOpened);
 
-        const targetUsername = (latestCfg.r5WinnerUsername || '').trim().toLowerCase();
-        const isNamedWinner =
-          targetUsername.length > 0 &&
-          player.username.trim().toLowerCase() === targetUsername;
-        const isR3Winner = Boolean(latestCfg.nextPickWinsR5) || isNamedWinner;
-
-        const isOopsPick =
-          !isR3Winner &&
-          !is11thBoxJackpot &&
-          currentOpened.length >= 1 &&
-          Math.random() < 0.3;
         const threshold = latestCfg.qualificationThreshold || DEFAULT_QUALIFICATION_THRESHOLD;
 
-        if (isR3Winner) {
-          setMysteryReveal({
-            dateKey: todayKey,
-            boxNumber,
-            kind: 'airtime',
-            coins: 1000,
-          });
-          setConfettiActive(true);
-          playCoinPotCashChime(isMutedNow);
-          playVictoryFanfare(isMutedNow);
-          showToast(
-            `YOU WON CONGRATULATIONS! 🎉 R${R3_BOOST_ZAR} Progress Bar Boost (+1,000 Coins) unlocked!`
-          );
-          void awardCloudR3BoostPrize(player, priv, boxNumber, latestCfg)
-            .then(({ winnerRecord, newPoolPrizeZar }) => {
-              setMysteryVoucherModal({
-                winner: winnerRecord,
-                newPoolPrizeZar,
-              });
-              setLocalPrizeWins(
-                addLocalPrizeWin({
-                  id: winnerRecord.id,
-                  uid: player.uid,
-                  createdByUid: activeUser.uid,
-                  username: player.username,
-                  contact: priv.contact,
-                  prizeType: 'mystery_r3_boost',
-                  amountZar: R3_BOOST_ZAR,
-                  coinsAwarded: 1000,
-                  voucherCode: winnerRecord.voucherCode,
-                  boxNumber,
-                  weekKey: getCurrentWeekKey(),
-                  summary: `Box #${boxNumber} R${R3_BOOST_ZAR} Progress Bar Boost (+1,000 Coins) — Voucher ${winnerRecord.voucherCode}`,
-                  status: 'recorded',
-                  createdAtMs: Date.now(),
-                })
-              );
-            })
-            .catch(() => {});
-        } else if (is11thBoxJackpot) {
+        if (is11thBoxJackpot) {
           setMysteryReveal({
             dateKey: todayKey,
             boxNumber,
             kind: 'jackpot',
-            coins: 1000,
+            coins: 1500,
           });
           setConfettiActive(true);
           playCoinPotCashChime(isMutedNow);
           playVictoryFanfare(isMutedNow);
           showToast(
-            `🎉 11th Ad Complete! R${R3_BOOST_ZAR} Progress Bar Boost (+1,000 Coins)! Grid reset to Box #1 — repeat to earn more!`,
-            1000
+            '🎉 Surprise! +1,500 Bonus Coins! Vault reset — tap any box to start a new 11-box cycle!',
+            1500
           );
           void awardMysteryBoxCoins(
             player,
             priv,
             boxNumber,
-            1000,
+            1500,
             threshold,
             true
           ).catch(() => {});
-          const summary = `11th Ad Complete — R${R3_BOOST_ZAR} Progress Bar Boost (+1,000 Bonus Coins) Unlocked on Box #${boxNumber}`;
-          void recordPrizeWinAndNotifyEmail({
-            uid: player.uid,
-            username: player.username,
-            contact: priv.contact,
-            prizeType: 'mystery_11th_jackpot',
-            amountZar: R3_BOOST_ZAR,
-            coinsAwarded: 1000,
-            boxNumber,
-            weekKey: getCurrentWeekKey(),
-            summary,
-          }).catch(() => {});
-        } else if (isOopsPick) {
-          setMysteryReveal({
-            dateKey: todayKey,
-            boxNumber,
-            kind: 'oops',
-            coins: 0,
-          });
-          showToast('Oops, sorry try next box 🥲', undefined, 'neutral');
         } else {
           setMysteryReveal({
             dateKey: todayKey,
@@ -1024,125 +952,28 @@ function DramaWinApp() {
         setGuestPrivate(result.privateProfile);
         setLocalTransactions(result.transactions);
         setLocalLeaderboard(loadLocalLeaderboard(result.player));
-        setLocalAppConfig(result.appConfig);
-        setLocalWinners(loadLocalMysteryWinners());
 
         const revealPayload: MysteryRevealState = {
           dateKey: todayKey,
           boxNumber,
           kind: result.outcome.kind,
           coins: result.outcome.coins,
-          winnerRecord: result.winnerRecord,
-          newPoolPrizeZar: result.newPoolPrizeZar,
         };
         setMysteryReveal(revealPayload);
-
-        const safeCloudUsername =
-          player.username.trim().length >= 2 ? player.username.trim().slice(0, 32) : 'Player';
-
-        const syncGuestPrizeToCloud = async (params: {
-          prizeType: 'mystery_11th_jackpot' | 'mystery_r3_boost';
-          coinsAwarded: number;
-          voucherCode?: string;
-          summary: string;
-        }) => {
-          try {
-            let activeUid = auth.currentUser?.uid;
-            if (!activeUid) {
-              const cred = await signInAnonymously(auth);
-              activeUid = cred.user.uid;
-            }
-            await recordPrizeWinAndNotifyEmail({
-              uid: activeUid,
-              username: safeCloudUsername,
-              contact: priv.contact,
-              prizeType: params.prizeType,
-              amountZar: R3_BOOST_ZAR,
-              coinsAwarded: params.coinsAwarded,
-              voucherCode: params.voucherCode,
-              boxNumber,
-              weekKey: getCurrentWeekKey(),
-              summary: params.summary,
-            });
-          } catch {
-            // Keep local prize win recorded if offline/unavailable
-          }
-        };
 
         if (result.outcome.kind === 'jackpot') {
           setConfettiActive(true);
           playCoinPotCashChime(isMutedNow);
           playVictoryFanfare(isMutedNow);
-          const summary = `11th Ad Complete — R${R3_BOOST_ZAR} Progress Bar Boost (+1,000 Coins) on Box #${boxNumber}`;
-          setLocalPrizeWins(
-            addLocalPrizeWin({
-              id: `pw-loc-${Date.now()}`,
-              uid: player.uid,
-              createdByUid: player.uid,
-              username: player.username,
-              contact: priv.contact,
-              prizeType: 'mystery_11th_jackpot',
-              amountZar: R3_BOOST_ZAR,
-              coinsAwarded: 1000,
-              boxNumber,
-              weekKey: getCurrentWeekKey(),
-              summary,
-              status: 'recorded',
-              createdAtMs: Date.now(),
-            })
-          );
-          void syncGuestPrizeToCloud({
-            prizeType: 'mystery_11th_jackpot',
-            coinsAwarded: 1000,
-            summary,
-          });
           showToast(
-            `🎉 11th Ad Complete! R${R3_BOOST_ZAR} Progress Bar Boost (+1,000 Coins)! Grid reset to Box #1 — repeat to earn more!`,
-            1000
+            '🎉 Surprise! +1,500 Bonus Coins! Vault reset — tap any box to start a new 11-box cycle!',
+            1500
           );
-        } else if (result.outcome.kind === 'oops') {
-          showToast('Oops, sorry try next box 🥲', undefined, 'neutral');
-        } else if (result.outcome.kind === 'coins') {
+        } else {
           playCoinChime(isMutedNow);
           showToast(
             `🎁 Gift Box #${boxNumber} Opened! +${result.outcome.coins} Coins Added to Wallet!`,
             result.outcome.coins
-          );
-        } else if (result.winnerRecord) {
-          setConfettiActive(true);
-          playCoinChime(isMutedNow);
-          playVictoryFanfare(isMutedNow);
-          const summary = `Box #${boxNumber} R${R3_BOOST_ZAR} Progress Bar Boost — Voucher ${result.winnerRecord.voucherCode}`;
-          setLocalPrizeWins(
-            addLocalPrizeWin({
-              id: result.winnerRecord.id,
-              uid: player.uid,
-              createdByUid: player.uid,
-              username: result.winnerRecord.username,
-              contact: result.winnerRecord.contact,
-              prizeType: 'mystery_r3_boost',
-              amountZar: R3_BOOST_ZAR,
-              coinsAwarded: result.outcome.coins,
-              voucherCode: result.winnerRecord.voucherCode,
-              boxNumber,
-              weekKey: getCurrentWeekKey(),
-              summary,
-              status: 'recorded',
-              createdAtMs: Date.now(),
-            })
-          );
-          void syncGuestPrizeToCloud({
-            prizeType: 'mystery_r3_boost',
-            coinsAwarded: result.outcome.coins,
-            voucherCode: result.winnerRecord.voucherCode,
-            summary,
-          });
-          setMysteryVoucherModal({
-            winner: result.winnerRecord,
-            newPoolPrizeZar: result.newPoolPrizeZar,
-          });
-          showToast(
-            `YOU WON CONGRATULATIONS! 🎉 R${R3_BOOST_ZAR} Progress Bar Boost (+1,000 Coins) unlocked!`
           );
         }
       } catch (err) {
@@ -1156,114 +987,34 @@ function DramaWinApp() {
     [showToast]
   );
 
-  // Gift Box Ad-First Sequence: FIRST open sponsor URL + start 20s top line, ONLY resolve box after 20s completes
+  // Mystery Box Flow: opens MONETAG_LINK in a new tab and awards +100 Coins (+1,500 Bonus Coins on Box #11 + grid reset)
   const handleOpenMysteryBox = (boxNumber: number) => {
-    if (pendingGiftBoxNumber !== null) {
-      showToast(
-        'Sponsor ad is active — please wait for this Gift Box to unlock!',
-        undefined,
-        'neutral'
-      );
-      return;
-    }
-
     const todayKey = getTodayDateKey();
     const rawOpened = isCloudMode
       ? cloudOpenedBoxes
       : privateProfile.openedMysteryBoxesDate === todayKey
         ? privateProfile.openedMysteryBoxesToday || []
         : [];
-    const openedToday = rawOpened.length >= R3_MYSTERY_CYCLE_ADS ? [] : rawOpened;
+    const openedToday = rawOpened.length >= MYSTERY_CYCLE_BOXES ? [] : rawOpened;
 
     if (openedToday.includes(boxNumber)) {
       return;
     }
 
-    setMysteryReveal(null);
     const activeSponsorLink = resolveSponsorLink(appConfig.sponsorAdUrl);
     if (activeSponsorLink && activeSponsorLink !== '#') {
       window.open(activeSponsorLink, '_blank', 'noopener,noreferrer');
     }
-    sponsorFlowRef.current = {
-      active: true,
-      startedAt: Date.now(),
-      durationMs: 20000,
-      activeElapsedMs: 0,
-      lastVisibleTick: Date.now(),
-      leftApp: false,
-      isMysteryBox: true,
-      pushedHistory: false,
-      rewardAction: async () => {
-        resolveGiftBoxOutcome(boxNumber);
-      },
-    };
-    setSponsorLoading({ progress: 0, secondsLeft: 20, completed: false });
-    setPendingGiftBoxNumber(boxNumber);
+    resolveGiftBoxOutcome(boxNumber);
   };
 
   const handleOpenGiftVaultFromHeader = () => {
     setGiftVaultModalOpen(true);
-    if (pendingGiftBoxNumber !== null) {
-      return;
-    }
-
-    const todayKey = getTodayDateKey();
-    const rawOpened = isCloudMode
-      ? cloudOpenedBoxes
-      : privateProfile.openedMysteryBoxesDate === todayKey
-        ? privateProfile.openedMysteryBoxesToday || []
-        : [];
-    const openedToday = rawOpened.length >= R3_MYSTERY_CYCLE_ADS ? [] : rawOpened;
-
-    const targetBox =
-      Array.from({ length: 12 }, (_, idx) => idx + 1).find((n) => !openedToday.includes(n)) ?? 1;
-
-    setMysteryReveal(null);
-    const activeSponsorLink = resolveSponsorLink(appConfig.sponsorAdUrl);
-    if (activeSponsorLink && activeSponsorLink !== '#') {
-      window.open(activeSponsorLink, '_blank', 'noopener,noreferrer');
-    }
-    sponsorFlowRef.current = {
-      active: true,
-      startedAt: Date.now(),
-      durationMs: 20000,
-      activeElapsedMs: 0,
-      lastVisibleTick: Date.now(),
-      leftApp: false,
-      isMysteryBox: true,
-      pushedHistory: false,
-      rewardAction: async () => {
-        resolveGiftBoxOutcome(targetBox);
-      },
-    };
-    setSponsorLoading({ progress: 0, secondsLeft: 20, completed: false });
-    setPendingGiftBoxNumber(targetBox);
   };
 
   const handleDismissGiftVaultModal = useCallback(() => {
-    const isMysteryAdActive =
-      pendingGiftBoxNumber !== null && sponsorFlowRef.current.active;
-
-    if (isMysteryAdActive) {
-      sponsorFlowRef.current.active = false;
-      sponsorFlowRef.current.startedAt = 0;
-      sponsorFlowRef.current.leftApp = false;
-      sponsorFlowRef.current.rewardAction = null;
-      setSponsorLoading(null);
-      setPendingGiftBoxNumber(null);
-      setGiftVaultModalOpen(false);
-      showToast(
-        'Oops! Sorry, you closed the ad early. Watch the full ad to claim your reward.',
-        undefined,
-        'error',
-        undefined,
-        4500
-      );
-      return;
-    }
-
     setGiftVaultModalOpen(false);
-  }, [pendingGiftBoxNumber, showToast]);
+  }, []);
 
   useEffect(() => {
     if (!giftVaultModalOpen) return;

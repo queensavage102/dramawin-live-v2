@@ -33,8 +33,7 @@ import {
   DEFAULT_REAL_AD_SCRIPT,
   DEFAULT_VIDEO_START_SECONDS,
   DRAMA_CATEGORIES,
-  R3_BOOST_ZAR,
-  R3_MYSTERY_CYCLE_ADS,
+  MYSTERY_CYCLE_BOXES,
   extractYouTubeId,
   extractYouTubePlaylistId,
   getCanonicalVideoKey,
@@ -321,12 +320,6 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
   const [embeddedAdInput, setEmbeddedAdInput] = useState(appConfig.embeddedAdHtml || '');
   const [savingEmbed, setSavingEmbed] = useState(false);
 
-  const [r5WinnerUsernameInput, setR5WinnerUsernameInput] = useState(
-    appConfig.r5WinnerUsername || ''
-  );
-  const [nextPickWinsR5Input, setNextPickWinsR5Input] = useState(
-    Boolean(appConfig.nextPickWinsR5)
-  );
   const [poolPrizeInput, setPoolPrizeInput] = useState(String(appConfig.poolPrizeZar ?? 50));
   const [rolloverInput, setRolloverInput] = useState(
     String(appConfig.rolloverAmountZar ?? 0)
@@ -471,8 +464,6 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
   useEffect(() => {
     setSponsorUrlInput(appConfig.sponsorAdUrl);
     setEmbeddedAdInput(appConfig.embeddedAdHtml || '');
-    setR5WinnerUsernameInput(appConfig.r5WinnerUsername || '');
-    setNextPickWinsR5Input(Boolean(appConfig.nextPickWinsR5));
     setPoolPrizeInput(String(appConfig.poolPrizeZar ?? 50));
     setRolloverInput(String(appConfig.rolloverAmountZar ?? 0));
     setTickerEnabledInput(appConfig.liveTickerEnabled !== false);
@@ -913,21 +904,17 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
     setStatusMessage(null);
     try {
       await onUpdateMysteryAndRollover({
-        r5WinnerUsername: r5WinnerUsernameInput.trim(),
-        nextPickWinsR5: nextPickWinsR5Input,
+        r5WinnerUsername: '',
+        nextPickWinsR5: false,
         poolPrizeZar: Number(poolPrizeInput) || DEFAULT_POOL_PRIZE_ZAR,
         rolloverAmountZar: Number(rolloverInput) || 0,
       });
       setStatusMessage(
-        nextPickWinsR5Input
-          ? `Saved! Next Mystery Box pick by any player will unlock the R${R3_BOOST_ZAR} Progress Bar Boost (+1,000 Coins & +R${R3_BOOST_ZAR} added to pool).`
-          : r5WinnerUsernameInput.trim()
-            ? `Saved! "${r5WinnerUsernameInput.trim()}" is set to unlock the R${R3_BOOST_ZAR} Progress Bar Boost on their next Mystery Box pick.`
-            : `Mystery Vault (${R3_MYSTERY_CYCLE_ADS}-Ad R${R3_BOOST_ZAR} Reset Cycle) & Sunday Prize Pool saved.`
+        `Sunday Prize Pool & Secret Mystery Vault (${MYSTERY_CYCLE_BOXES}-Box Cycle) settings saved.`
       );
     } catch (err) {
       setStatusMessage(
-        err instanceof Error ? err.message : 'Failed to update Mystery Vault settings.'
+        err instanceof Error ? err.message : 'Failed to update Sunday Pool settings.'
       );
     } finally {
       setSavingVaultConfig(false);
@@ -941,8 +928,8 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
       const currentPool = Number(poolPrizeInput) || DEFAULT_POOL_PRIZE_ZAR;
       const nextPool = currentPool + DEFAULT_POOL_PRIZE_ZAR;
       await onUpdateMysteryAndRollover({
-        r5WinnerUsername: r5WinnerUsernameInput.trim(),
-        nextPickWinsR5: nextPickWinsR5Input,
+        r5WinnerUsername: '',
+        nextPickWinsR5: false,
         poolPrizeZar: nextPool,
         rolloverAmountZar: currentPool,
         lastPoolWinnerSummary: '',
@@ -961,8 +948,8 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
     setStatusMessage(null);
     try {
       await onUpdateMysteryAndRollover({
-        r5WinnerUsername: r5WinnerUsernameInput.trim(),
-        nextPickWinsR5: nextPickWinsR5Input,
+        r5WinnerUsername: '',
+        nextPickWinsR5: false,
         poolPrizeZar: DEFAULT_POOL_PRIZE_ZAR,
         rolloverAmountZar: 0,
         lastPoolWinnerSummary: '',
@@ -2645,17 +2632,17 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
               </div>
             </section>
 
-            {/* 4. Mystery Vault R3 Progress Bar Boost, 11-Ad Reset, Ticker & Sunday Pool Controls */}
+            {/* 4. Secret Mystery Vault (11-Box Cycle), Ticker & Sunday Pool Controls */}
             <section className="obsidian-card rounded-2xl p-5 sm:p-6 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <Gift className="w-4 h-4 text-[#D4AF37]" />
                   <h2 className="text-base sm:text-lg font-display font-bold text-[#F6F2E9]">
-                    Secret Mystery Vault R{R3_BOOST_ZAR} Boost ({R3_MYSTERY_CYCLE_ADS}-Ad Reset) &amp; Sunday Pool Controls
+                    Secret Mystery Vault ({MYSTERY_CYCLE_BOXES}-Box Coin Cycle) &amp; Sunday Pool Controls
                   </h2>
                 </div>
                 <span className="text-[11px] font-mono-num text-[#E8C96D]">
-                  Auto-resets after {R3_MYSTERY_CYCLE_ADS}th ad · Gmail: {ADMIN_NOTIFICATION_EMAIL}
+                  Box #11: +1,500 Bonus Coins &amp; auto-reset · Gmail: {ADMIN_NOTIFICATION_EMAIL}
                 </span>
               </div>
 
@@ -2663,71 +2650,6 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                 onSubmit={handleSaveVaultAndRollover}
                 className="grid grid-cols-1 sm:grid-cols-2 gap-3"
               >
-                <div className="space-y-1 sm:col-span-2">
-                  <label
-                    htmlFor="admin-r5-winner-username"
-                    className="text-[11px] font-semibold text-[#E8C96D]"
-                  >
-                    Set R{R3_BOOST_ZAR} Progress Bar Boost Winner (Player Username)
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      id="admin-r5-winner-username"
-                      type="text"
-                      list="admin-player-usernames"
-                      maxLength={32}
-                      value={r5WinnerUsernameInput}
-                      onChange={(e) => setR5WinnerUsernameInput(e.target.value)}
-                      placeholder="Leave blank for 11-ad auto-reset cycle, or enter Username"
-                      className="flex-1 min-h-[42px] px-3.5 rounded-xl bg-[#070709] border border-[#D4AF37]/30 text-sm text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
-                    />
-                    <datalist id="admin-player-usernames">
-                      {players.map((p) => (
-                        <option key={p.uid} value={p.username} />
-                      ))}
-                    </datalist>
-                    {r5WinnerUsernameInput && (
-                      <button
-                        type="button"
-                        onClick={() => setR5WinnerUsernameInput('')}
-                        className="min-h-[42px] px-3 rounded-xl border border-white/[0.1] text-xs text-[#A69F91] hover:text-[#F6F2E9]"
-                      >
-                        Clear
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                <div className="sm:col-span-2 flex items-center justify-between gap-3 rounded-xl bg-[#070709] border border-white/[0.08] px-3.5 py-2.5">
-                  <div className="min-w-0">
-                    <p className="text-xs font-semibold text-[#F6F2E9]">
-                      Next Pick Wins R{R3_BOOST_ZAR} Progress Bar Boost
-                    </p>
-                    <p className="text-[11px] text-[#8D867A]">
-                      Toggle ON so the very next Mystery Box pick triggers the R{R3_BOOST_ZAR} Progress Bar Boost (+1,000 Coins &amp; +R{R3_BOOST_ZAR} Pool) celebration popup.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={nextPickWinsR5Input}
-                    onClick={() => setNextPickWinsR5Input((v) => !v)}
-                    className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition-colors ${
-                      nextPickWinsR5Input
-                        ? 'bg-[#D4AF37] border-[#FCE7A2]'
-                        : 'bg-[#17171D] border-white/15'
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-5 w-5 transform rounded-full transition-transform ${
-                        nextPickWinsR5Input
-                          ? 'translate-x-6 bg-[#181307]'
-                          : 'translate-x-1 bg-[#8D867A]'
-                      }`}
-                    />
-                  </button>
-                </div>
-
                 <div className="space-y-1">
                   <label className="text-[11px] text-[#A69F91]">Sunday Prize Pool (R)</label>
                   <input
@@ -2757,7 +2679,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                     disabled={savingVaultConfig}
                     className="min-h-[40px] px-4 rounded-xl gold-gradient-bg text-[#181307] text-xs font-bold hover:brightness-105 disabled:opacity-60"
                   >
-                    Save R{R3_BOOST_ZAR} Boost &amp; Pool Settings
+                    Save Pool Settings
                   </button>
                   <button
                     type="button"
@@ -2842,11 +2764,11 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
 
               <div className="pt-3 border-t border-white/[0.08] space-y-2">
                 <p className="text-xs font-semibold text-[#E8C96D]">
-                  R{R3_BOOST_ZAR} Progress Bar Boost Winners Log ({mysteryWinners.length})
+                  Mystery Vault Log ({mysteryWinners.length})
                 </p>
                 {mysteryWinners.length === 0 ? (
                   <p className="text-xs text-[#8D867A]">
-                    No R{R3_BOOST_ZAR} Progress Bar Boost Mystery Vault winners recorded yet.
+                    No legacy Mystery Vault voucher winners recorded.
                   </p>
                 ) : (
                   <div className="divide-y divide-white/[0.06] max-h-44 overflow-y-auto">
@@ -2887,7 +2809,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                 </div>
                 {prizeWins.length === 0 ? (
                   <p className="text-xs text-[#8D867A]">
-                    No Sunday Pool or Mystery R{R3_BOOST_ZAR} Boost prize wins recorded yet.
+                    No Sunday Pool prize wins recorded yet.
                   </p>
                 ) : (
                   <div className="divide-y divide-white/[0.06] max-h-52 overflow-y-auto">

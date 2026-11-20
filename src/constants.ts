@@ -1,7 +1,8 @@
 import { DramaEpisode, StreakDaySpec, WeekDayKey } from './types';
 
 export const BRAND_NAME = 'DRAMA WIN TORNEMENT';
-export const DEFAULT_SPONSOR_URL = '#';
+export const MONETAG_LINK = '[MONETAG_LINK]';
+export const DEFAULT_SPONSOR_URL = MONETAG_LINK;
 
 export const ADMIN_PASSCODE = 'Gideon_123';
 export const ADMIN_NOTIFICATION_EMAIL = 'gerinaicker04@gmail.com';
@@ -20,8 +21,9 @@ export const COIN_POT_MIN_COINS = 100;
 export const COIN_POT_MAX_COINS = 300;
 export const DEFAULT_VIDEO_START_SECONDS = 28;
 export const MYSTERY_ENTRY_COST = 250;
-export const R3_MYSTERY_CYCLE_ADS = 11;
-export const R3_BOOST_ZAR = 3;
+export const MYSTERY_CYCLE_BOXES = 11;
+export const R3_MYSTERY_CYCLE_ADS = MYSTERY_CYCLE_BOXES;
+export const R3_BOOST_ZAR = 0;
 export const DEFAULT_REAL_AD_SCRIPT = `<script>
   atOptions = {
       'key' : 'c56306a7ff730db6775be12acff0f104',
@@ -612,21 +614,22 @@ export function getSundayCountdown(now = new Date()): CountdownParts {
 export function isLegacyOrBareSponsorUrl(raw?: string): boolean {
   const trimmed = (raw || '').trim();
   if (!trimmed || trimmed === '#') return true;
+  if (trimmed === MONETAG_LINK) return false;
   if (!/^https?:\/\//i.test(trimmed)) return true;
   return /^https?:\/\/([^/]+\.)?directyp\.org(\/|$)/i.test(trimmed);
 }
 
 export function resolveSponsorLink(raw?: string): string {
   const trimmed = (raw || '').trim();
-  if (!trimmed || isLegacyOrBareSponsorUrl(trimmed)) return DEFAULT_SPONSOR_URL;
+  if (!trimmed || isLegacyOrBareSponsorUrl(trimmed)) return MONETAG_LINK;
   return trimmed;
 }
 
 export function sanitizeExternalUrl(raw: string): string {
   const trimmed = raw.trim();
-  if (!trimmed || trimmed === '#') return DEFAULT_SPONSOR_URL;
+  if (!trimmed || trimmed === '#' || trimmed === MONETAG_LINK) return MONETAG_LINK;
   if (trimmed.startsWith('https://') || trimmed.startsWith('http://')) {
-    return isLegacyOrBareSponsorUrl(trimmed) ? DEFAULT_SPONSOR_URL : trimmed;
+    return isLegacyOrBareSponsorUrl(trimmed) ? MONETAG_LINK : trimmed;
   }
   return `https://${trimmed}`;
 }

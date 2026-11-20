@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { CheckCircle2, ExternalLink, Lock, Play, Sparkles, X, Zap } from 'lucide-react';
+import { Sparkles, Zap } from 'lucide-react';
 import { COIN_POT_BASE_REWARD, resolveSponsorLink } from '../constants';
-import { BottomAdBanner } from './BottomAdBanner';
 
 const AD_COUNTDOWN_SECONDS = 20;
 
@@ -123,54 +122,32 @@ const GoldCoinStackIllustration: React.FC = () => (
   </div>
 );
 
-type AdBreakPhase = 'offer' | 'watching_ad' | 'ad_complete';
+type DoublePhase = 'offer' | 'overlay' | 'ready_to_claim';
 
 export const DoubleRewardModal: React.FC<DoubleRewardModalProps> = ({
   open,
   baseCoins = COIN_POT_BASE_REWARD,
-  sponsorUrl = '#',
+  sponsorUrl,
   episodeTitle,
   onClaimDouble,
   onContinueAfterAd,
-  onCancelAd,
   onClaimBase,
 }) => {
-  const [phase, setPhase] = useState<AdBreakPhase>('offer');
-  const [submitting, setSubmitting] = useState<'base' | 'awarding' | null>(null);
+  const [phase, setPhase] = useState<DoublePhase>('offer');
+  const [submitting, setSubmitting] = useState<'base' | 'double' | null>(null);
+  const [hasVisitedSponsor, setHasVisitedSponsor] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(AD_COUNTDOWN_SECONDS);
   const [adProgress, setAdProgress] = useState(0);
 
-  const startedAtRef = useRef(0);
-  const cancelledRef = useRef(false);
-  const awardTriggeredRef = useRef(false);
-  const pushedHistoryRef = useRef(false);
+  const hasVisitedSponsorRef = useRef(false);
+  const accumulatedAwayMsRef = useRef(0);
+  const awayStartAtRef = useRef(0);
   const timerRef = useRef<number | null>(null);
-  const rafRef = useRef<number | null>(null);
-
-  const onClaimDoubleRef = useRef(onClaimDouble);
-  const onContinueAfterAdRef = useRef(onContinueAfterAd);
-  const onCancelAdRef = useRef(onCancelAd);
-
-  useEffect(() => {
-    onClaimDoubleRef.current = onClaimDouble;
-  }, [onClaimDouble]);
-
-  useEffect(() => {
-    onContinueAfterAdRef.current = onContinueAfterAd;
-  }, [onContinueAfterAd]);
-
-  useEffect(() => {
-    onCancelAdRef.current = onCancelAd;
-  }, [onCancelAd]);
 
   const stopTimers = () => {
     if (timerRef.current !== null) {
       window.clearInterval(timerRef.current);
       timerRef.current = null;
-    }
-    if (rafRef.current !== null) {
-      window.cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
     }
   };
 
@@ -178,163 +155,138 @@ export const DoubleRewardModal: React.FC<DoubleRewardModalProps> = ({
     if (open) {
       setPhase('offer');
       setSubmitting(null);
+      setHasVisitedSponsor(false);
+      hasVisitedSponsorRef.current = false;
+      accumulatedAwayMsRef.current = 0;
+      awayStartAtRef.current = 0;
       setSecondsLeft(AD_COUNTDOWN_SECONDS);
       setAdProgress(0);
-      startedAtRef.current = 0;
-      cancelledRef.current = false;
-      awardTriggeredRef.current = false;
     } else {
       stopTimers();
-      cancelledRef.current = true;
     }
   }, [open]);
 
   useEffect(() => {
-    if (!open || phase !== 'watching_ad') return;
+    if (!open || phase !== 'overlay') return;
 
     const totalMs = AD_COUNTDOWN_SECONDS * 1000;
-    startedAtRef.current = Date.now();
-    cancelledRef.current = false;
-    awardTriggeredRef.current = false;
-    setSecondsLeft(AD_COUNTDOWN_SECONDS);
-    setAdProgress(0);
 
-    if (typeof window !== 'undefined' && !pushedHistoryRef.current) {
-      try {
-        window.history.pushState({ dramawinAdBreak: true }, '');
-        pushedHistoryRef.current = true;
-      } catch {
-        // Ignore history API restrictions
+    const getEffectiveAwayMs = () => {
+      if (awayStartAtRef.current > 0 && document.visibilityState === 'hidden') {
+        return Math.min(
+          totalMs,
+          accumulatedAwayMsRef.current + Math.max(0, Date.now() - awayStartAtRef.current)
+        );
       }
-    }
+      return Math.min(totalMs, accumulatedAwayMsRef.current);
+    };
 
-    const cleanupHistoryEntry = () => {
-      if (pushedHistoryRef.current) {
-        pushedHistoryRef.current = false;
-        try {
-          window.history.back();
-        } catch {
-          // Ignore history back errors
+    const syncUI = (effectiveMs: number) => {
+      const pct = Math.min(100, Math.max(0, (effectiveMs / totalMs) * 100));
+      const remaining = Math.max(0, Math.ceil((totalMs - effectiveMs) / 1000));
+      setAdProgress(pct);
+      setSecondsLeft(remaining);
+    };
+
+    const handleVisibilityChange = () => {
+      if (!hasVisitedSponsorRef.current) return;
+
+      if (document.visibilityState === 'hidden') {
+        if (awayStartAtRef.current === 0 && accumulatedAwayMsRef.current < totalMs) {
+          awayStartAtRef.current = Date.now();
+        }
+        return;
+      }
+
+      if (document.visibilityState === 'visible') {
+        if (awayStartAtRef.current > 0) {
+          const awayChunk = Math.max(0, Date.now() - awayStartAtRef.current);
+          accumulatedAwayMsRef.current = Math.min(totalMs, accumulatedAwayMsRef.current + awayChunk);
+          awayStartAtRef.current = 0;
+        }
+        syncUI(accumulatedAwayMsRef.current);
+        if (accumulatedAwayMsRef.current >= totalMs) {
+          stopTimers();
+          setAdProgress(100);
+          setSecondsLeft(0);
+          setPhase('ready_to_claim');
         }
       }
     };
 
-    const abortAdZeroCoins = (fromPopState = false) => {
-      if (cancelledRef.current || awardTriggeredRef.current) return;
-      cancelledRef.current = true;
-      stopTimers();
-      setAdProgress(0);
-      setSecondsLeft(AD_COUNTDOWN_SECONDS);
-      if (!fromPopState) {
-        cleanupHistoryEntry();
-      } else {
-        pushedHistoryRef.current = false;
-      }
-      const cancelCallback = onCancelAdRef.current || onContinueAfterAdRef.current;
-      cancelCallback?.();
-    };
-
-    const handleVisibilityChange = () => {
-      if (document.hidden || document.visibilityState === 'hidden') {
-        abortAdZeroCoins(false);
-      }
-    };
-
     const handlePageHide = () => {
-      abortAdZeroCoins(false);
+      if (
+        hasVisitedSponsorRef.current &&
+        awayStartAtRef.current === 0 &&
+        accumulatedAwayMsRef.current < totalMs
+      ) {
+        awayStartAtRef.current = Date.now();
+      }
     };
 
-    const handlePopState = () => {
-      abortAdZeroCoins(true);
+    const handleReturnCheck = () => {
+      if (document.visibilityState === 'visible') {
+        handleVisibilityChange();
+      }
     };
+
+    // Only track elapsed away time while document.visibilityState === 'hidden'
+    timerRef.current = window.setInterval(() => {
+      if (!hasVisitedSponsorRef.current) return;
+      if (document.visibilityState !== 'hidden') return;
+      if (awayStartAtRef.current === 0) {
+        awayStartAtRef.current = Date.now();
+      }
+      syncUI(getEffectiveAwayMs());
+    }, 250);
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('pagehide', handlePageHide);
-    window.addEventListener('popstate', handlePopState);
-
-    const completeIfVisible = () => {
-      if (
-        cancelledRef.current ||
-        awardTriggeredRef.current ||
-        document.hidden ||
-        document.visibilityState === 'hidden'
-      ) {
-        return;
-      }
-      const elapsed = Date.now() - startedAtRef.current;
-      if (elapsed < totalMs) return;
-
-      awardTriggeredRef.current = true;
-      stopTimers();
-      setAdProgress(100);
-      setSecondsLeft(0);
-      setSubmitting('awarding');
-      void onClaimDoubleRef
-        .current()
-        .catch(() => {})
-        .finally(() => {
-          if (cancelledRef.current) return;
-          setSubmitting(null);
-          setPhase('ad_complete');
-        });
-    };
-
-    // Strict useRef interval timer enforcing 20s visible completion
-    timerRef.current = window.setInterval(() => {
-      if (cancelledRef.current || awardTriggeredRef.current) {
-        stopTimers();
-        return;
-      }
-      if (document.hidden || document.visibilityState === 'hidden') {
-        abortAdZeroCoins(false);
-        return;
-      }
-      const elapsed = Date.now() - startedAtRef.current;
-      const remaining = Math.max(0, Math.ceil((totalMs - elapsed) / 1000));
-      setSecondsLeft(remaining);
-      if (elapsed >= totalMs) {
-        completeIfVisible();
-      }
-    }, 100);
-
-    // Smooth 60fps visual progress & circular countdown ring animation
-    const animate60fps = () => {
-      if (cancelledRef.current || awardTriggeredRef.current) return;
-      if (document.hidden || document.visibilityState === 'hidden') {
-        abortAdZeroCoins(false);
-        return;
-      }
-      const elapsed = Date.now() - startedAtRef.current;
-      const pct = Math.min(100, Math.max(0, (elapsed / totalMs) * 100));
-      setAdProgress(pct);
-
-      if (elapsed >= totalMs) {
-        completeIfVisible();
-        return;
-      }
-      rafRef.current = window.requestAnimationFrame(animate60fps);
-    };
-    rafRef.current = window.requestAnimationFrame(animate60fps);
+    window.addEventListener('focus', handleReturnCheck);
+    window.addEventListener('pageshow', handleReturnCheck);
 
     return () => {
       stopTimers();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('pagehide', handlePageHide);
-      window.removeEventListener('popstate', handlePopState);
-      if (!awardTriggeredRef.current && pushedHistoryRef.current) {
-        cleanupHistoryEntry();
-      }
+      window.removeEventListener('focus', handleReturnCheck);
+      window.removeEventListener('pageshow', handleReturnCheck);
     };
   }, [open, phase]);
 
   if (!open) return null;
 
   const doubledCoins = baseCoins * 2;
+  const activeMonetagUrl = resolveSponsorLink(sponsorUrl);
 
-  const handleDoubleClick = () => {
+  const handleOpenSponsorOverlay = () => {
     if (submitting || phase !== 'offer') return;
-    // Start in-page 20s live ad break; coins are ONLY awarded if user stays visible for full 20s.
-    setPhase('watching_ad');
+    hasVisitedSponsorRef.current = false;
+    setHasVisitedSponsor(false);
+    accumulatedAwayMsRef.current = 0;
+    awayStartAtRef.current = 0;
+    setSecondsLeft(AD_COUNTDOWN_SECONDS);
+    setAdProgress(0);
+    setPhase('overlay');
+  };
+
+  const handleVisitSponsorClick = () => {
+    hasVisitedSponsorRef.current = true;
+    setHasVisitedSponsor(true);
+    if (document.visibilityState === 'hidden' && awayStartAtRef.current === 0) {
+      awayStartAtRef.current = Date.now();
+    }
+  };
+
+  const handleClaimDoubleNow = async () => {
+    if (submitting || phase !== 'ready_to_claim') return;
+    setSubmitting('double');
+    try {
+      await onClaimDouble();
+      onContinueAfterAd?.();
+    } finally {
+      setSubmitting(null);
+    }
   };
 
   const handleBaseClaimClick = async () => {
@@ -347,241 +299,113 @@ export const DoubleRewardModal: React.FC<DoubleRewardModalProps> = ({
     }
   };
 
-  const handleExitAdEarly = () => {
-    if (awardTriggeredRef.current || phase === 'ad_complete') return;
-    cancelledRef.current = true;
-    stopTimers();
-    setAdProgress(0);
-    setSecondsLeft(AD_COUNTDOWN_SECONDS);
-    if (pushedHistoryRef.current) {
-      pushedHistoryRef.current = false;
-      try {
-        window.history.back();
-      } catch {
-        // Ignore history back errors
-      }
-    }
-    const cancelCallback = onCancelAd || onContinueAfterAd;
-    cancelCallback?.();
-  };
-
-  const handleContinueMovie = () => {
-    if (phase !== 'ad_complete') return;
-    if (pushedHistoryRef.current) {
-      pushedHistoryRef.current = false;
-      try {
-        window.history.back();
-      } catch {
-        // Ignore history back errors
-      }
-    }
-    if (onContinueAfterAd) {
-      onContinueAfterAd();
-    }
-  };
-
-  if (phase === 'watching_ad' || phase === 'ad_complete') {
-    const isComplete = phase === 'ad_complete';
-    const ringSize = 84;
-    const strokeWidth = 5;
-    const radius = (ringSize - strokeWidth) / 2;
-    const circumference = 2 * Math.PI * radius;
-    const activePct = isComplete ? 100 : adProgress;
-    const dashOffset = circumference * (1 - activePct / 100);
+  if (phase === 'overlay' || phase === 'ready_to_claim') {
+    const isComplete = phase === 'ready_to_claim';
+    const topBarMessage = isComplete
+      ? `Sponsor Ad • Ready! +${doubledCoins} Coins Unlocked`
+      : hasVisitedSponsor
+        ? `Paused (${secondsLeft}s left) — Tap Visit Sponsor Page to continue!`
+        : 'Tap Visit Sponsor Page to start 20s timer';
 
     return (
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={isComplete ? 'Ad Complete! Coins Earned' : 'Sponsored Ad Break'}
-        className="fixed inset-0 z-[2147483600] bg-black/92 backdrop-blur-md flex flex-col justify-between p-3 sm:p-5 overflow-y-auto"
+        aria-label={isComplete ? `Claim +${doubledCoins} Coins` : 'Sponsor Ad Overlay'}
+        className="fixed inset-0 z-[2147483600] bg-[#09090b] flex flex-col w-full h-full overflow-hidden"
       >
-        {/* Top Prominent 60fps Countdown Banner & Progress Bar */}
-        <div className="w-full max-w-lg mx-auto rounded-2xl border border-[#D4AF37]/45 bg-[#12100B]/95 shadow-[0_10px_40px_rgba(0,0,0,0.85)] overflow-hidden shrink-0">
-          <div className="px-4 py-3 flex items-center justify-between gap-3">
-            {isComplete ? (
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-400 text-emerald-300 text-xs sm:text-sm font-extrabold shadow-[0_0_20px_rgba(16,185,129,0.35)]">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>Ad Complete! +Coins Earned</span>
-              </div>
-            ) : (
-              <div className="inline-flex items-center gap-2 text-xs sm:text-sm font-extrabold text-[#FCE7A2]">
-                <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping shrink-0" />
-                <span>
-                  Sponsored Ad • Reward in{' '}
-                  <span className="font-mono-num text-amber-300">{secondsLeft}s</span>...
-                </span>
-              </div>
-            )}
+        {/* 1) Slim Top Bar with live 20s gold progress bar & locked -> bright green Claim button */}
+        <header className="shrink-0 w-full bg-[#12100B] border-b border-[#D4AF37]/40 shadow-[0_6px_28px_rgba(0,0,0,0.8)]">
+          <div className="px-3 sm:px-5 py-2 flex items-center justify-between gap-3">
+            <div className="min-w-0 flex items-center gap-2 text-xs sm:text-sm font-extrabold text-[#FCE7A2]">
+              <span
+                className={`w-2 h-2 rounded-full shrink-0 ${
+                  isComplete ? 'bg-emerald-400' : 'bg-amber-400'
+                }`}
+              />
+              <span className="truncate font-mono-num">{topBarMessage}</span>
+            </div>
 
             <button
               type="button"
-              disabled={!isComplete}
-              aria-disabled={!isComplete}
-              onClick={handleContinueMovie}
-              aria-label={
+              disabled={!isComplete || submitting === 'double'}
+              onClick={() => void handleClaimDoubleNow()}
+              className={`shrink-0 min-h-[36px] px-3.5 rounded-xl font-extrabold text-xs sm:text-sm inline-flex items-center justify-center gap-1.5 transition-all ${
                 isComplete
-                  ? 'Close ad overlay and continue movie'
-                  : `Close locked until countdown finishes (${secondsLeft}s)`
-              }
-              title={isComplete ? 'Close & Continue Movie' : `Wait ${secondsLeft}s`}
-              className={`min-h-[36px] px-2.5 rounded-xl border text-xs font-bold inline-flex items-center gap-1 transition-all shrink-0 ${
-                isComplete
-                  ? 'border-emerald-400/60 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25 cursor-pointer'
-                  : 'border-white/10 bg-white/[0.04] text-zinc-500 opacity-50 cursor-not-allowed'
+                  ? 'bg-gradient-to-r from-emerald-400 via-green-400 to-emerald-500 text-zinc-950 shadow-[0_0_20px_rgba(16,185,129,0.55)] hover:brightness-105 active:scale-[0.98] cursor-pointer'
+                  : 'bg-white/[0.06] border border-white/15 text-zinc-400 cursor-not-allowed'
               }`}
             >
-              {isComplete ? <X className="w-4 h-4" /> : <Lock className="w-3.5 h-3.5" />}
+              {isComplete ? (
+                <span>
+                  {submitting === 'double' ? 'Claiming...' : `✕ Claim +${doubledCoins}`}
+                </span>
+              ) : (
+                <span className="font-mono-num">{`🔒 ${secondsLeft}s`}</span>
+              )}
             </button>
           </div>
 
-          <div className="h-2.5 w-full bg-black/70 overflow-hidden">
+          <div className="h-1.5 w-full bg-black/80 overflow-hidden">
             <div
-              className={`h-full will-change-[width] ${
+              className={`h-full will-change-[width] transition-[width] duration-150 ease-linear ${
                 isComplete
-                  ? 'bg-gradient-to-r from-emerald-400 via-green-400 to-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.8)]'
+                  ? 'bg-gradient-to-r from-emerald-400 via-green-400 to-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.85)]'
                   : 'bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 shadow-[0_0_12px_rgba(251,191,36,0.9)]'
               }`}
-              style={{ width: `${activePct}%` }}
+              style={{ width: `${isComplete ? 100 : Math.min(100, Math.max(0, adProgress))}%` }}
             />
           </div>
-        </div>
+        </header>
 
-        {/* Center Sponsored Ad Card with Animated Circular Ring & Live Ad Container */}
-        <div className="my-auto w-full max-w-sm mx-auto rounded-3xl bg-gradient-to-b from-[#17121E] via-[#0F0D14] to-[#09090b] border border-amber-400/45 shadow-[0_0_70px_rgba(245,158,11,0.3)] p-5 text-center space-y-4">
-          {!isComplete ? (
-            <div className="flex flex-col items-center gap-2.5">
-              {/* Animated 60fps Circular Countdown Ring (20s -> 0s) */}
-              <div className="relative w-[84px] h-[84px] flex items-center justify-center">
-                <svg
-                  width={ringSize}
-                  height={ringSize}
-                  viewBox={`0 0 ${ringSize} ${ringSize}`}
-                  className="-rotate-90 absolute inset-0"
-                  aria-hidden="true"
-                >
-                  <defs>
-                    <linearGradient id="ad-ring-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-                      <stop offset="0%" stopColor="#FEF08A" />
-                      <stop offset="50%" stopColor="#FBBF24" />
-                      <stop offset="100%" stopColor="#F59E0B" />
-                    </linearGradient>
-                  </defs>
-                  <circle
-                    cx={ringSize / 2}
-                    cy={ringSize / 2}
-                    r={radius}
-                    fill="rgba(0,0,0,0.55)"
-                    stroke="rgba(255,255,255,0.12)"
-                    strokeWidth={strokeWidth}
-                  />
-                  <circle
-                    cx={ringSize / 2}
-                    cy={ringSize / 2}
-                    r={radius}
-                    fill="none"
-                    stroke="url(#ad-ring-grad)"
-                    strokeWidth={strokeWidth}
-                    strokeLinecap="round"
-                    strokeDasharray={circumference}
-                    strokeDashoffset={dashOffset}
-                  />
-                </svg>
-                <div className="relative flex flex-col items-center">
-                  <span className="font-mono-num text-2xl font-black text-amber-300 leading-none">
-                    {secondsLeft}s
-                  </span>
-                  <span className="text-[9px] font-bold uppercase tracking-wider text-zinc-400 mt-0.5">
-                    Stay Active
-                  </span>
-                </div>
-              </div>
+        {/* 2) Dark-and-Gold Featured Sponsor Spotlight Card centered below top bar */}
+        <div className="flex-1 w-full bg-[#09090b] relative overflow-y-auto flex items-center justify-center p-4 sm:p-6">
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_40%,rgba(212,175,55,0.18),transparent_68%)]"
+          />
 
-              {/* Pulsing Anti-Freeze Badge Around Live Ad Container */}
-              <div className="w-full rounded-2xl border border-amber-400/50 bg-[#0A0A0F] p-2.5 space-y-2 shadow-[0_0_24px_rgba(251,191,36,0.18)] animate-pulse">
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-400/15 border border-amber-400/40 text-[11px] font-extrabold text-amber-200">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
-                  <span>Ad Playing • Stay 20s for +{doubledCoins} Coins</span>
-                </div>
-                <div className="rounded-xl overflow-hidden bg-[#09090b] border border-white/10 py-1">
-                  <BottomAdBanner />
-                </div>
-              </div>
+          <div className="relative w-full max-w-md rounded-3xl bg-gradient-to-b from-[#1B150A] via-[#100D08] to-[#08080A] border border-[#D4AF37]/50 shadow-[0_0_75px_rgba(212,175,55,0.28)] ring-1 ring-inset ring-[#FCE7A2]/15 p-6 sm:p-8 text-center space-y-5 overflow-hidden">
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute -top-20 left-1/2 -translate-x-1/2 w-72 h-40 rounded-full bg-[radial-gradient(circle,rgba(252,231,162,0.28),transparent_70%)] blur-2xl"
+            />
 
-              <div className="space-y-1">
-                <p className="font-mono-num text-2xl font-black text-amber-300">
-                  +{doubledCoins.toLocaleString()} Coins
-                </p>
-                <p className="text-xs font-medium text-zinc-300 leading-relaxed">
-                  {submitting === 'awarding'
-                    ? `Finalizing your +${doubledCoins} Coin reward...`
-                    : `Sponsored Ad active — wait ${secondsLeft}s to unlock your x2 coin reward.`}
-                </p>
-                {(() => {
-                  const activeSponsorLink = resolveSponsorLink(sponsorUrl);
-                  return (
-                    <a
-                      href={activeSponsorLink}
-                      target={activeSponsorLink !== '#' ? '_blank' : undefined}
-                      rel={activeSponsorLink !== '#' ? 'noopener noreferrer' : undefined}
-                      onClick={(e) => {
-                        if (activeSponsorLink === '#') {
-                          e.preventDefault();
-                        }
-                      }}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-amber-400/35 bg-amber-400/10 text-amber-200 text-xs font-semibold hover:bg-amber-400/20 cursor-pointer"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5" />
-                      <span>View Sponsor Page</span>
-                    </a>
-                  );
-                })()}
-              </div>
+            <div className="relative inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-[#D4AF37]/15 border border-[#D4AF37]/45 text-[11px] font-bold uppercase tracking-widest text-[#FCE7A2]">
+              <Sparkles className="w-3.5 h-3.5 text-[#FCE7A2]" />
+              <span>Featured Sponsor Spotlight</span>
             </div>
-          ) : (
-            <div className="space-y-3">
-              <GoldCoinStackIllustration />
-              <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-emerald-500/20 border border-emerald-400/70 text-emerald-300 text-xs font-extrabold">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                <span>Ad Complete! +{doubledCoins.toLocaleString()} Coins Earned</span>
-              </div>
-              <p className="text-xs text-zinc-300">
-                Your coins have been added and your movie is ready right where you left off.
+
+            <div className="relative space-y-2.5">
+              <h3 className="text-2xl sm:text-3xl font-display font-extrabold tracking-tight bg-gradient-to-r from-[#FFF7D6] via-[#F3D37A] to-[#D4AF37] bg-clip-text text-transparent drop-shadow-[0_0_20px_rgba(251,191,36,0.45)]">
+                🔥 Featured Partner Offer
+              </h3>
+              <p className="text-xs sm:text-sm text-[#D6CEBF] leading-relaxed max-w-sm mx-auto">
+                Tap below to explore today&apos;s sponsor while your 20s reward timer completes!
               </p>
             </div>
-          )}
 
-          {isComplete ? (
-            <button
-              type="button"
-              onClick={handleContinueMovie}
-              className="w-full min-h-[50px] px-4 rounded-2xl bg-gradient-to-r from-emerald-400 via-green-400 to-emerald-500 text-zinc-950 font-extrabold text-sm shadow-[0_0_28px_rgba(16,185,129,0.5)] hover:brightness-105 active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer"
-            >
-              <Play className="w-4 h-4 fill-current" />
-              <span>Continue Movie ▶</span>
-            </button>
-          ) : (
-            <div className="space-y-2">
-              <button
-                type="button"
-                disabled
-                className="w-full min-h-[48px] px-4 rounded-2xl bg-white/[0.06] border border-white/10 text-zinc-400 font-bold text-xs flex items-center justify-center gap-2 cursor-not-allowed"
+            <div className="relative pt-1">
+              <a
+                href={activeMonetagUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={handleVisitSponsorClick}
+                className="w-full min-h-[54px] px-5 rounded-2xl bg-gradient-to-r from-[#FCE7A2] via-[#E8C96D] to-[#D4AF37] text-[#181307] font-extrabold text-sm sm:text-base shadow-[0_0_32px_rgba(212,175,55,0.5)] hover:brightness-105 active:scale-[0.98] transition-all inline-flex items-center justify-center gap-2 cursor-pointer"
               >
-                <Lock className="w-3.5 h-3.5" />
-                <span>Reward unlocks in {secondsLeft}s...</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleExitAdEarly}
-                className="w-full py-1.5 text-[11px] font-medium text-zinc-400 hover:text-zinc-200 underline underline-offset-4 transition-colors cursor-pointer"
-              >
-                Exit Ad (No Coins)
-              </button>
+                <span>Visit Sponsor Page ↗</span>
+              </a>
             </div>
-          )}
-        </div>
 
-        <div className="h-2 shrink-0" aria-hidden="true" />
+            <p className="relative text-[11px] font-mono-num font-semibold text-[#A69F91]">
+              {isComplete
+                ? `Reward ready — tap ✕ Claim +${doubledCoins} at the top right!`
+                : hasVisitedSponsor
+                  ? `Paused (${secondsLeft}s left) — Tap Visit Sponsor Page to continue!`
+                  : 'Tap Visit Sponsor Page to start 20s timer'}
+            </p>
+          </div>
+        </div>
       </div>
     );
   }
@@ -627,7 +451,7 @@ export const DoubleRewardModal: React.FC<DoubleRewardModalProps> = ({
           <button
             type="button"
             disabled={Boolean(submitting)}
-            onClick={handleDoubleClick}
+            onClick={handleOpenSponsorOverlay}
             className="w-full min-h-[52px] px-4 rounded-2xl bg-gradient-to-r from-amber-400 via-yellow-400 to-fuchsia-500 text-zinc-950 font-extrabold text-sm shadow-[0_0_28px_rgba(251,191,36,0.55)] hover:brightness-110 active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
           >
             <span className="px-1.5 py-0.5 rounded bg-zinc-950/90 text-amber-300 font-mono-num text-[10px] font-black tracking-wider">

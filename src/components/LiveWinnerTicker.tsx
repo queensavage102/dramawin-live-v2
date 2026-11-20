@@ -23,15 +23,15 @@ export const LiveWinnerTicker: React.FC<LiveWinnerTickerProps> = ({
     return cleanNames.map((name, index) => {
       const pattern = index % 4;
       if (pattern === 0) {
-        return `🎉 ${name} just unlocked an R3 Progress Bar Boost in the 11-Ad Mystery Vault!`;
+        return `🎉 ${name} just unlocked +1,500 Bonus Coins in the Secret Mystery Vault!`;
       }
       if (pattern === 1) {
         return `🏆 ${name} qualified for the R${poolPrizeZar} Sunday Pool!`;
       }
       if (pattern === 2) {
-        return `🎁 ${name} unlocked +150 Coins watching Featured Drama Playlist!`;
+        return `🎁 ${name} claimed +600 Coins with Double Rewards!`;
       }
-      return `🎉 ${name} completed the 11-Ad R3 Boost cycle!`;
+      return `🎉 ${name} unlocked the 11-Box Mystery Vault surprise (+1,500 Bonus Coins)!`;
     });
   }, [names, poolPrizeZar]);
 

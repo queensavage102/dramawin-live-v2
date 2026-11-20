@@ -10,7 +10,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { R3_BOOST_ZAR, R3_MYSTERY_CYCLE_ADS } from '../constants';
+import { MYSTERY_CYCLE_BOXES } from '../constants';
 import { SupportCategory } from '../types';
 
 const CHAT_STORAGE_KEY = 'dramawin_support_chat_v1';
@@ -44,14 +44,14 @@ interface SupportChatWidgetProps {
 
 const QUICK_PROMPTS = [
   'How do I earn coins fast?',
-  `How does the R${R3_BOOST_ZAR} Boost work?`,
+  'How does the Mystery Vault work?',
   'Am I qualified for Sunday Pool?',
   'Missing coins / prize help',
 ];
 
 const SUPPORT_CATEGORY_OPTIONS: { value: SupportCategory; label: string }[] = [
   { value: 'claim_prize', label: 'Claim Prize / Payout' },
-  { value: 'mystery_box', label: `${R3_MYSTERY_CYCLE_ADS}-Ad R${R3_BOOST_ZAR} Mystery Box` },
+  { value: 'mystery_box', label: `${MYSTERY_CYCLE_BOXES}-Box Mystery Vault` },
   { value: 'coins', label: 'Coins & Daily Streak' },
   { value: 'sunday_pool', label: 'Sunday Pool & Leaderboard' },
   { value: 'feedback', label: 'Complaint / Feedback' },
@@ -133,7 +133,7 @@ function buildConversationalReply(
     q.includes('reset')
   ) {
     return {
-      text: `Here is how the Mystery Vault works, ${firstName}:\n\n1. Tap any glowing box and watch the full 20-second ad to grab +100 Coins.\n2. Every time you complete ${R3_MYSTERY_CYCLE_ADS} boxes, you unlock a massive +1,000 Coin R${R3_BOOST_ZAR} Boost!\n3. After Box #${R3_MYSTERY_CYCLE_ADS}, the grid automatically resets to Box #1 so you can repeat it as many times as you like.`,
+      text: `Here is how the Secret Mystery Vault works, ${firstName}:\n\n1. Tap any glowing gift box to explore a mystery partner offer and claim +100 Coins.\n2. Unlock ${MYSTERY_CYCLE_BOXES} boxes to reveal the hidden +1,500 Bonus Coins mega surprise!\n3. Right after Box #${MYSTERY_CYCLE_BOXES}, the vault grid automatically resets so you can repeat it anytime.`,
     };
   }
 
@@ -148,7 +148,7 @@ function buildConversationalReply(
     q.includes('how do i play')
   ) {
     return {
-      text: `You already have ${ctx.coins.toLocaleString()} Coins, ${firstName}! Here are the 3 best ways to stack more fast:\n\n• Watch Episodes: Stay on any drama for 30+ seconds to fill the 60s Coin Pot (+100 to +300 Coins).\n• Mystery Vault: Complete ${R3_MYSTERY_CYCLE_ADS} short box ads for +2,100 total Coins per cycle.\n• Daily Streak: Visit the Rewards tab once a day to claim your streak bonus.`,
+      text: `You already have ${ctx.coins.toLocaleString()} Coins, ${firstName}! Here are the 3 best ways to stack more fast:\n\n• Watch Episodes: Fill the 60s Coin Pot (+300 Coins) or double it to +600 Coins with AD Double Rewards.\n• Mystery Vault: Open ${MYSTERY_CYCLE_BOXES} glowing boxes for +2,500 total Coins per cycle (+1,500 Bonus Coins on Box #11).\n• Daily Streak: Visit the Rewards tab once a day to claim your streak bonus.`,
     };
   }
 
@@ -183,7 +183,7 @@ function buildConversationalReply(
   }
 
   return {
-    text: `I want to make sure I give you the exact right answer, ${firstName}! I can help with earning coins, the ${R3_MYSTERY_CYCLE_ADS}-Ad R${R3_BOOST_ZAR} Boost, or Sunday Pool payouts—or if you'd rather chat with our team directly, tap below to send a quick message.`,
+    text: `I want to make sure I give you the exact right answer, ${firstName}! I can help with earning coins, the ${MYSTERY_CYCLE_BOXES}-box Mystery Vault, or Sunday Pool payouts—or if you'd rather chat with our team directly, tap below to send a quick message.`,
     action: 'open_ticket',
   };
 }
@@ -206,7 +206,7 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
     return {
       id: 'welcome-bot',
       role: 'assistant',
-      text: `Hey ${firstName}! 👋 I'm your DramaWin VIP Assistant. Ask me anything about your coins, the R${R3_BOOST_ZAR} Mystery Boost, or Sunday Pool payouts!`,
+      text: `Hey ${firstName}! 👋 I'm your DramaWin VIP Assistant. Ask me anything about your coins, the Secret Mystery Vault, or Sunday Pool payouts!`,
     };
   };
 

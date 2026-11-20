@@ -6,9 +6,8 @@ import {
   DEFAULT_QUALIFICATION_THRESHOLD,
   DEFAULT_SPONSOR_URL,
   LEGACY_BROKEN_SERIES_NAMES,
+  MYSTERY_CYCLE_BOXES,
   MYSTERY_ENTRY_COST,
-  R3_BOOST_ZAR,
-  R3_MYSTERY_CYCLE_ADS,
   SAST_OFFSET_MS,
   SEEDED_TOURNAMENT_PLAYERS,
   deduplicateEpisodeList,
@@ -107,7 +106,7 @@ export function getOrCreateGuestSession(): {
       savedPrivate.openedMysteryBoxesDate === getTodayDateKey()
         ? savedPrivate.openedMysteryBoxesToday || []
         : [];
-    const normalizedBoxes = rawBoxes.length >= R3_MYSTERY_CYCLE_ADS ? [] : rawBoxes;
+    const normalizedBoxes = rawBoxes.length >= MYSTERY_CYCLE_BOXES ? [] : rawBoxes;
     const normalizedPrivate: PlayerPrivate = {
       ...savedPrivate,
       claimedDays:
@@ -762,7 +761,7 @@ export function claimLocalMysteryBox(params: {
     privateProfile.openedMysteryBoxesDate === todayKey
       ? privateProfile.openedMysteryBoxesToday || []
       : [];
-  const openedToday = rawOpened.length >= R3_MYSTERY_CYCLE_ADS ? [] : rawOpened;
+  const openedToday = rawOpened.length >= MYSTERY_CYCLE_BOXES ? [] : rawOpened;
 
   if (openedToday.includes(boxNumber)) {
     throw new Error(`You already opened Box #${boxNumber} in this cycle. Try another box!`);
@@ -771,66 +770,23 @@ export function claimLocalMysteryBox(params: {
     throw new Error(`You need at least ${MYSTERY_ENTRY_COST} Coins to unlock.`);
   }
 
-  const targetUsername = (appConfig.r5WinnerUsername || '').trim().toLowerCase();
-  const isNamedWinner =
-    targetUsername.length > 0 &&
-    player.username.trim().toLowerCase() === targetUsername;
-  const isR3Winner = Boolean(appConfig.nextPickWinsR5) || isNamedWinner;
-
-  const is11thBoxJackpot = openedToday.length + 1 >= R3_MYSTERY_CYCLE_ADS;
-  const isOopsPick = !isR3Winner && !is11thBoxJackpot && openedToday.length > 0 && Math.random() < 0.3;
-  const chosen: BoxOutcome = isR3Winner
-    ? { boxNumber, kind: 'airtime', coins: 1000 }
-    : is11thBoxJackpot
-      ? {
-          boxNumber,
-          kind: 'jackpot',
-          coins: 1000,
-        }
-      : isOopsPick
-        ? {
-            boxNumber,
-            kind: 'oops',
-            coins: 0,
-          }
-        : {
-            boxNumber,
-            kind: 'coins',
-            coins: 100,
-          };
+  const is11thBoxJackpot = openedToday.length + 1 >= MYSTERY_CYCLE_BOXES;
+  const chosen: BoxOutcome = is11thBoxJackpot
+    ? {
+        boxNumber,
+        kind: 'jackpot',
+        coins: 1500,
+      }
+    : {
+        boxNumber,
+        kind: 'coins',
+        coins: 100,
+      };
 
   const entryCost = paidWithCoins ? MYSTERY_ENTRY_COST : 0;
   const walletDelta = chosen.coins - entryCost;
-  // Automatically reset the Mystery Box grid back to Box 1 right after the 11th video ad is claimed
+  // Automatically reset the Mystery Box grid back to 0 / 11 Boxes Opened right after the 11th box
   const nextOpened = is11thBoxJackpot ? [] : [...openedToday, boxNumber];
-
-  let winnerRecord: MysteryWinnerRecord | undefined;
-  let newPoolPrizeZar: number | undefined;
-  let nextConfig = appConfig;
-
-  if (chosen.kind === 'airtime') {
-    const voucherCode = `DW-R3-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
-    chosen.voucherCode = voucherCode;
-    newPoolPrizeZar = (appConfig.poolPrizeZar || DEFAULT_POOL_PRIZE_ZAR) + R3_BOOST_ZAR;
-    nextConfig = saveLocalAppConfig({
-      ...appConfig,
-      poolPrizeZar: newPoolPrizeZar,
-      r5WinnerUsername: '',
-      nextPickWinsR5: false,
-    });
-    winnerRecord = {
-      id: `win-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      uid: player.uid,
-      username: player.username,
-      contact: privateProfile.contact,
-      voucherCode,
-      amountZar: R3_BOOST_ZAR,
-      boxNumber,
-      createdAtMs: Date.now(),
-    };
-    const winners = loadLocalMysteryWinners();
-    safeWriteJson(LOCAL_WINNERS_KEY, [winnerRecord, ...winners].slice(0, 100));
-  }
 
   const mutation = applyLocalCoinMutation({
     player,
@@ -842,18 +798,12 @@ export function claimLocalMysteryBox(params: {
       openedMysteryBoxesToday: nextOpened,
       lastMysteryPickDate: '',
     },
-    txMeta:
-      chosen.kind === 'oops'
-        ? undefined
-        : {
-            category: 'mystery-box',
-            title:
-              chosen.kind === 'airtime'
-                ? `Mystery Box #${boxNumber} — R3 Progress Bar Boost`
-                : chosen.kind === 'jackpot'
-                  ? `Mystery Box #${boxNumber} — 11th Ad R3 Boost (+1,000 Coins)`
-                  : `Mystery Box #${boxNumber} Bonus`,
-          },
+    txMeta: {
+      category: 'mystery-box',
+      title: is11thBoxJackpot
+        ? `Mystery Box #${boxNumber} — +1,500 Bonus Coins!`
+        : `Mystery Box #${boxNumber} Bonus (+100 Coins)`,
+    },
   });
 
   return {
@@ -861,9 +811,7 @@ export function claimLocalMysteryBox(params: {
     player: mutation.player,
     privateProfile: mutation.privateProfile,
     transactions: mutation.transactions,
-    appConfig: nextConfig,
-    winnerRecord,
-    newPoolPrizeZar,
+    appConfig,
   };
 }
 
