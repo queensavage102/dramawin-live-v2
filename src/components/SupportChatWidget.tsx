@@ -1,4 +1,3 @@
-
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Bot,
@@ -11,14 +10,12 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { signInAnonymously } from 'firebase/auth';
 import { R3_BOOST_ZAR, R3_MYSTERY_CYCLE_ADS } from '../constants';
-import { auth } from '../firebase';
-import { SupportCategory, SupportMessageRecord } from '../types';
-import { addLocalSupportMessage } from '../utils/localState';
-import { submitSupportMessageAndNotifyEmail } from '../services/dramawinService';
+import { SupportCategory } from '../types';
 
 const CHAT_STORAGE_KEY = 'dramawin_support_chat_v1';
+const WEB3FORMS_ENDPOINT = 'https://api.web3forms.com/submit';
+const WEB3FORMS_ACCESS_KEY = '1cf6a6bd-bbe1-44ae-94ca-5ee93136033e';
 
 interface ChatMessageItem {
   id: string;
@@ -36,17 +33,13 @@ export interface SupportTicketSubmissionInput {
 }
 
 interface SupportChatWidgetProps {
-  uid?: string;
   username: string;
   contact: string;
   coins: number;
   weeklyCoins: number;
   qualificationThreshold: number;
   poolPrizeZar: number;
-  isFirebaseSignedIn: boolean;
   firebaseEmail?: string | null;
-  onSignInGoogle: () => Promise<void>;
-  onTicketsUpdated?: (tickets: SupportMessageRecord[]) => void;
 }
 
 const QUICK_PROMPTS = [
@@ -65,6 +58,12 @@ const SUPPORT_CATEGORY_OPTIONS: { value: SupportCategory; label: string }[] = [
   { value: 'other', label: 'Other Support' },
 ];
 
+function resolveInitialEmail(firebaseEmail?: string | null, contact?: string): string {
+  if (firebaseEmail && firebaseEmail.includes('@')) return firebaseEmail.trim();
+  if (contact && contact !== 'Instant Play' && contact.includes('@')) return contact.trim();
+  return '';
+}
+
 function buildConversationalReply(
   question: string,
   ctx: {
@@ -77,7 +76,7 @@ function buildConversationalReply(
 ): { text: string; action?: 'open_ticket' } {
   const q = question.toLowerCase().trim();
   const firstName =
-    ctx.username && ctx.username !== 'Player' ? ctx.username.split(' ') .at(0): 'friend';
+    ctx.username && ctx.username !== 'Player' ? ctx.username.split(' ').at(0) : 'friend';
   const safeThreshold = Math.max(1, ctx.qualificationThreshold || 500000);
   const currentWeekly = ctx.weeklyCoins || 0;
   const remainingWeekly = Math.max(0, safeThreshold - currentWeekly);
@@ -190,7 +189,6 @@ function buildConversationalReply(
 }
 
 export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
-  uid = 'player',
   username,
   contact,
   coins,
@@ -198,13 +196,12 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
   qualificationThreshold,
   poolPrizeZar,
   firebaseEmail = null,
-  onTicketsUpdated,
 }) => {
   const [open, setOpen] = useState(false);
   const [activeMode, setActiveMode] = useState<'ai' | 'ticket'>('ai');
 
   const getInitialMessage = (): ChatMessageItem => {
-  const firstName = username && username !== 'Player' ? username.split(' ').at(0) : 'there';
+    const firstName = username && username !== 'Player' ? username.split(' ').at(0) : 'there';
 
     return {
       id: 'welcome-bot',
@@ -225,14 +222,19 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
     }
     return [getInitialMessage()];
   });
+  const [userEmail, setUserEmail] = useState<string>(() =>
+    resolveInitialEmail(firebaseEmail, contact)
+  );
   const [chatInput, setChatInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const [ticketName, setTicketName] = useState(username || 'Player');
-  const [ticketContact, setTicketContact] = useState(
-    contact && contact !== 'Instant Play' ? contact : firebaseEmail || ''
-  );
+  const [ticketContact, setTicketContact] = useState(() => {
+    const email = resolveInitialEmail(firebaseEmail, contact);
+    if (email) return email;
+    return contact && contact !== 'Instant Play' ? contact : '';
+  });
   const [ticketCategory, setTicketCategory] = useState<SupportCategory>('claim_prize');
   const [ticketSubject, setTicketSubject] = useState('');
   const [ticketMessage, setTicketMessage] = useState('');
@@ -240,7 +242,6 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
   const [submittingTicket, setSubmittingTicket] = useState(false);
   const [submittedReceipt, setSubmittedReceipt] = useState<{
     id: string;
-    syncedToCloud: boolean;
   } | null>(null);
 
   useEffect(() => {
@@ -256,18 +257,60 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
   }, [username]);
 
   useEffect(() => {
+    const detected = resolveInitialEmail(firebaseEmail, contact);
+    if (detected && !userEmail.trim()) {
+      setUserEmail(detected);
+    }
     if (firebaseEmail && !ticketContact.trim()) {
       setTicketContact(firebaseEmail);
     } else if (contact && contact !== 'Instant Play' && !ticketContact.trim()) {
       setTicketContact(contact);
     }
-  }, [contact, firebaseEmail, ticketContact]);
+  }, [contact, firebaseEmail, ticketContact, userEmail]);
 
   useEffect(() => {
     if (open && activeMode === 'ai' && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [open, activeMode, messages, isTyping]);
+
+  const submitCopyToWeb3Forms = async (payload: {
+    email: string;
+    message: string;
+    subject?: string;
+    extraName?: string;
+  }) => {
+    const replyEmail =
+      payload.email.trim() ||
+      resolveInitialEmail(firebaseEmail, contact) ||
+      'no-reply@dramawin.app';
+
+    const response = await fetch(WEB3FORMS_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        access_key: WEB3FORMS_ACCESS_KEY,
+        subject: payload.subject || 'DramaWin Support Ticket',
+        replyto: replyEmail,
+        email: replyEmail,
+        from_name: payload.extraName || username || 'DramaWin Player',
+        message: payload.message,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const result = (await response.json().catch(() => null)) as
+      | { success?: boolean; message?: string }
+      | null;
+    if (result && result.success === false) {
+      throw new Error(result.message || 'Support submission rejected.');
+    }
+  };
 
   const sendAiPrompt = (rawText: string) => {
     const trimmed = rawText.trim();
@@ -283,37 +326,14 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
     setMessages((prev) => [...prev, userMsg]);
     setChatInput('');
     setIsTyping(true);
-    const chatTicketId = `chat-${now}-${Math.random().toString(36).slice(2, 6)}`;
-    const nextTickets = addLocalSupportMessage({
-      id: chatTicketId,
-      uid,
-      username: (username || 'Player').trim(),
-      contact: (contact || firebaseEmail || 'In-App Chat').trim(),
-      category: 'other',
-      subject: 'AI Chat Message',
-      message: trimmed,
-      status: 'open',
-      source: 'local',
-      createdAtMs: now,
-      updatedAtMs: now,
-    });
-    onTicketsUpdated?.(nextTickets);
 
-    const syncChatTicket = async () => {
-      if (!auth.currentUser) {
-        await signInAnonymously(auth);
-      }
-      await submitSupportMessageAndNotifyEmail({
-        id: chatTicketId,
-        uid: auth.currentUser?.uid || uid || '',
-        username: (username || 'Player').trim(),
-        contact: (contact || firebaseEmail || 'In-App Chat').trim(),
-        category: 'other',
-        subject: 'AI Chat Message',
-        message: trimmed,
-      });
-    };
-    void syncChatTicket().catch((err) => console.error('Cloud chat sync failed:', err));
+    // Silently forward a copy via Web3Forms in the background without interrupting chat
+    void submitCopyToWeb3Forms({
+      email: userEmail,
+      message: trimmed,
+      subject: 'DramaWin Support Ticket',
+      extraName: username || 'DramaWin Player',
+    }).catch(() => {});
 
     setTimeout(() => {
       const reply = buildConversationalReply(trimmed, {
@@ -375,44 +395,30 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
     }
 
     setSubmittingTicket(true);
-    const nowMs = Date.now();
-    const ticketId = `msg-${nowMs}-${Math.random().toString(36).slice(2, 6)}`;
+    const ticketId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const contactValue = ticketContact.trim();
+    const ticketEmail = contactValue.includes('@')
+      ? contactValue
+      : userEmail.trim() || 'no-reply@dramawin.app';
 
     try {
-      if (!auth.currentUser) {
-        await signInAnonymously(auth);
-      }
-      const resolvedUid = auth.currentUser?.uid || uid;
-
-      await submitSupportMessageAndNotifyEmail({
-        id: ticketId,
-        uid: resolvedUid,
-        username: ticketName.trim(),
-        contact: ticketContact.trim(),
-        category: ticketCategory,
-        subject: ticketSubject.trim(),
-        message: ticketMessage.trim(),
+      await submitCopyToWeb3Forms({
+        email: ticketEmail,
+        subject: 'DramaWin Support Ticket',
+        extraName: ticketName.trim(),
+        message: [
+          `Ticket ID: ${ticketId}`,
+          `Player: ${ticketName.trim()}`,
+          `Contact: ${contactValue}`,
+          `Category: ${ticketCategory}`,
+          `Subject: ${ticketSubject.trim()}`,
+          `Coins: ${coins.toLocaleString()} (Weekly: ${weeklyCoins.toLocaleString()})`,
+          '',
+          ticketMessage.trim(),
+        ].join('\n'),
       });
 
-      const nextTickets = addLocalSupportMessage({
-        id: ticketId,
-        uid: resolvedUid,
-        username: ticketName.trim(),
-        contact: ticketContact.trim(),
-        category: ticketCategory,
-        subject: ticketSubject.trim(),
-        message: ticketMessage.trim(),
-        status: 'open',
-        source: 'cloud',
-        createdAtMs: nowMs,
-        updatedAtMs: nowMs,
-      });
-
-      onTicketsUpdated?.(nextTickets);
-      setSubmittedReceipt({
-        id: ticketId,
-        syncedToCloud: true,
-      });
+      setSubmittedReceipt({ id: ticketId });
       setTicketSubject('');
       setTicketMessage('');
     } catch (err) {
@@ -427,6 +433,7 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
       setSubmittingTicket(false);
     }
   };
+
   return (
     <>
       {open ? (
@@ -571,29 +578,52 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
                   ))}
                 </div>
 
-                {/* Input Bar */}
+                {/* Reply Email + Chat Input Bar */}
                 <form
                   onSubmit={handleChatSubmit}
-                  className="p-2.5 bg-[#1a1612] border-t border-white/10 flex items-center gap-2 shrink-0"
+                  className="p-2.5 bg-[#1a1612] border-t border-white/10 space-y-2 shrink-0"
                 >
-                  <input
-                    type="text"
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    placeholder="Ask a question..."
-                    className="flex-1 bg-black/40 border border-white/10 focus:border-amber-400/60 rounded-xl px-3 py-2 text-xs text-white placeholder:text-zinc-500 outline-none"
-                  />
-                  <button
-                    type="submit"
-                    aria-label="Send message"
-                    className="p-2 rounded-xl bg-amber-400 text-black hover:bg-amber-300 transition shrink-0"
-                  >
-                    <Send className="w-4 h-4" />
-                  </button>
+                  <div>
+                    <label
+                      htmlFor="support-chat-email"
+                      className="block text-[10px] font-semibold text-zinc-400 mb-1"
+                    >
+                      Your Email (so we can reply)
+                    </label>
+                    <input
+                      id="support-chat-email"
+                      type="email"
+                      value={userEmail}
+                      onChange={(e) => {
+                        setUserEmail(e.target.value);
+                        if (!ticketContact.trim() || ticketContact.includes('@')) {
+                          setTicketContact(e.target.value);
+                        }
+                      }}
+                      placeholder="you@example.com"
+                      className="w-full bg-black/40 border border-white/10 focus:border-amber-400/60 rounded-xl px-3 py-1.5 text-xs text-white placeholder:text-zinc-500 outline-none"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      placeholder="Ask a question..."
+                      className="flex-1 bg-black/40 border border-white/10 focus:border-amber-400/60 rounded-xl px-3 py-2 text-xs text-white placeholder:text-zinc-500 outline-none"
+                    />
+                    <button
+                      type="submit"
+                      aria-label="Send message"
+                      className="p-2 rounded-xl bg-amber-400 text-black hover:bg-amber-300 transition shrink-0"
+                    >
+                      <Send className="w-4 h-4" />
+                    </button>
+                  </div>
                 </form>
               </>
             ) : (
-              /* Clean Admin Ticket Form */
+              /* Clean Admin Ticket Form (Web3Forms -> Support Gmail) */
               <div className="flex-1 overflow-y-auto p-3.5">
                 <form onSubmit={handleTicketSubmit} className="space-y-2.5">
                   {submittedReceipt && (
@@ -603,7 +633,7 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
                     >
                       <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                       <div className="min-w-0 flex-1">
-                        <p className="font-bold text-emerald-300">Message sent to Admin Board!</p>
+                        <p className="font-bold text-emerald-300">Message sent to Admin Gmail!</p>
                         <p className="text-[11px] text-emerald-200/80 font-mono">
                           Ticket {submittedReceipt.id}
                         </p>
@@ -707,5 +737,5 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
         </button>
       )}
     </>
-     );
+  );
 };

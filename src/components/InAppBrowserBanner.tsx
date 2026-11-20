@@ -14,7 +14,14 @@ export const InAppBrowserBanner: React.FC = () => {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    if (typeof navigator === 'undefined') return;
+    if (typeof window === 'undefined' || typeof navigator === 'undefined') return;
+    const standalone =
+      window.matchMedia('(display-mode: standalone)').matches ||
+      window.matchMedia('(display-mode: fullscreen)').matches ||
+      window.matchMedia('(display-mode: minimal-ui)').matches ||
+      (window.navigator as unknown as { standalone?: boolean }).standalone === true ||
+      document.referrer.includes('android-app://');
+    if (standalone) return;
     if (!isSocialInAppBrowser(navigator.userAgent || '')) return;
 
     try {

@@ -55,9 +55,6 @@ import {
   PlayerPrivate,
   PrizeWinRecord,
   PrizeWinType,
-  SupportCategory,
-  SupportMessageRecord,
-  SupportStatus,
   TransactionCategory,
   WeekDayKey,
 } from '../types';
@@ -2203,108 +2200,6 @@ ${params.voucherCode ? `<p><strong>Voucher:</strong> <code>${escapeHtml(params.v
   return winId;
 }
 
-export async function submitSupportMessageAndNotifyEmail(params: {
-  id?: string;
-  uid: string;
-  username: string;
-  contact: string;
-  category: SupportCategory;
-  subject: string;
-  message: string;
-}): Promise<string> {
-    const actorUid = auth.currentUser?.uid || params.uid?.trim() || `guest_${Date.now()}`;
-
-
-  const msgId =
-    params.id?.trim() || `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-  const mailId = `mail-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-
-  const cleanUsername = (params.username.trim() || 'Player').slice(0, 40);
-  const cleanContact = (params.contact.trim() || 'Not provided').slice(0, 120);
-  const cleanSubject = (params.subject.trim() || 'Player Support Request').slice(0, 120);
-  const rawMsg = params.message.trim().slice(0, 2000);
-  const cleanMessage = rawMsg.length >= 2 ? rawMsg : `${rawMsg}.`;
-  
-
-  
-  await setDoc(doc(db, 'support_messages', msgId), {
-    
-    uid: actorUid,
-    username: cleanUsername.length >= 2 ? cleanUsername : 'Player',
-    contact: cleanContact.length >= 2 ? cleanContact : 'N/A',
-    category: params.category,
-    subject: cleanSubject.length >= 2 ? cleanSubject : 'Support Ticket',
-    message: cleanMessage,
-    status: 'open',
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  });
-
-  const emailSubject = `[DramaWin Support - ${params.category}] ${cleanSubject}`.slice(0, 200);
-  const emailText = [
-    `New DramaWin Support / Claim Help Message`,
-    `Ticket ID: ${msgId}`,
-    `Player: ${cleanUsername} (UID: ${actorUid})`,
-    `Contact: ${cleanContact}`,
-    `Category: ${params.category}`,
-    `Subject: ${cleanSubject}`,
-    ``,
-    cleanMessage,
-  ].join('\n');
-
-  const emailHtml = `<h2>New DramaWin Support / Claim Prize Help Ticket</h2>
-<p><strong>Ticket ID:</strong> <code>${escapeHtml(msgId)}</code></p>
-<p><strong>Player:</strong> ${escapeHtml(cleanUsername)} (${escapeHtml(actorUid)})</p>
-<p><strong>Contact:</strong> ${escapeHtml(cleanContact)}</p>
-<p><strong>Category:</strong> ${escapeHtml(params.category)}</p>
-<p><strong>Subject:</strong> ${escapeHtml(cleanSubject)}</p>`;
-  setDoc(
-    doc(db, 'mail', mailId),
-    buildMailPayload({
-      uid: actorUid,
-      eventType: 'support_message',
-      subject: emailSubject,
-      text: emailText,
-      html: emailHtml,
-    })
-  ).catch((err) => console.warn('Mail queue skipped:', err));
-  
-    
-
-  return msgId;
-}
-
-export function subscribeSupportMessages(
-  onData: (messages: SupportMessageRecord[]) => void,
-  onError?: (err: Error) => void
-): Unsubscribe {
-  const path = 'support_messages';
-  return onSnapshot(
-    query(collection(db, 'support_messages'), limit(200)),
-    (snapshot) => {
-      const list = snapshot.docs
-        .map((d) => ({
-          id: d.id,
-          source: 'cloud' as const,
-          ...(d.data() as Omit<SupportMessageRecord, 'id' | 'source'>),
-        }))
-        .sort((a, b) => {
-          const tA = a.createdAt?.toMillis?.() || a.createdAtMs || 0;
-          const tB = b.createdAt?.toMillis?.() || b.createdAtMs || 0;
-          return tB - tA;
-        });
-      onData(list);
-    },
-    (error) => {
-      try {
-        handleFirestoreError(error, OperationType.LIST, path);
-      } catch (wrapped) {
-        if (onError && wrapped instanceof Error) onError(wrapped);
-      }
-    }
-  );
-}
-
 export function subscribePrizeWins(
   onData: (wins: PrizeWinRecord[]) => void,
   onError?: (err: Error) => void
@@ -2335,25 +2230,3 @@ export function subscribePrizeWins(
   );
 }
 
-export async function updateSupportMessageStatus(
-  messageId: string,
-  status: SupportStatus,
-  adminNote?: string
-): Promise<void> {
-  const path = `support_messages/${messageId}`;
-  const payload: Record<string, unknown> = {
-    status,
-    updatedAt: serverTimestamp(),
-  };
-  if (adminNote !== undefined) {
-    payload.adminNote = adminNote.trim().slice(0, 500);
-  }
-  if (status === 'resolved' && auth.currentUser?.email) {
-    payload.resolvedBy = auth.currentUser.email.slice(0, 120);
-  }
-  try {
-    await updateDoc(doc(db, 'support_messages', messageId), payload);
-  } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, path);
-  }
-}

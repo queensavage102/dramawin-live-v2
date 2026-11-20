@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Check,
@@ -16,8 +16,6 @@ import { usePWAInstall } from '../hooks/usePWAInstall';
 interface InstallAppWidgetProps {
   storageKey?: string;
 }
-
-const IN_APP_MODAL_SEEN_KEY = 'dramawin_inapp_modal_seen_v1';
 
 export const InstallAppWidget: React.FC<InstallAppWidgetProps> = ({
   storageKey = 'dramawin_install_widget_dismissed_v1',
@@ -43,17 +41,7 @@ export const InstallAppWidget: React.FC<InstallAppWidgetProps> = ({
   const [installing, setInstalling] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
 
-  useEffect(() => {
-    if (!isInAppBrowser || isInstalled || dismissed || typeof window === 'undefined') return;
-    try {
-      if (window.sessionStorage.getItem(IN_APP_MODAL_SEEN_KEY) === 'true') return;
-      window.sessionStorage.setItem(IN_APP_MODAL_SEEN_KEY, 'true');
-    } catch {
-      // Ignore storage restrictions
-    }
-    setShowModal(true);
-  }, [isInAppBrowser, isInstalled, dismissed]);
-
+  // Hide all install prompts completely if already running in standalone installed mode
   if (isInstalled || dismissed) {
     return null;
   }
@@ -67,16 +55,19 @@ export const InstallAppWidget: React.FC<InstallAppWidgetProps> = ({
     }
   };
 
+  const hasNativePrompt =
+    Boolean(
+      typeof window !== 'undefined' &&
+        (window.__deferredPrompt || window.__dramawinInstallPrompt)
+    ) || isInstallable;
+
   const handleInstallClick = async () => {
     if (installing) return;
-    if (isInAppBrowser) {
-      setShowModal(true);
-      return;
-    }
     const nativePrompt =
       typeof window !== 'undefined'
         ? window.__deferredPrompt || window.__dramawinInstallPrompt
         : null;
+
     if (nativePrompt || isInstallable) {
       setInstalling(true);
       try {
@@ -91,6 +82,7 @@ export const InstallAppWidget: React.FC<InstallAppWidgetProps> = ({
       }
       return;
     }
+
     setShowModal(true);
   };
 
@@ -105,12 +97,6 @@ export const InstallAppWidget: React.FC<InstallAppWidgetProps> = ({
     }
   };
 
-  const hasNativePrompt =
-    Boolean(
-      typeof window !== 'undefined' &&
-        (window.__deferredPrompt || window.__dramawinInstallPrompt)
-    ) || isInstallable;
-
   return (
     <>
       <div className="rounded-2xl bg-gradient-to-r from-[#16120B] via-[#111116] to-[#15121B] border border-[#D4AF37]/40 px-4 py-3.5 shadow-[0_8px_28px_rgba(212,175,55,0.12)]">
@@ -124,11 +110,13 @@ export const InstallAppWidget: React.FC<InstallAppWidgetProps> = ({
                 Install DramaWin App
               </h3>
               <p className="text-[11px] text-[#B8B0A0] truncate">
-                {isInAppBrowser
-                  ? 'Open in your mobile browser to install to Home Screen.'
-                  : hasNativePrompt
-                    ? 'Tap Install DramaWin App for instant 1-tap install.'
-                    : 'Add to your Home Screen for instant full-screen access.'}
+                {hasNativePrompt
+                  ? 'Tap Install DramaWin App for instant 1-tap install.'
+                  : isIOS
+                    ? 'Add to your iPhone Home Screen via Safari Share.'
+                    : isInAppBrowser
+                      ? 'Open in Chrome or Safari to install to Home Screen.'
+                      : 'Add to your Home Screen for instant full-screen access.'}
               </p>
             </div>
           </div>
@@ -141,13 +129,7 @@ export const InstallAppWidget: React.FC<InstallAppWidgetProps> = ({
               className="min-h-[38px] px-3.5 rounded-xl bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-zinc-950 font-extrabold text-xs inline-flex items-center gap-1.5 shadow-[0_0_16px_rgba(251,191,36,0.35)] hover:brightness-110 active:scale-[0.98] disabled:opacity-70 transition-all cursor-pointer whitespace-nowrap"
             >
               <Download className="w-3.5 h-3.5" />
-              <span>
-                {installing
-                  ? 'Opening...'
-                  : isInAppBrowser
-                    ? 'Install'
-                    : 'Install DramaWin App'}
-              </span>
+              <span>{installing ? 'Opening...' : 'Install DramaWin App'}</span>
             </button>
 
             <button
@@ -187,9 +169,9 @@ export const InstallAppWidget: React.FC<InstallAppWidgetProps> = ({
                       Add DramaWin to Home Screen
                     </h4>
                     <p className="text-xs text-[#A69F91]">
-                      {isInAppBrowser
-                        ? 'Open in Chrome, Samsung Internet, or Safari'
-                        : '2 quick steps for full-screen app mode'}
+                      {isIOS
+                        ? 'iOS Safari: Share → Add to Home Screen'
+                        : 'Chrome 3-dot menu (⋮) → Install app'}
                     </p>
                   </div>
                 </div>
@@ -203,56 +185,50 @@ export const InstallAppWidget: React.FC<InstallAppWidgetProps> = ({
                 </button>
               </div>
 
-              {isInAppBrowser ? (
+              {isIOS ? (
                 <div className="space-y-2.5 text-xs text-[#E8E1D3]">
-                  <p className="leading-relaxed text-[#CFC8B8] pb-1">
-                    You are viewing this inside an in-app browser. Open it in your phone browser to
-                    install the app to your Home Screen:
-                  </p>
+                  {isInAppBrowser && (
+                    <div className="space-y-2 pb-1">
+                      <p className="leading-relaxed text-[#CFC8B8]">
+                        You are viewing this inside an in-app browser. Open it in{' '}
+                        <strong className="text-[#FCE7A2]">Safari</strong> first to install:
+                      </p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={openInExternalBrowser}
+                          className="min-h-[40px] px-3 rounded-xl bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-black font-bold flex items-center justify-center gap-1.5 shadow-[0_6px_20px_rgba(251,191,36,0.3)] hover:brightness-105 cursor-pointer"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                          <span>Open in Safari</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleCopyLink()}
+                          className="min-h-[40px] px-3 rounded-xl border border-[#D4AF37]/40 bg-[#18181F] hover:bg-[#1F1F28] text-[#FCE7A2] font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          {copiedLink ? (
+                            <>
+                              <Check className="w-3.5 h-3.5 text-emerald-400" />
+                              <span>Copied!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3.5 h-3.5" />
+                              <span>Copy Link</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
-                  <button
-                    type="button"
-                    onClick={openInExternalBrowser}
-                    className="w-full min-h-[44px] rounded-xl bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-black font-bold flex items-center justify-center gap-2 shadow-[0_6px_20px_rgba(251,191,36,0.3)] hover:brightness-105 cursor-pointer"
-                  >
-                    <ExternalLink className="w-4 h-4" />
-                    <span>Open in Browser to Install</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => void handleCopyLink()}
-                    className="w-full min-h-[42px] rounded-xl border border-[#D4AF37]/40 bg-[#18181F] hover:bg-[#1F1F28] text-[#FCE7A2] font-semibold text-xs flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    {copiedLink ? (
-                      <>
-                        <Check className="w-4 h-4 text-emerald-400" />
-                        <span>Copied!</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-4 h-4" />
-                        <span>Copy App Link</span>
-                      </>
-                    )}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setShowModal(false)}
-                    className="w-full min-h-[42px] rounded-xl border border-white/15 bg-white/[0.05] hover:bg-white/[0.1] text-xs font-bold text-[#F6F2E9] cursor-pointer"
-                  >
-                    Got it
-                  </button>
-                </div>
-              ) : isIOS ? (
-                <>
-                  <ol className="space-y-2.5 text-xs text-[#E8E1D3]">
+                  <ol className="space-y-2 text-xs text-[#E8E1D3]">
                     <li className="flex items-center gap-2.5 rounded-xl bg-[#0B0B0F] border border-white/10 p-3">
                       <Share className="w-4 h-4 text-amber-300 shrink-0" />
                       <span>
-                        1. Tap the <strong className="text-[#FCE7A2]">Share</strong> button at the
-                        bottom of Safari.
+                        1. In Safari, tap the <strong className="text-[#FCE7A2]">Share</strong>{' '}
+                        button at the bottom of your screen.
                       </span>
                     </li>
                     <li className="flex items-center gap-2.5 rounded-xl bg-[#0B0B0F] border border-white/10 p-3">
@@ -263,25 +239,7 @@ export const InstallAppWidget: React.FC<InstallAppWidgetProps> = ({
                       </span>
                     </li>
                   </ol>
-                  <button
-                    type="button"
-                    onClick={() => setShowModal(false)}
-                    className="w-full min-h-[42px] rounded-xl border border-white/15 bg-white/[0.05] hover:bg-white/[0.1] text-xs font-bold text-[#F6F2E9] cursor-pointer"
-                  >
-                    Got it
-                  </button>
-                </>
-              ) : hasNativePrompt ? (
-                <div className="space-y-2.5">
-                  <button
-                    type="button"
-                    disabled={installing}
-                    onClick={() => void handleInstallClick()}
-                    className="w-full min-h-[46px] rounded-xl bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-zinc-950 font-extrabold text-xs flex items-center justify-center gap-2 shadow-[0_6px_20px_rgba(251,191,36,0.35)] hover:brightness-105 disabled:opacity-70 cursor-pointer"
-                  >
-                    <Download className="w-4 h-4" />
-                    <span>{installing ? 'Opening Install Prompt...' : 'Install DramaWin App'}</span>
-                  </button>
+
                   <button
                     type="button"
                     onClick={() => setShowModal(false)}
@@ -291,13 +249,50 @@ export const InstallAppWidget: React.FC<InstallAppWidgetProps> = ({
                   </button>
                 </div>
               ) : (
-                <div className="space-y-2.5">
+                <div className="space-y-2.5 text-xs text-[#E8E1D3]">
+                  {isInAppBrowser && (
+                    <div className="space-y-2 pb-1">
+                      <p className="leading-relaxed text-[#CFC8B8]">
+                        You are viewing this inside an in-app browser. Open it in{' '}
+                        <strong className="text-[#FCE7A2]">Chrome</strong> for 1-tap installation:
+                      </p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={openInExternalBrowser}
+                          className="min-h-[40px] px-3 rounded-xl bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-black font-bold flex items-center justify-center gap-1.5 shadow-[0_6px_20px_rgba(251,191,36,0.3)] hover:brightness-105 cursor-pointer"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                          <span>Open in Chrome</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleCopyLink()}
+                          className="min-h-[40px] px-3 rounded-xl border border-[#D4AF37]/40 bg-[#18181F] hover:bg-[#1F1F28] text-[#FCE7A2] font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          {copiedLink ? (
+                            <>
+                              <Check className="w-3.5 h-3.5 text-emerald-400" />
+                              <span>Copied!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3.5 h-3.5" />
+                              <span>Copy Link</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   <ol className="space-y-2 text-xs text-[#E8E1D3]">
                     <li className="flex items-center gap-2.5 rounded-xl bg-[#0B0B0F] border border-white/10 p-3">
                       <MoreVertical className="w-4 h-4 text-amber-300 shrink-0" />
                       <span>
-                        1. Tap the <strong className="text-[#FCE7A2]">⋮ / ≡ menu</strong> in your
-                        browser (Chrome, Samsung Internet, Edge, Brave, Opera).
+                        1. Tap the Chrome{' '}
+                        <strong className="text-[#FCE7A2]">3-dot menu (⋮)</strong> in the top-right
+                        corner.
                       </span>
                     </li>
                     <li className="flex items-center gap-2.5 rounded-xl bg-[#0B0B0F] border border-white/10 p-3">

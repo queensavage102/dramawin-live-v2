@@ -29,6 +29,17 @@ function detectInAppBrowser(): boolean {
   );
 }
 
+function isRunningStandalone(): boolean {
+  if (typeof window === 'undefined') return false;
+  return (
+    window.matchMedia('(display-mode: standalone)').matches ||
+    window.matchMedia('(display-mode: fullscreen)').matches ||
+    window.matchMedia('(display-mode: minimal-ui)').matches ||
+    (window.navigator as unknown as { standalone?: boolean }).standalone === true ||
+    document.referrer.includes('android-app://')
+  );
+}
+
 const UNIVERSAL_ANDROID_BROWSER_INTENT =
   'intent://drama-win-tornement.vercel.app/#Intent;scheme=https;action=android.intent.action.VIEW;category=android.intent.category.BROWSABLE;end';
 const IOS_SAFARI_EXTERNAL_URL = 'x-safari-https://drama-win-tornement.vercel.app';
@@ -41,13 +52,7 @@ export function usePWAInstall() {
       ? window.__deferredPrompt || window.__dramawinInstallPrompt || null
       : null
   );
-  const [isInstalled, setIsInstalled] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    return (
-      window.matchMedia('(display-mode: standalone)').matches ||
-      (window.navigator as unknown as { standalone?: boolean }).standalone === true
-    );
-  });
+  const [isInstalled, setIsInstalled] = useState<boolean>(() => isRunningStandalone());
   const [isIOS, setIsIOS] = useState<boolean>(() => detectIOS());
   const [isInAppBrowser, setIsInAppBrowser] = useState<boolean>(() => detectInAppBrowser());
   const [inIframe, setInIframe] = useState<boolean>(() => {
@@ -61,10 +66,7 @@ export function usePWAInstall() {
 
   useEffect(() => {
     const checkStandalone = () => {
-      const standalone =
-        window.matchMedia('(display-mode: standalone)').matches ||
-        (window.navigator as unknown as { standalone?: boolean }).standalone === true;
-      setIsInstalled(standalone);
+      setIsInstalled(isRunningStandalone());
     };
 
     checkStandalone();
@@ -110,6 +112,8 @@ export function usePWAInstall() {
     window.addEventListener('dramawin-pwa-prompt-ready', handleCustomReady);
     window.addEventListener('dramawin-pwa-installed', handleAppInstalled);
     window.addEventListener('appinstalled', handleAppInstalled);
+    window.addEventListener('load', checkStandalone);
+    document.addEventListener('visibilitychange', checkStandalone);
     mediaQuery.addEventListener?.('change', handleDisplayModeChange);
 
     return () => {
@@ -117,6 +121,8 @@ export function usePWAInstall() {
       window.removeEventListener('dramawin-pwa-prompt-ready', handleCustomReady);
       window.removeEventListener('dramawin-pwa-installed', handleAppInstalled);
       window.removeEventListener('appinstalled', handleAppInstalled);
+      window.removeEventListener('load', checkStandalone);
+      document.removeEventListener('visibilitychange', checkStandalone);
       mediaQuery.removeEventListener?.('change', handleDisplayModeChange);
     };
   }, []);

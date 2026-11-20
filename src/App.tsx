@@ -69,8 +69,6 @@ import {
   MysteryWinnerRecord,
   PlayerPrivate,
   PrizeWinRecord,
-  SupportMessageRecord,
-  SupportStatus,
   ToastNotice,
   WeekDayKey,
 } from './types';
@@ -83,7 +81,6 @@ import {
   loadLocalLeaderboard,
   loadLocalMysteryWinners,
   loadLocalPrizeWins,
-  loadLocalSupportMessages,
   loadLocalTransactions,
   loadMyListSeriesIds,
   mergeLeaderboardWithSeedPlayers,
@@ -91,7 +88,6 @@ import {
   saveLocalAppConfig,
   toggleMyListSeriesId,
   updateLocalGuestUsername,
-  updateLocalSupportMessageStatus,
   upsertLocalLeaderboardPlayer,
 } from './utils/localState';
 import {
@@ -169,9 +165,6 @@ function DramaWinApp() {
   const [localTransactions, setLocalTransactions] = useState<CoinTransaction[]>(() =>
     loadLocalTransactions(initialSession.player.uid)
   );
-  const [localSupportMessages, setLocalSupportMessages] = useState<SupportMessageRecord[]>(() =>
-    loadLocalSupportMessages()
-  );
   const [cloudPrizeWins, setCloudPrizeWins] = useState<PrizeWinRecord[]>([]);
   const [localPrizeWins, setLocalPrizeWins] = useState<PrizeWinRecord[]>(() =>
     loadLocalPrizeWins()
@@ -216,6 +209,7 @@ function DramaWinApp() {
   const triedAnonAuthRef = useRef<boolean>(false);
   const pendingGiftBoxNumberRef = useRef<number | null>(null);
   const cloudOpenedBoxesRef = useRef<number[]>(cloudOpenedBoxes);
+  const toastTimerRef = useRef<number | null>(null);
   const sponsorIntervalRef = useRef<number | null>(null);
   const sponsorRafRef = useRef<number | null>(null);
   const sponsorFlowRef = useRef<{
@@ -310,11 +304,20 @@ function DramaWinApp() {
       setPendingGiftBoxNumber(null);
       setResumePlaybackSignal((prev) => prev + 1);
       if (showEarlyNotice) {
+        const toastId = `${Date.now()}-early-ad`;
+        if (toastTimerRef.current !== null) {
+          window.clearTimeout(toastTimerRef.current);
+          toastTimerRef.current = null;
+        }
         setToast({
-          id: `${Date.now()}-early-ad`,
+          id: toastId,
           message: 'Sponsor ad closed early — watch for 20s to unlock your Gift Box.',
           tone: 'neutral',
         });
+        toastTimerRef.current = window.setTimeout(() => {
+          setToast((current) => (current?.id === toastId ? null : current));
+          toastTimerRef.current = null;
+        }, 4000);
       }
     },
     [stopSponsorTimers]
@@ -553,14 +556,6 @@ function DramaWinApp() {
     [isCloudMode, cloudTransactions, localTransactions]
   );
 
-  const supportMessages: SupportMessageRecord[] = useMemo(() => {
-    return [...localSupportMessages].sort((a, b) => {
-      const tA = a.createdAtMs || 0;
-      const tB = b.createdAtMs || 0;
-      return tB - tA;
-    });
-  }, [localSupportMessages]);
-
   const prizeWins: PrizeWinRecord[] = useMemo(() => {
     const merged = new Map<string, PrizeWinRecord>();
     cloudPrizeWins.forEach((w) => merged.set(w.id, w));
@@ -607,27 +602,18 @@ function DramaWinApp() {
     };
   }, []);
 
-  // Listen to browser history popstate and cross-tab localStorage updates for /admin tickets
+  // Listen to browser history popstate for /admin route sync
   useEffect(() => {
     const handlePop = () => {
       setIsAdminRoute(isAdminPath());
-      setLocalSupportMessages(loadLocalSupportMessages());
-    };
-    const handleStorage = (e: StorageEvent) => {
-      if (!e.key || e.key === 'dramawin_support_messages_v1') {
-        setLocalSupportMessages(loadLocalSupportMessages());
-      }
     };
     window.addEventListener('popstate', handlePop);
-    window.addEventListener('storage', handleStorage);
     return () => {
       window.removeEventListener('popstate', handlePop);
-      window.removeEventListener('storage', handleStorage);
     };
   }, []);
 
   const navigateToAdmin = () => {
-    setLocalSupportMessages(loadLocalSupportMessages());
     if (typeof window !== 'undefined' && !isAdminPath()) {
       window.history.pushState({}, '', '/admin');
     }
@@ -647,9 +633,13 @@ function DramaWinApp() {
       coinsAwarded?: number,
       tone: ToastNotice['tone'] = 'gold',
       action?: { label: string; onClick: () => void },
-      durationMs = 4500
+      durationMs = 4000
     ) => {
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      if (toastTimerRef.current !== null) {
+        window.clearTimeout(toastTimerRef.current);
+        toastTimerRef.current = null;
+      }
       setToast({
         id,
         message,
@@ -658,12 +648,21 @@ function DramaWinApp() {
         actionLabel: action?.label,
         onAction: action?.onClick,
       });
-      window.setTimeout(() => {
+      toastTimerRef.current = window.setTimeout(() => {
         setToast((current) => (current?.id === id ? null : current));
+        toastTimerRef.current = null;
       }, durationMs);
     },
     []
   );
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current !== null) {
+        window.clearTimeout(toastTimerRef.current);
+      }
+    };
+  }, []);
 
   const handleToggleMute = useCallback(() => {
     unlockAudioEngine();
@@ -1782,22 +1781,6 @@ function DramaWinApp() {
     }
   };
 
-  const handleSignInWithGoogleForSupport = useCallback(async () => {
-    const cred = await signInWithPopup(auth, googleProvider);
-    setFirebaseUser(cred.user);
-  }, []);
-
-  const handleResolveSupportMessage = useCallback(
-    (
-      msg: SupportMessageRecord,
-      status: SupportStatus,
-      adminNote?: string
-    ): void => {
-      setLocalSupportMessages(updateLocalSupportMessageStatus(msg.id, status, adminNote));
-    },
-    []
-  );
-
   if (isAdminRoute) {
     return (
       <AdminBoardPage
@@ -1809,7 +1792,6 @@ function DramaWinApp() {
         cloudSeries={cloudSeries}
         players={leaderboard}
         mysteryWinners={mysteryWinners}
-        supportMessages={supportMessages}
         prizeWins={prizeWins}
         onBackToApp={navigateToApp}
         onUnlock={handleUnlockAdmin}
@@ -1830,7 +1812,6 @@ function DramaWinApp() {
         onReorderSeries={reorderSeries}
         onRestoreDefaultEpisodes={handleRestoreDefaultEpisodes}
         onAdjustPlayerCoins={handleAdjustPlayerCoins}
-        onResolveSupportMessage={handleResolveSupportMessage}
       />
     );
   }
@@ -2082,7 +2063,7 @@ function DramaWinApp() {
 
       {/* Bright Animated Floating Coin Earned Toast / Daily Streak Reminder / Warning */}
       {toast && (
-        <div className="fixed top-4 sm:top-5 left-1/2 -translate-x-1/2 z-[95] px-4 w-full max-w-md pointer-events-none">
+        <div className="fixed top-4 sm:top-5 left-1/2 -translate-x-1/2 z-[2147483640] px-4 w-full max-w-md pointer-events-none">
           <div
             role="status"
             aria-live="polite"
@@ -2126,21 +2107,30 @@ function DramaWinApp() {
                     toast.onAction?.();
                     setToast(null);
                   }}
-                  className="min-h-[32px] px-3 rounded-lg gold-gradient-bg text-[#181307] text-xs font-bold whitespace-nowrap hover:brightness-105"
+                  className="relative z-20 pointer-events-auto cursor-pointer min-h-[32px] px-3 rounded-lg gold-gradient-bg text-[#181307] text-xs font-bold whitespace-nowrap hover:brightness-105"
                 >
                   {toast.actionLabel}
                 </button>
               )}
-              {toast.tone === 'reminder' && (
-                <button
-                  type="button"
-                  onClick={() => setToast(null)}
-                  aria-label="Dismiss reminder"
-                  className="min-h-[32px] min-w-[32px] rounded-lg flex items-center justify-center text-[#A69F91] hover:text-[#F6F2E9] hover:bg-white/[0.06]"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (toastTimerRef.current !== null) {
+                    window.clearTimeout(toastTimerRef.current);
+                    toastTimerRef.current = null;
+                  }
+                  setToast(null);
+                }}
+                aria-label="Dismiss notification"
+                className={`relative z-20 pointer-events-auto cursor-pointer min-h-[32px] min-w-[32px] rounded-lg flex items-center justify-center transition-colors ${
+                  toast.tone === 'gold' || !toast.tone
+                    ? 'text-zinc-900/70 hover:text-zinc-950 hover:bg-black/10'
+                    : 'text-[#A69F91] hover:text-[#F6F2E9] hover:bg-white/[0.1]'
+                }`}
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
             </div>
           </div>
         </div>
@@ -2244,17 +2234,13 @@ function DramaWinApp() {
 
       {/* Floating AI Support Assistant & Admin Help Widget */}
       <SupportChatWidget
-        uid={currentPlayer.uid}
         username={currentPlayer.username}
         contact={privateProfile.contact}
         coins={currentPlayer.coins}
         weeklyCoins={currentPlayer.weeklyCoins}
         qualificationThreshold={qualificationThreshold}
         poolPrizeZar={appConfig.poolPrizeZar || DEFAULT_POOL_PRIZE_ZAR}
-        isFirebaseSignedIn={Boolean(firebaseUser)}
         firebaseEmail={firebaseUser?.email || null}
-        onSignInGoogle={handleSignInWithGoogleForSupport}
-        onTicketsUpdated={setLocalSupportMessages}
       />
 
       {/* Fixed 4-Tab Bottom Navigation Bar */}

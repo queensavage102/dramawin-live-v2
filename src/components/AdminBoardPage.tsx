@@ -21,11 +21,8 @@ import {
   ArrowUp,
   ArrowDown,
   Table2,
-  MessageSquare,
   CheckCircle2,
   Mail,
-  ChevronDown,
-  ChevronUp,
 } from 'lucide-react';
 import {
   ADMIN_NOTIFICATION_EMAIL,
@@ -60,8 +57,6 @@ import {
   LeaderboardPlayer,
   MysteryWinnerRecord,
   PrizeWinRecord,
-  SupportMessageRecord,
-  SupportStatus,
 } from '../types';
 import { resolveEpisodeCover } from '../utils/localState';
 import {
@@ -97,7 +92,6 @@ interface AdminBoardPageProps {
   episodes: DramaEpisode[];
   players: LeaderboardPlayer[];
   mysteryWinners: MysteryWinnerRecord[];
-  supportMessages?: SupportMessageRecord[];
   prizeWins?: PrizeWinRecord[];
   onBackToApp: () => void;
   onUnlock: (passcode: string) => Promise<void>;
@@ -139,11 +133,6 @@ interface AdminBoardPageProps {
     newCoins: number,
     newWeeklyCoins: number
   ) => Promise<void>;
-  onResolveSupportMessage?: (
-    msg: SupportMessageRecord,
-    status: SupportStatus,
-    adminNote?: string
-  ) => void | Promise<void>;
 }
 
 const ResolvedThumb: React.FC<{ src: string; alt: string; className?: string }> = ({
@@ -293,7 +282,6 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
   episodes,
   players,
   mysteryWinners,
-  supportMessages = [],
   prizeWins = [],
   onBackToApp,
   onUnlock,
@@ -314,7 +302,6 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
   onUpdateSeriesPoster,
   onRestoreDefaultEpisodes,
   onAdjustPlayerCoins,
-  onResolveSupportMessage,
 }) => {
   const [passwordInput, setPasswordInput] = useState('');
   const [authError, setAuthError] = useState<string | null>(null);
@@ -436,10 +423,6 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
     Record<string, { coins: string; weekly: string }>
   >({});
   const [savingPlayerId, setSavingPlayerId] = useState<string | null>(null);
-  const [supportFilter, setSupportFilter] = useState<'open' | 'resolved' | 'all'>('open');
-  const [expandedSupportIds, setExpandedSupportIds] = useState<Record<string, boolean>>({});
-  const [supportNoteDrafts, setSupportNoteDrafts] = useState<Record<string, string>>({});
-  const [resolvingMessageId, setResolvingMessageId] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [floatingToast, setFloatingToast] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
@@ -1476,37 +1459,6 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
   const filteredPlayers = players.filter((p) =>
     p.username.toLowerCase().includes(playerSearch.toLowerCase().trim())
   );
-
-  const openSupportCount = supportMessages.filter((m) => m.status === 'open').length;
-  const resolvedSupportCount = supportMessages.filter((m) => m.status === 'resolved').length;
-  const visibleSupportMessages = supportMessages.filter((m) => {
-    if (supportFilter === 'all') return true;
-    return m.status === supportFilter;
-  });
-
-  const handleToggleResolveSupport = async (
-    msg: SupportMessageRecord,
-    nextStatus: SupportStatus
-  ) => {
-    if (!onResolveSupportMessage) return;
-    setResolvingMessageId(msg.id);
-    setStatusMessage(null);
-    try {
-      const note = supportNoteDrafts[msg.id] ?? msg.adminNote ?? '';
-      await onResolveSupportMessage(msg, nextStatus, note);
-      showAdminToast(
-        nextStatus === 'resolved'
-          ? `Support ticket from ${msg.username} marked resolved.`
-          : `Support ticket from ${msg.username} reopened.`
-      );
-    } catch (err) {
-      setStatusMessage(
-        err instanceof Error ? err.message : 'Unable to update ticket status.'
-      );
-    } finally {
-      setResolvingMessageId(null);
-    }
-  };
 
   return (
     <div className="min-h-screen bg-[#070709] text-[#F6F2E9] pb-16">
@@ -2982,226 +2934,23 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
               </div>
             </section>
 
-            {/* 4B. Support Messages & Claim Prize Help Queue */}
-            <section className="obsidian-card rounded-2xl p-5 sm:p-6 space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="space-y-0.5">
-                  <div className="flex items-center gap-2">
-                    <MessageSquare className="w-4 h-4 text-[#D4AF37]" />
-                    <h2 className="text-base sm:text-lg font-display font-bold text-[#F6F2E9]">
-                      Support Messages &amp; Claim Prize Help ({supportMessages.length})
-                    </h2>
-                  </div>
-                  <p className="text-xs text-[#8D867A]">
-                    Click any ticket card below to expand and read the full message, view player Email/WhatsApp, and mark resolved.
+            {/* 4B. Support Tickets Delivery Notice */}
+            <section className="obsidian-card rounded-2xl p-5 sm:p-6">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-[#D4AF37]/15 border border-[#D4AF37]/35 flex items-center justify-center shrink-0">
+                  <Mail className="w-5 h-5 text-[#FCE7A2]" />
+                </div>
+                <div className="space-y-1 min-w-0">
+                  <h2 className="text-base sm:text-lg font-display font-bold text-[#F6F2E9]">
+                    Support Tickets &amp; AI Chat Inquiries
+                  </h2>
+                  <p className="text-xs sm:text-sm text-[#BFB7A6] leading-relaxed">
+                    All visitor messages from the Support AI modal and ticket form are sent directly to your configured support Gmail (
+                    <span className="font-semibold text-[#FCE7A2]">{ADMIN_NOTIFICATION_EMAIL}</span>
+                    ) via Web3Forms. Check your Gmail inbox to read and reply to player tickets directly.
                   </p>
                 </div>
-
-                <div className="flex items-center gap-1.5">
-                  {(['open', 'resolved', 'all'] as const).map((tab) => (
-                    <button
-                      key={tab}
-                      type="button"
-                      onClick={() => setSupportFilter(tab)}
-                      className={`min-h-[34px] px-3 rounded-lg text-xs font-bold capitalize transition-colors cursor-pointer ${
-                        supportFilter === tab
-                          ? 'gold-gradient-bg text-[#181307]'
-                          : 'bg-[#09090D] border border-white/[0.1] text-[#A69F91] hover:text-[#F6F2E9]'
-                      }`}
-                    >
-                      {tab === 'open'
-                        ? `Open (${openSupportCount})`
-                        : tab === 'resolved'
-                          ? `Resolved (${resolvedSupportCount})`
-                          : `All (${supportMessages.length})`}
-                    </button>
-                  ))}
-                </div>
               </div>
-
-              {visibleSupportMessages.length === 0 ? (
-                <div className="rounded-xl bg-[#09090D] border border-white/[0.08] p-4 text-xs text-[#8D867A]">
-                  No {supportFilter === 'all' ? '' : `${supportFilter} `}support messages right now.
-                </div>
-              ) : (
-                <div className="space-y-3 max-h-[540px] overflow-y-auto pr-1">
-                  {visibleSupportMessages.map((msg) => {
-                    const isResolved = msg.status === 'resolved';
-                    const isBusy = resolvingMessageId === msg.id;
-                    const isExpanded = Boolean(expandedSupportIds[msg.id]);
-                    const noteValue =
-                      supportNoteDrafts[msg.id] !== undefined
-                        ? supportNoteDrafts[msg.id]
-                        : msg.adminNote || '';
-                    const dateLabel = msg.createdAt?.toDate
-                      ? msg.createdAt.toDate().toLocaleString()
-                      : msg.createdAtMs
-                        ? new Date(msg.createdAtMs).toLocaleString()
-                        : 'Just now';
-
-                    const toggleCard = () => {
-                      setExpandedSupportIds((prev) => ({
-                        ...prev,
-                        [msg.id]: !prev[msg.id],
-                      }));
-                    };
-
-                    return (
-                      <div
-                        key={msg.id}
-                        role="button"
-                        tabIndex={0}
-                        aria-expanded={isExpanded}
-                        onClick={toggleCard}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            toggleCard();
-                          }
-                        }}
-                        className={`rounded-xl border p-4 space-y-3 cursor-pointer transition-colors ${
-                          isResolved
-                            ? 'bg-[#0A0F0B] border-emerald-500/25 hover:border-emerald-500/45'
-                            : 'bg-[#09090D] border-[#D4AF37]/30 hover:border-[#D4AF37]/60'
-                        }`}
-                      >
-                        <div className="flex flex-wrap items-start justify-between gap-2">
-                          <div className="space-y-1 min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span
-                                className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                                  isResolved
-                                    ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-500/40'
-                                    : 'bg-amber-400/20 text-amber-200 border border-amber-400/40'
-                                }`}
-                              >
-                                {isResolved ? 'Resolved' : 'Open'}
-                              </span>
-                              <span className="px-2 py-0.5 rounded bg-white/[0.06] text-[10px] font-semibold uppercase text-[#E8C96D]">
-                                {msg.category.replace(/_/g, ' ')}
-                              </span>
-                              <span className="text-[11px] font-mono-num text-[#8D867A]">
-                                {msg.source === 'local' ? 'Local Storage' : 'Firebase Cloud'}
-                              </span>
-                              <span className="text-[11px] text-[#8D867A]">· {dateLabel}</span>
-                            </div>
-                            <h3 className="text-sm font-bold text-[#F6F2E9]">{msg.subject}</h3>
-                            <p className="text-xs text-[#BFB7A6]">
-                              Player: <strong className="text-[#FCE7A2]">{msg.username}</strong> ·{' '}
-                              Email/WhatsApp:{' '}
-                              <span className="font-mono-num text-[#F6F2E9]">{msg.contact}</span>
-                            </p>
-                            {!isExpanded && (
-                              <p className="text-xs text-[#8D867A] truncate pt-0.5">
-                                {msg.message}
-                              </p>
-                            )}
-                          </div>
-
-                          <div className="flex items-center gap-2 shrink-0">
-                            {onResolveSupportMessage && (
-                              <button
-                                type="button"
-                                disabled={isBusy}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  void handleToggleResolveSupport(
-                                    msg,
-                                    isResolved ? 'open' : 'resolved'
-                                  );
-                                }}
-                                className={`min-h-[36px] px-3 rounded-lg text-xs font-bold inline-flex items-center gap-1.5 shrink-0 cursor-pointer disabled:opacity-50 ${
-                                  isResolved
-                                    ? 'border border-white/15 text-[#C4BDB0] hover:bg-white/[0.06]'
-                                    : 'gold-gradient-bg text-[#181307] hover:brightness-105'
-                                }`}
-                              >
-                                <CheckCircle2 className="w-3.5 h-3.5" />
-                                <span>
-                                  {isBusy
-                                    ? 'Updating...'
-                                    : isResolved
-                                      ? 'Reopen Ticket'
-                                      : 'Mark Resolved'}
-                                </span>
-                              </button>
-                            )}
-                            <span
-                              aria-hidden="true"
-                              className="p-1.5 rounded-lg border border-white/10 text-[#A69F91]"
-                            >
-                              {isExpanded ? (
-                                <ChevronUp className="w-4 h-4" />
-                              ) : (
-                                <ChevronDown className="w-4 h-4" />
-                              )}
-                            </span>
-                          </div>
-                        </div>
-
-                        {isExpanded && (
-                          <div
-                            onClick={(e) => e.stopPropagation()}
-                            className="space-y-3 pt-2 border-t border-white/[0.08] cursor-default"
-                          >
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 rounded-lg bg-[#070709] border border-white/[0.06] p-3 text-xs">
-                              <div>
-                                <span className="text-[10px] uppercase tracking-wider text-[#8D867A] block">
-                                  Player Name
-                                </span>
-                                <span className="font-semibold text-[#FCE7A2]">{msg.username}</span>
-                              </div>
-                              <div>
-                                <span className="text-[10px] uppercase tracking-wider text-[#8D867A] block">
-                                  Email / WhatsApp
-                                </span>
-                                <span className="font-mono-num text-[#F6F2E9] select-all">
-                                  {msg.contact}
-                                </span>
-                              </div>
-                            </div>
-
-                            <div className="bg-[#070709] border border-white/[0.06] rounded-lg p-3 space-y-1">
-                              <span className="text-[10px] uppercase tracking-wider text-[#8D867A] block">
-                                Full Message
-                              </span>
-                              <p className="text-xs sm:text-sm text-[#E5DFD2] whitespace-pre-wrap break-words">
-                                {msg.message}
-                              </p>
-                            </div>
-
-                            <div className="flex flex-col sm:flex-row gap-2">
-                              <input
-                                type="text"
-                                maxLength={500}
-                                value={noteValue}
-                                onChange={(e) =>
-                                  setSupportNoteDrafts((prev) => ({
-                                    ...prev,
-                                    [msg.id]: e.target.value,
-                                  }))
-                                }
-                                placeholder="Optional admin resolution note (saved on resolve/update)"
-                                className="flex-1 min-h-[38px] px-3 rounded-lg bg-[#070709] border border-white/[0.1] text-xs text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
-                              />
-                              {onResolveSupportMessage && (
-                                <button
-                                  type="button"
-                                  disabled={isBusy}
-                                  onClick={() => void handleToggleResolveSupport(msg, msg.status)}
-                                  className="min-h-[38px] px-3 rounded-lg border border-[#D4AF37]/35 text-[#FCE7A2] hover:bg-[#D4AF37]/10 text-xs font-semibold whitespace-nowrap cursor-pointer disabled:opacity-50"
-                                >
-                                  Save Note
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
             </section>
 
             {/* 5. Adjust Player Coin Balances */}
