@@ -1085,8 +1085,11 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
         </div>
 
         {/* Dedicated Bottom Banner Footer cleanly beneath the video frame */}
-        <footer className="min-h-[62px] pb-[max(0.25rem,env(safe-area-inset-bottom))] pt-1 shrink-0 w-full bg-[#09090b] border-t border-white/10 flex items-center justify-center z-40 relative">
+        <footer className="pb-[max(0.25rem,env(safe-area-inset-bottom))] pt-1 shrink-0 w-full bg-[#09090b] border-t border-white/10 flex flex-col items-center justify-center z-40 relative">
           <BottomAdBanner />
+          <p className="text-[10px] text-gray-500 text-center mt-1 leading-tight px-2">
+            18+ Only • Winners know when to stop • National Responsible Gambling: 0800 006 008
+          </p>
         </footer>
       </div>
 
