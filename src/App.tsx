@@ -2000,7 +2000,7 @@ function DramaWinApp() {
         </footer>
       </main>
 
-      {/* Floating AI Support Assistant & Admin Help Widget */}
+      {/* Floating DramaWin VIP Support AI Chat Widget */}
       <SupportChatWidget
         username={currentPlayer.username}
         contact={privateProfile.contact}

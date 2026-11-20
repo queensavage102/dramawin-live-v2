@@ -2864,10 +2864,10 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                 </div>
                 <div className="space-y-1 min-w-0">
                   <h2 className="text-base sm:text-lg font-display font-bold text-[#F6F2E9]">
-                    Support Tickets &amp; AI Chat Inquiries
+                    Support Tickets
                   </h2>
                   <p className="text-xs sm:text-sm text-[#BFB7A6] leading-relaxed">
-                    All visitor messages from the Support AI modal and ticket form are sent directly to your configured support Gmail (
+                    All visitor messages from the DramaWin VIP Support AI chat are sent directly to your configured support Gmail (
                     <span className="font-semibold text-[#FCE7A2]">{ADMIN_NOTIFICATION_EMAIL}</span>
                     ) via Web3Forms. Check your Gmail inbox to read and reply to player tickets directly.
                   </p>

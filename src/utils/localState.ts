@@ -33,8 +33,6 @@ import {
   MysteryWinnerRecord,
   PlayerPrivate,
   PrizeWinRecord,
-  SupportMessageRecord,
-  SupportStatus,
   TransactionCategory,
   WeekDayKey,
 } from '../types';
@@ -49,7 +47,6 @@ const LOCAL_SECTIONS_KEY = 'dramawin_sections_v1';
 const LOCAL_CONFIG_KEY = 'dramawin_app_config_v1';
 const LOCAL_WINNERS_KEY = 'dramawin_mystery_winners_v1';
 const LOCAL_PRIZE_WINS_KEY = 'dramawin_prize_wins_v1';
-const LOCAL_SUPPORT_MESSAGES_KEY = 'dramawin_support_messages_v1';
 const LOCAL_DELETED_IDS_KEY = 'dramawin_deleted_ids_v1';
 
 export const DEFAULT_LOCAL_APP_CONFIG: AppConfig = {
@@ -834,37 +831,6 @@ export function addLocalPrizeWin(record: PrizeWinRecord): PrizeWinRecord[] {
   const existing = loadLocalPrizeWins();
   const next = [record, ...existing.filter((item) => item.id !== record.id)].slice(0, 150);
   safeWriteJson(LOCAL_PRIZE_WINS_KEY, next);
-  return next;
-}
-
-export function loadLocalSupportMessages(): SupportMessageRecord[] {
-  return safeReadJson<SupportMessageRecord[]>(LOCAL_SUPPORT_MESSAGES_KEY, []);
-}
-
-export function addLocalSupportMessage(record: SupportMessageRecord): SupportMessageRecord[] {
-  const existing = loadLocalSupportMessages();
-  const next = [record, ...existing.filter((item) => item.id !== record.id)].slice(0, 200);
-  safeWriteJson(LOCAL_SUPPORT_MESSAGES_KEY, next);
-  return next;
-}
-
-export function updateLocalSupportMessageStatus(
-  messageId: string,
-  status: SupportStatus,
-  adminNote?: string
-): SupportMessageRecord[] {
-  const existing = loadLocalSupportMessages();
-  const next = existing.map((item) =>
-    item.id === messageId
-      ? {
-          ...item,
-          status,
-          adminNote: adminNote !== undefined ? adminNote : item.adminNote,
-          updatedAtMs: Date.now(),
-        }
-      : item
-  );
-  safeWriteJson(LOCAL_SUPPORT_MESSAGES_KEY, next);
   return next;
 }
 

@@ -803,7 +803,7 @@ function escapeHtml(raw: string): string {
 
 function buildMailPayload(params: {
   uid: string;
-  eventType: 'prize_win' | 'support_message';
+  eventType: 'prize_win';
   subject: string;
   text: string;
   html: string;

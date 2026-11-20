@@ -34,6 +34,12 @@ import { resolveEpisodeCover } from '../utils/localState';
 import { useResolvedMediaUrl } from '../utils/mediaStore';
 import { DoubleRewardModal } from './DoubleRewardModal';
 import { EpisodeWatchScreen } from './EpisodeWatchScreen';
+import { IsolatedYouTubeIframe } from './IsolatedYouTubeIframe';
+
+const FORYOU_YOUTUBE_ALLOW =
+  'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+const FORYOU_IFRAME_CLASS =
+  'pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[max(100%,177.78dvh)] h-[max(100dvh,56.25vw)] border-0 block';
 
 interface ForYouTabProps {
   episodes: DramaEpisode[];
@@ -219,6 +225,32 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
   }, [currentEpisode?.id]);
 
   const prevIsPlayingRef = useRef(true);
+  const mutedRef = useRef(muted);
+
+  useEffect(() => {
+    mutedRef.current = muted;
+  }, [muted]);
+
+  const handleIframeLoad = useCallback(() => {
+    setIsRecovering(false);
+    try {
+      iframeRef.current?.contentWindow?.postMessage(
+        '{"event":"listening","id":"dramawin-foryou-player"}',
+        '*'
+      );
+      if (mutedRef.current) {
+        postYouTubeCommand(iframeRef.current, 'mute');
+      } else {
+        postYouTubeCommand(iframeRef.current, 'unMute');
+        postYouTubeCommand(iframeRef.current, 'setVolume', [100]);
+      }
+      if (!isPlayingRef.current) {
+        postYouTubeCommand(iframeRef.current, 'pauseVideo');
+      }
+    } catch {
+      // Ignore cross-origin postMessage restrictions
+    }
+  }, []);
 
   useEffect(() => {
     const saveDirectTimestamp = () => {
@@ -548,32 +580,15 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
         {/* Video Frame Layer — pointer-events-none blocks youtube.com taps completely */}
         <div className="absolute inset-0 w-full h-full bg-black overflow-hidden">
           {embedUrl ? (
-            <iframe
-              ref={iframeRef}
-              key={`fy-${currentEpisode.id}-${embedUrl}-r${retryCount}`}
+            <IsolatedYouTubeIframe
+              iframeRef={iframeRef}
+              iframeKey={`fy-${currentEpisode.id}-${embedUrl}-r${retryCount}`}
               src={embedUrl}
               title={currentEpisode.title}
-              onLoad={() => {
-                setIsRecovering(false);
-                try {
-                  iframeRef.current?.contentWindow?.postMessage(
-                    '{"event":"listening","id":"dramawin-foryou-player"}',
-                    '*'
-                  );
-                  if (muted) {
-                    postYouTubeCommand(iframeRef.current, 'mute');
-                  } else {
-                    postYouTubeCommand(iframeRef.current, 'unMute');
-                    postYouTubeCommand(iframeRef.current, 'setVolume', [100]);
-                  }
-                  if (!isPlaying) postYouTubeCommand(iframeRef.current, 'pauseVideo');
-                } catch {
-                  // Ignore cross-origin postMessage restrictions
-                }
-              }}
+              onLoad={handleIframeLoad}
               referrerPolicy="strict-origin-when-cross-origin"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-              className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[max(100%,177.78dvh)] h-[max(100dvh,56.25vw)] border-0 block"
+              allow={FORYOU_YOUTUBE_ALLOW}
+              className={FORYOU_IFRAME_CLASS}
             />
           ) : resolvedMediaUrl &&
             (isDirectVideoMediaUrl(rawVideoUrl) || isDirectVideoMediaUrl(resolvedMediaUrl)) ? (
@@ -738,39 +753,56 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
             </span>
           </div>
 
-          <div className="flex items-center gap-1.5">
-            {episodes.length > 1 && (
-              <>
-                <button
-                  type="button"
-                  onClick={handlePrev}
-                  aria-label="Previous episode"
-                  className="min-w-[38px] min-h-[38px] rounded-full bg-black/55 backdrop-blur-md border border-white/15 text-white flex items-center justify-center hover:border-amber-400/50 cursor-pointer"
-                >
-                  <ChevronUp className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={handleNext}
-                  aria-label="Next episode"
-                  className="min-w-[38px] min-h-[38px] rounded-full bg-black/55 backdrop-blur-md border border-white/15 text-white flex items-center justify-center hover:border-amber-400/50 cursor-pointer"
-                >
-                  <ChevronDown className="w-4 h-4" />
-                </button>
-              </>
-            )}
+          <div className="flex flex-col items-end gap-1.5">
+            <div className="flex items-center gap-1.5">
+              {episodes.length > 1 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={handlePrev}
+                    aria-label="Previous episode"
+                    className="min-w-[38px] min-h-[38px] rounded-full bg-black/55 backdrop-blur-md border border-white/15 text-white flex items-center justify-center hover:border-amber-400/50 cursor-pointer"
+                  >
+                    <ChevronUp className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleNext}
+                    aria-label="Next episode"
+                    className="min-w-[38px] min-h-[38px] rounded-full bg-black/55 backdrop-blur-md border border-white/15 text-white flex items-center justify-center hover:border-amber-400/50 cursor-pointer"
+                  >
+                    <ChevronDown className="w-4 h-4" />
+                  </button>
+                </>
+              )}
+
+              <button
+                type="button"
+                onClick={onToggleMute}
+                aria-label={muted ? 'Unmute video' : 'Mute video'}
+                className="min-w-[38px] min-h-[38px] rounded-full bg-black/55 backdrop-blur-md border border-white/15 text-white flex items-center justify-center hover:border-amber-400/50 cursor-pointer"
+              >
+                {muted ? (
+                  <VolumeX className="w-4 h-4 text-zinc-400" />
+                ) : (
+                  <Volume2 className="w-4 h-4 text-amber-300" />
+                )}
+              </button>
+            </div>
 
             <button
               type="button"
-              onClick={onToggleMute}
-              aria-label={muted ? 'Unmute video' : 'Mute video'}
-              className="min-w-[38px] min-h-[38px] rounded-full bg-black/55 backdrop-blur-md border border-white/15 text-white flex items-center justify-center hover:border-amber-400/50 cursor-pointer"
+              onClick={() => {
+                clearRecoveryTimers();
+                setRecoveryFailed(false);
+                setIsRecovering(false);
+                setRetryCount((prev) => prev + 1);
+              }}
+              aria-label="Buffering? Reload Video"
+              className="px-2.5 py-1 rounded-full bg-black/55 hover:bg-black/80 backdrop-blur-md border border-white/15 text-[10px] font-medium text-zinc-300 hover:text-amber-200 inline-flex items-center gap-1 transition cursor-pointer"
             >
-              {muted ? (
-                <VolumeX className="w-4 h-4 text-zinc-400" />
-              ) : (
-                <Volume2 className="w-4 h-4 text-amber-300" />
-              )}
+              <RotateCcw className="w-2.5 h-2.5" />
+              <span>Buffering? Reload Video</span>
             </button>
           </div>
         </div>

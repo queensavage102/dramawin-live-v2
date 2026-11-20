@@ -168,31 +168,3 @@ export interface PrizeWinRecord {
   createdAt?: Timestamp;
   createdAtMs?: number;
 }
-
-export type SupportCategory =
-  | 'claim_prize'
-  | 'coins'
-  | 'mystery_box'
-  | 'sunday_pool'
-  | 'feedback'
-  | 'other';
-
-export type SupportStatus = 'open' | 'resolved';
-
-export interface SupportMessageRecord {
-  id: string;
-  uid: string;
-  username: string;
-  contact: string;
-  category: SupportCategory;
-  subject: string;
-  message: string;
-  status: SupportStatus;
-  adminNote?: string;
-  resolvedBy?: string;
-  source?: 'cloud' | 'local';
-  createdAt?: Timestamp;
-  updatedAt?: Timestamp;
-  createdAtMs?: number;
-  updatedAtMs?: number;
-}

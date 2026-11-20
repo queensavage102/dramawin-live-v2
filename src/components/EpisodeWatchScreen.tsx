@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Film,
   Maximize2,
@@ -24,6 +24,7 @@ import { DramaEpisode } from '../types';
 import { useResolvedMediaUrl } from '../utils/mediaStore';
 import { BottomAdBanner } from './BottomAdBanner';
 import { DoubleRewardModal } from './DoubleRewardModal';
+import { IsolatedYouTubeIframe } from './IsolatedYouTubeIframe';
 import { RealisticGoldCoin } from './RealisticGoldCoin';
 
 interface EpisodeWatchScreenProps {
@@ -192,15 +193,30 @@ function postYouTubeCommand(
 
 const MAX_VIDEO_RETRIES = 3;
 
-const WatchVideoStage: React.FC<{
+const YOUTUBE_IFRAME_ALLOW =
+  'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen';
+
+interface WatchVideoStageProps {
   episode: DramaEpisode;
   zoomed: boolean;
   paused: boolean;
   muted: boolean;
   resumePlaybackSignal: number;
+  manualReloadNonce: number;
   onPlayingChange?: (playing: boolean) => void;
   onVideoEnded?: () => void;
-}> = ({ episode, zoomed, paused, muted, resumePlaybackSignal, onPlayingChange, onVideoEnded }) => {
+}
+
+const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(({
+  episode,
+  zoomed,
+  paused,
+  muted,
+  resumePlaybackSignal,
+  manualReloadNonce,
+  onPlayingChange,
+  onVideoEnded,
+}) => {
   const rawVideoUrl = sanitizeMediaUrl((episode.videoUrl || episode.youtubeUrl || '').trim());
   const customStart =
     typeof episode.startTime === 'number' && Number.isFinite(episode.startTime)
@@ -214,6 +230,7 @@ const WatchVideoStage: React.FC<{
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const onPlayingChangeRef = useRef(onPlayingChange);
   const onVideoEndedRef = useRef(onVideoEnded);
+  const mutedRef = useRef(muted);
   const stallTimerRef = useRef<number | null>(null);
   const retryDelayTimerRef = useRef<number | null>(null);
   const savedTimeRef = useRef<number>(0);
@@ -233,6 +250,19 @@ const WatchVideoStage: React.FC<{
       retryDelayTimerRef.current = null;
     }
   };
+
+  useEffect(() => {
+    mutedRef.current = muted;
+  }, [muted]);
+
+  useEffect(() => {
+    if (manualReloadNonce > 0) {
+      clearRecoveryTimers();
+      setRecoveryFailed(false);
+      setIsRecovering(false);
+      setRetryCount((prev) => prev + 1);
+    }
+  }, [manualReloadNonce]);
 
   useEffect(() => {
     clearRecoveryTimers();
@@ -441,14 +471,14 @@ const WatchVideoStage: React.FC<{
     return () => window.removeEventListener('message', handleMessage);
   }, [embedUrl, resolvedMediaUrl, paused]);
 
-  const handleIframeLoad = () => {
+  const handleIframeLoad = useCallback(() => {
     setIsRecovering(false);
     try {
       iframeRef.current?.contentWindow?.postMessage(
         '{"event":"listening","id":"dramawin-watch-player"}',
         '*'
       );
-      if (muted) {
+      if (mutedRef.current) {
         postYouTubeCommand(iframeRef.current, 'mute');
       } else {
         postYouTubeCommand(iframeRef.current, 'unMute');
@@ -457,7 +487,11 @@ const WatchVideoStage: React.FC<{
     } catch {
       // Ignore cross-origin postMessage restrictions
     }
-  };
+  }, []);
+
+  const iframeClassName = `absolute inset-0 w-full h-full border-0 block pointer-events-auto transition-transform duration-300 ease-out origin-center ${
+    zoomed ? 'object-cover scale-[1.95]' : 'object-contain scale-100'
+  }`;
 
   const recoveryOverlay = (isRecovering || recoveryFailed) && (
     <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center p-4">
@@ -482,18 +516,16 @@ const WatchVideoStage: React.FC<{
   if (embedUrl) {
     return (
       <>
-        <iframe
-          ref={iframeRef}
-          key={`${episode.id}-${embedUrl}-r${retryCount}`}
+        <IsolatedYouTubeIframe
+          iframeRef={iframeRef}
+          iframeKey={`${episode.id}-${embedUrl}-r${retryCount}`}
           src={embedUrl}
           title={episode.title}
           onLoad={handleIframeLoad}
           referrerPolicy="strict-origin-when-cross-origin"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
+          allow={YOUTUBE_IFRAME_ALLOW}
           allowFullScreen
-          className={`absolute inset-0 w-full h-full border-0 block pointer-events-auto transition-transform duration-300 ease-out origin-center ${
-            zoomed ? 'object-cover scale-[1.95]' : 'object-contain scale-100'
-          }`}
+          className={iframeClassName}
         />
         {recoveryOverlay}
       </>
@@ -616,18 +648,16 @@ const WatchVideoStage: React.FC<{
 
     return (
       <>
-        <iframe
-          ref={iframeRef}
-          key={`${episode.id}-${finalIframeUrl}-r${retryCount}`}
+        <IsolatedYouTubeIframe
+          iframeRef={iframeRef}
+          iframeKey={`${episode.id}-${finalIframeUrl}-r${retryCount}`}
           src={finalIframeUrl}
           title={episode.title}
           onLoad={handleIframeLoad}
           referrerPolicy="strict-origin-when-cross-origin"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
+          allow={YOUTUBE_IFRAME_ALLOW}
           allowFullScreen
-          className={`absolute inset-0 w-full h-full border-0 block pointer-events-auto transition-transform duration-300 ease-out origin-center ${
-            zoomed ? 'object-cover scale-[1.95]' : 'object-contain scale-100'
-          }`}
+          className={iframeClassName}
         />
         {recoveryOverlay}
       </>
@@ -644,7 +674,9 @@ const WatchVideoStage: React.FC<{
       </p>
     </div>
   );
-};
+});
+
+WatchVideoStage.displayName = 'WatchVideoStage';
 
 export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
   episode,
@@ -668,12 +700,14 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
   const [flyingBurst, setFlyingBurst] = useState<{ id: number; amount: number } | null>(null);
   const [isExpandedFull, setIsExpandedFull] = useState(false);
   const [isZoomed, setIsZoomed] = useState(true);
+  const [videoReloadNonce, setVideoReloadNonce] = useState(0);
 
   const playerContainerRef = useRef<HTMLDivElement | null>(null);
   const awardingRef = useRef(false);
   const rewardModalOpenRef = useRef(false);
   const resetPotTimerRef = useRef(false);
   const onAwardRef = useRef(onAwardCoinPot);
+  const onMarkEpisodeWatchedRef = useRef(onMarkEpisodeWatched);
   const episodeRef = useRef(episode);
   const isVideoPlayingRef = useRef(true);
 
@@ -682,8 +716,22 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
   }, [onAwardCoinPot]);
 
   useEffect(() => {
+    onMarkEpisodeWatchedRef.current = onMarkEpisodeWatched;
+  }, [onMarkEpisodeWatched]);
+
+  useEffect(() => {
     episodeRef.current = episode;
   }, [episode]);
+
+  const handlePlayingChange = useCallback((playing: boolean) => {
+    if (!rewardModalOpenRef.current) {
+      isVideoPlayingRef.current = playing;
+    }
+  }, []);
+
+  const handleVideoEnded = useCallback(() => {
+    void onMarkEpisodeWatchedRef.current?.(episodeRef.current);
+  }, []);
 
   useEffect(() => {
     isVideoPlayingRef.current = true;
@@ -691,6 +739,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
     setRewardModalOpen(false);
     setRingProgress(0);
     setIsZoomed(true);
+    setVideoReloadNonce(0);
   }, [episode.id]);
 
   useEffect(() => {
@@ -994,15 +1043,21 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
             paused={rewardModalOpen}
             muted={muted}
             resumePlaybackSignal={resumePlaybackSignal}
-            onPlayingChange={(playing) => {
-              if (!rewardModalOpenRef.current) {
-                isVideoPlayingRef.current = playing;
-              }
-            }}
-            onVideoEnded={() => {
-              void onMarkEpisodeWatched?.(episodeRef.current);
-            }}
+            manualReloadNonce={videoReloadNonce}
+            onPlayingChange={handlePlayingChange}
+            onVideoEnded={handleVideoEnded}
           />
+
+          {/* Subtle mobile buffering recovery button near top player controls */}
+          <button
+            type="button"
+            onClick={() => setVideoReloadNonce((prev) => prev + 1)}
+            aria-label="Buffering? Reload Video"
+            className="absolute top-2.5 left-2.5 z-30 px-2.5 py-1 rounded-full bg-black/55 hover:bg-black/80 border border-white/15 text-[10px] font-medium text-zinc-300 hover:text-amber-200 backdrop-blur-sm inline-flex items-center gap-1 transition cursor-pointer"
+          >
+            <RotateCcw className="w-2.5 h-2.5" />
+            <span>Buffering? Reload Video</span>
+          </button>
 
           {/* Bottom gradient overlay hiding YouTube's bottom watermark/logo + displaying episode title */}
           <div

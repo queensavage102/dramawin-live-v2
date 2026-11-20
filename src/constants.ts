@@ -1009,8 +1009,8 @@ export function getYouTubeEmbedUrl(
   if (!rawEmbed) return null;
 
   let finalUrl = rawEmbed.replace(
-    'https://www.youtube-nocookie.com',
-    'https://www.youtube.com'
+    'https://www.youtube.com/embed/',
+    'https://www.youtube-nocookie.com/embed/'
   );
 
   const appendParam = (url: string, key: string, value: string) => {
@@ -1020,6 +1020,8 @@ export function getYouTubeEmbedUrl(
   };
 
   finalUrl = appendParam(finalUrl, 'playsinline', '1');
+  finalUrl = appendParam(finalUrl, 'rel', '0');
+  finalUrl = appendParam(finalUrl, 'modestbranding', '1');
   finalUrl = appendParam(finalUrl, 'enablejsapi', '1');
   finalUrl = appendParam(finalUrl, 'mute', muted ? '1' : '0');
 
