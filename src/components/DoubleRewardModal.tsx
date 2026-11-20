@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, ExternalLink, Lock, Play, Sparkles, X, Zap } from 'lucide-react';
-import { COIN_POT_BASE_REWARD, DEFAULT_SPONSOR_URL } from '../constants';
+import { COIN_POT_BASE_REWARD, resolveSponsorLink } from '../constants';
 import { BottomAdBanner } from './BottomAdBanner';
 
 const AD_COUNTDOWN_SECONDS = 20;
@@ -128,6 +128,7 @@ type AdBreakPhase = 'offer' | 'watching_ad' | 'ad_complete';
 export const DoubleRewardModal: React.FC<DoubleRewardModalProps> = ({
   open,
   baseCoins = COIN_POT_BASE_REWARD,
+  sponsorUrl = '#',
   episodeTitle,
   onClaimDouble,
   onContinueAfterAd,
@@ -516,14 +517,25 @@ export const DoubleRewardModal: React.FC<DoubleRewardModalProps> = ({
                     ? `Finalizing your +${doubledCoins} Coin reward...`
                     : `Sponsored Ad active — wait ${secondsLeft}s to unlock your x2 coin reward.`}
                 </p>
-                <button
-                  type="button"
-                  onClick={() => window.open(DEFAULT_SPONSOR_URL, '_blank')}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-amber-400/35 bg-amber-400/10 text-amber-200 text-xs font-semibold hover:bg-amber-400/20 cursor-pointer"
-                >
-                  <ExternalLink className="w-3.5 h-3.5" />
-                  <span>View Sponsor Page</span>
-                </button>
+                {(() => {
+                  const activeSponsorLink = resolveSponsorLink(sponsorUrl);
+                  return (
+                    <a
+                      href={activeSponsorLink}
+                      target={activeSponsorLink !== '#' ? '_blank' : undefined}
+                      rel={activeSponsorLink !== '#' ? 'noopener noreferrer' : undefined}
+                      onClick={(e) => {
+                        if (activeSponsorLink === '#') {
+                          e.preventDefault();
+                        }
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-amber-400/35 bg-amber-400/10 text-amber-200 text-xs font-semibold hover:bg-amber-400/20 cursor-pointer"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      <span>View Sponsor Page</span>
+                    </a>
+                  );
+                })()}
               </div>
             </div>
           ) : (

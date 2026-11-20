@@ -1,7 +1,7 @@
 import { DramaEpisode, StreakDaySpec, WeekDayKey } from './types';
 
 export const BRAND_NAME = 'DRAMA WIN TORNEMENT';
-export const DEFAULT_SPONSOR_URL = 'https://directyp.org/4/4edba239bcd7c2593952b6466d0c92ed';
+export const DEFAULT_SPONSOR_URL = '#';
 
 export const ADMIN_PASSCODE = 'Gideon_123';
 export const ADMIN_NOTIFICATION_EMAIL = 'gerinaicker04@gmail.com';
@@ -533,10 +533,11 @@ export function syncLocalStorageCatalogMigration(): void {
     );
 
     window.localStorage.setItem('dramawin_sections_v1', JSON.stringify(cleanSections));
+    const savedSponsorUrl = window.localStorage.getItem('dramawin_sponsor_ad_url');
+    if (!savedSponsorUrl || isLegacyOrBareSponsorUrl(savedSponsorUrl)) {
+      window.localStorage.setItem('dramawin_sponsor_ad_url', DEFAULT_SPONSOR_URL);
+    }
     if (!alreadyMigrated) {
-      if (!window.localStorage.getItem('dramawin_sponsor_ad_url')) {
-        window.localStorage.setItem('dramawin_sponsor_ad_url', DEFAULT_SPONSOR_URL);
-      }
       window.localStorage.setItem(LOCAL_STORAGE_MIGRATION_KEY, 'true');
     }
   } catch {
@@ -610,16 +611,22 @@ export function getSundayCountdown(now = new Date()): CountdownParts {
 
 export function isLegacyOrBareSponsorUrl(raw?: string): boolean {
   const trimmed = (raw || '').trim();
-  if (!trimmed) return true;
+  if (!trimmed || trimmed === '#') return true;
   if (!/^https?:\/\//i.test(trimmed)) return true;
-  return trimmed === 'https://directyp.org' || trimmed === 'https://directyp.org/';
+  return /^https?:\/\/([^/]+\.)?directyp\.org(\/|$)/i.test(trimmed);
+}
+
+export function resolveSponsorLink(raw?: string): string {
+  const trimmed = (raw || '').trim();
+  if (!trimmed || isLegacyOrBareSponsorUrl(trimmed)) return DEFAULT_SPONSOR_URL;
+  return trimmed;
 }
 
 export function sanitizeExternalUrl(raw: string): string {
   const trimmed = raw.trim();
-  if (!trimmed) return DEFAULT_SPONSOR_URL;
+  if (!trimmed || trimmed === '#') return DEFAULT_SPONSOR_URL;
   if (trimmed.startsWith('https://') || trimmed.startsWith('http://')) {
-    return trimmed;
+    return isLegacyOrBareSponsorUrl(trimmed) ? DEFAULT_SPONSOR_URL : trimmed;
   }
   return `https://${trimmed}`;
 }

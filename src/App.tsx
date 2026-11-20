@@ -21,7 +21,6 @@ import {
   BRAND_NAME,
   DEFAULT_POOL_PRIZE_ZAR,
   DEFAULT_QUALIFICATION_THRESHOLD,
-  DEFAULT_SPONSOR_URL,
   R3_BOOST_ZAR,
   R3_MYSTERY_CYCLE_ADS,
   STREAK_DAYS,
@@ -29,6 +28,7 @@ import {
   getMondayStartTimestampSAST,
   getTodayDateKey,
   getTodayWeekdayKey,
+  resolveSponsorLink,
   sanitizeExternalUrl,
 } from './constants';
 import { CatalogProvider, useCatalog } from './context/CatalogContext';
@@ -542,7 +542,7 @@ function DramaWinApp() {
     const base = cloudAppConfig ? cloudAppConfig : localAppConfig;
     return {
       ...base,
-      sponsorAdUrl: DEFAULT_SPONSOR_URL,
+      sponsorAdUrl: resolveSponsorLink(base.sponsorAdUrl),
     };
   }, [cloudAppConfig, localAppConfig]);
 
@@ -679,7 +679,7 @@ function DramaWinApp() {
       (cfg) => {
         const normalized: AppConfig = {
           ...cfg,
-          sponsorAdUrl: DEFAULT_SPONSOR_URL,
+          sponsorAdUrl: resolveSponsorLink(cfg.sponsorAdUrl),
         };
         setCloudAppConfig(normalized);
         setLocalAppConfig(saveLocalAppConfig(normalized));
@@ -1180,7 +1180,10 @@ function DramaWinApp() {
     }
 
     setMysteryReveal(null);
-    window.open(DEFAULT_SPONSOR_URL, '_blank');
+    const activeSponsorLink = resolveSponsorLink(appConfig.sponsorAdUrl);
+    if (activeSponsorLink && activeSponsorLink !== '#') {
+      window.open(activeSponsorLink, '_blank', 'noopener,noreferrer');
+    }
     sponsorFlowRef.current = {
       active: true,
       startedAt: Date.now(),
@@ -1216,7 +1219,10 @@ function DramaWinApp() {
       Array.from({ length: 12 }, (_, idx) => idx + 1).find((n) => !openedToday.includes(n)) ?? 1;
 
     setMysteryReveal(null);
-    window.open(DEFAULT_SPONSOR_URL, '_blank');
+    const activeSponsorLink = resolveSponsorLink(appConfig.sponsorAdUrl);
+    if (activeSponsorLink && activeSponsorLink !== '#') {
+      window.open(activeSponsorLink, '_blank', 'noopener,noreferrer');
+    }
     sponsorFlowRef.current = {
       active: true,
       startedAt: Date.now(),
@@ -2015,14 +2021,25 @@ function DramaWinApp() {
                     </p>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => window.open(DEFAULT_SPONSOR_URL, '_blank')}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-amber-400/35 bg-amber-400/10 text-amber-200 text-xs font-semibold hover:bg-amber-400/20 cursor-pointer"
-                  >
-                    <ExternalLink className="w-3.5 h-3.5" />
-                    <span>View Sponsor Page</span>
-                  </button>
+                  {(() => {
+                    const activeSponsorLink = resolveSponsorLink(appConfig.sponsorAdUrl);
+                    return (
+                      <a
+                        href={activeSponsorLink}
+                        target={activeSponsorLink !== '#' ? '_blank' : undefined}
+                        rel={activeSponsorLink !== '#' ? 'noopener noreferrer' : undefined}
+                        onClick={(e) => {
+                          if (activeSponsorLink === '#') {
+                            e.preventDefault();
+                          }
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-amber-400/35 bg-amber-400/10 text-amber-200 text-xs font-semibold hover:bg-amber-400/20 cursor-pointer"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        <span>View Sponsor Page</span>
+                      </a>
+                    );
+                  })()}
 
                   <div className="space-y-2">
                     <button

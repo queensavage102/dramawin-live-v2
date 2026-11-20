@@ -12,7 +12,6 @@ import {
   X,
 } from 'lucide-react';
 import {
-  DEFAULT_SPONSOR_URL,
   DRAMA_CATEGORIES,
   getCanonicalVideoKey,
   getEpisodeSeriesId,
@@ -21,6 +20,7 @@ import {
   inferEpisodeCategory,
   isLegacyBrokenEpisode,
   isStrayGojoOrAnimeInWrongSeries,
+  resolveSponsorLink,
   sanitizePosterUrl,
   toSeriesId,
 } from '../constants';
@@ -578,7 +578,10 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
                       }
                     });
                   } else {
-                    window.open(DEFAULT_SPONSOR_URL, '_blank');
+                    const activeSponsorLink = resolveSponsorLink(sponsorAdUrl);
+                    if (activeSponsorLink && activeSponsorLink !== '#') {
+                      window.open(activeSponsorLink, '_blank', 'noopener,noreferrer');
+                    }
                     if (onClaimHeroBonus) {
                       void onClaimHeroBonus();
                     }

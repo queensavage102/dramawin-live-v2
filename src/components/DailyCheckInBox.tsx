@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { CalendarCheck2, Check, Coins, Crown } from 'lucide-react';
 import {
-  DEFAULT_SPONSOR_URL,
   STREAK_DAYS,
   getCurrentWeekKey,
   getTodayWeekdayKey,
+  resolveSponsorLink,
 } from '../constants';
 import { PlayerPrivate, WeekDayKey } from '../types';
 
@@ -17,6 +17,7 @@ interface DailyCheckInBoxProps {
 
 export const DailyCheckInBox: React.FC<DailyCheckInBoxProps> = ({
   privateState,
+  sponsorAdUrl = '#',
   onCompleteCheckIn,
   onStartSponsorReward,
 }) => {
@@ -43,7 +44,10 @@ export const DailyCheckInBox: React.FC<DailyCheckInBoxProps> = ({
       return;
     }
 
-    window.open(DEFAULT_SPONSOR_URL, '_blank');
+    const activeSponsorLink = resolveSponsorLink(sponsorAdUrl);
+    if (activeSponsorLink && activeSponsorLink !== '#') {
+      window.open(activeSponsorLink, '_blank', 'noopener,noreferrer');
+    }
 
     setCollecting(true);
     try {
