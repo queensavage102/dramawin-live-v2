@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Film,
   Maximize2,
@@ -16,15 +16,14 @@ import {
   COIN_POT_BASE_REWARD,
   COIN_POT_CYCLE_SECONDS,
   DEFAULT_SPONSOR_URL,
-  getYouTubeEmbedUrl,
-  isYouTubeDomainOnly,
+  resolveVideoSource,
   sanitizeMediaUrl,
 } from '../constants';
 import { DramaEpisode } from '../types';
 import { useResolvedMediaUrl } from '../utils/mediaStore';
 import { BottomAdBanner } from './BottomAdBanner';
 import { DoubleRewardModal } from './DoubleRewardModal';
-import { IsolatedYouTubeIframe } from './IsolatedYouTubeIframe';
+import { IsolatedHtml5Video, IsolatedYouTubeIframe } from './IsolatedYouTubeIframe';
 import { RealisticGoldCoin } from './RealisticGoldCoin';
 
 interface EpisodeWatchScreenProps {
@@ -35,6 +34,9 @@ interface EpisodeWatchScreenProps {
   qualificationThreshold: number;
   muted: boolean;
   resumePlaybackSignal?: number;
+  hasNextEpisode?: boolean;
+  nextEpisodeLabel?: string;
+  onNextEpisode?: () => void;
   onToggleMute: () => void;
   onAwardCoinPot: (episode: DramaEpisode, amount: number) => Promise<void>;
   onStartSponsorReward?: (rewardAction?: () => Promise<void>) => void;
@@ -168,14 +170,6 @@ const TreasureCoinPot3D: React.FC<{ ringProgress: number; pulsing: boolean }> = 
   );
 };
 
-const isDirectVideoMediaUrl = (url: string): boolean => {
-  if (!url) return false;
-  if (url.startsWith('idb://') || url.startsWith('blob:') || url.startsWith('data:video')) {
-    return true;
-  }
-  return /\.(mp4|webm|ogg|mov|m4v|m3u8)(\?|#|$)/i.test(url);
-};
-
 function postYouTubeCommand(
   iframe: HTMLIFrameElement | null,
   func: string,
@@ -184,6 +178,21 @@ function postYouTubeCommand(
   try {
     iframe?.contentWindow?.postMessage(
       JSON.stringify({ event: 'command', func, args }),
+      '*'
+    );
+  } catch {
+    // Ignore cross-origin postMessage restrictions
+  }
+}
+
+function postDailymotionCommand(
+  iframe: HTMLIFrameElement | null,
+  command: string,
+  parameters: unknown[] = []
+) {
+  try {
+    iframe?.contentWindow?.postMessage(
+      JSON.stringify({ command, parameters }),
       '*'
     );
   } catch {
@@ -222,15 +231,28 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(({
     typeof episode.startTime === 'number' && Number.isFinite(episode.startTime)
       ? Math.max(0, Math.floor(episode.startTime))
       : undefined;
-  const embedUrl = rawVideoUrl ? getYouTubeEmbedUrl(rawVideoUrl, customStart, false) : null;
-  const bareYouTubeDomain = rawVideoUrl ? isYouTubeDomainOnly(rawVideoUrl) : false;
-  const resolvedMediaUrl = useResolvedMediaUrl(embedUrl || bareYouTubeDomain ? '' : rawVideoUrl);
+
+  const videoSource = useMemo(
+    () =>
+      resolveVideoSource(rawVideoUrl, {
+        startSeconds: customStart,
+        muted: false,
+        autoplay: true,
+      }),
+    [rawVideoUrl, customStart]
+  );
+
+  const resolvedDirectUrl = useResolvedMediaUrl(
+    videoSource.kind === 'direct' ? videoSource.url : ''
+  );
 
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const onPlayingChangeRef = useRef(onPlayingChange);
   const onVideoEndedRef = useRef(onVideoEnded);
   const mutedRef = useRef(muted);
+  const pausedRef = useRef(paused);
+  const sourceKindRef = useRef(videoSource.kind);
   const stallTimerRef = useRef<number | null>(null);
   const retryDelayTimerRef = useRef<number | null>(null);
   const savedTimeRef = useRef<number>(0);
@@ -240,7 +262,7 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(({
   const [recoveryFailed, setRecoveryFailed] = useState(false);
   const prevPausedRef = useRef(paused);
 
-  const clearRecoveryTimers = () => {
+  const clearRecoveryTimers = useCallback(() => {
     if (stallTimerRef.current !== null) {
       window.clearTimeout(stallTimerRef.current);
       stallTimerRef.current = null;
@@ -249,11 +271,19 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(({
       window.clearTimeout(retryDelayTimerRef.current);
       retryDelayTimerRef.current = null;
     }
-  };
+  }, []);
 
   useEffect(() => {
     mutedRef.current = muted;
   }, [muted]);
+
+  useEffect(() => {
+    pausedRef.current = paused;
+  }, [paused]);
+
+  useEffect(() => {
+    sourceKindRef.current = videoSource.kind;
+  }, [videoSource.kind]);
 
   useEffect(() => {
     if (manualReloadNonce > 0) {
@@ -262,7 +292,7 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(({
       setIsRecovering(false);
       setRetryCount((prev) => prev + 1);
     }
-  }, [manualReloadNonce]);
+  }, [manualReloadNonce, clearRecoveryTimers]);
 
   useEffect(() => {
     clearRecoveryTimers();
@@ -271,7 +301,7 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(({
     setIsRecovering(false);
     setRecoveryFailed(false);
     return () => clearRecoveryTimers();
-  }, [episode.id, rawVideoUrl]);
+  }, [episode.id, rawVideoUrl, clearRecoveryTimers]);
 
   useEffect(() => {
     onPlayingChangeRef.current = onPlayingChange;
@@ -281,47 +311,50 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(({
     onVideoEndedRef.current = onVideoEnded;
   }, [onVideoEnded]);
 
-  const triggerAutoRecover = (isDirect: boolean) => {
-    if (paused) return;
-    if (stallTimerRef.current !== null) {
-      window.clearTimeout(stallTimerRef.current);
-      stallTimerRef.current = null;
-    }
-    if (retryDelayTimerRef.current !== null) return;
-
-    if (isDirect && videoRef.current && Number.isFinite(videoRef.current.currentTime)) {
-      savedTimeRef.current = videoRef.current.currentTime;
-    }
-
-    setRetryCount((prev) => {
-      if (prev >= MAX_VIDEO_RETRIES) {
-        setIsRecovering(false);
-        setRecoveryFailed(true);
-        return prev;
+  const triggerAutoRecover = useCallback(
+    (isDirect: boolean) => {
+      if (pausedRef.current) return;
+      if (stallTimerRef.current !== null) {
+        window.clearTimeout(stallTimerRef.current);
+        stallTimerRef.current = null;
       }
-      setIsRecovering(true);
-      setRecoveryFailed(false);
-      retryDelayTimerRef.current = window.setTimeout(() => {
-        retryDelayTimerRef.current = null;
-        if (isDirect && videoRef.current) {
-          try {
-            videoRef.current.load();
-            void videoRef.current.play().catch(() => {});
-          } catch {
-            // Remount via retryCount increment handles fallback
-          }
-        }
-      }, 900);
-      return prev + 1;
-    });
-  };
+      if (retryDelayTimerRef.current !== null) return;
 
-  const handleManualRetry = () => {
+      if (isDirect && videoRef.current && Number.isFinite(videoRef.current.currentTime)) {
+        savedTimeRef.current = videoRef.current.currentTime;
+      }
+
+      setRetryCount((prev) => {
+        if (prev >= MAX_VIDEO_RETRIES) {
+          setIsRecovering(false);
+          setRecoveryFailed(true);
+          return prev;
+        }
+        setIsRecovering(true);
+        setRecoveryFailed(false);
+        retryDelayTimerRef.current = window.setTimeout(() => {
+          retryDelayTimerRef.current = null;
+          if (isDirect && videoRef.current) {
+            try {
+              videoRef.current.load();
+              void videoRef.current.play().catch(() => {});
+            } catch {
+              // Remount via retryCount increment handles fallback
+            }
+          }
+        }, 900);
+        return prev + 1;
+      });
+    },
+    []
+  );
+
+  const handleManualRetry = useCallback(() => {
     clearRecoveryTimers();
     setRecoveryFailed(false);
     setIsRecovering(true);
     setRetryCount((prev) => prev + 1);
-  };
+  }, [clearRecoveryTimers]);
 
   useEffect(() => {
     const saveDirectTimestamp = () => {
@@ -344,12 +377,15 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(({
     const wasPaused = prevPausedRef.current;
     prevPausedRef.current = paused;
 
-    if (embedUrl || (resolvedMediaUrl && !isDirectVideoMediaUrl(resolvedMediaUrl))) {
+    if (videoSource.kind === 'youtube') {
       if (!paused && wasPaused && savedTimeRef.current > 0.5) {
         postYouTubeCommand(iframeRef.current, 'seekTo', [savedTimeRef.current, true]);
       }
       postYouTubeCommand(iframeRef.current, paused ? 'pauseVideo' : 'playVideo');
+    } else if (videoSource.kind === 'dailymotion') {
+      postDailymotionCommand(iframeRef.current, paused ? 'pause' : 'play');
     }
+
     if (videoRef.current) {
       videoRef.current.muted = muted;
       videoRef.current.volume = 1;
@@ -381,23 +417,25 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(({
         });
       }
     }
-  }, [paused, resumePlaybackSignal, embedUrl, resolvedMediaUrl, muted, retryCount]);
+  }, [paused, resumePlaybackSignal, videoSource.kind, resolvedDirectUrl, muted, retryCount, clearRecoveryTimers]);
 
   useEffect(() => {
-    if (embedUrl || (resolvedMediaUrl && !isDirectVideoMediaUrl(resolvedMediaUrl))) {
+    if (videoSource.kind === 'youtube') {
       postYouTubeCommand(iframeRef.current, muted ? 'mute' : 'unMute');
       if (!muted) {
         postYouTubeCommand(iframeRef.current, 'setVolume', [100]);
       }
+    } else if (videoSource.kind === 'dailymotion') {
+      postDailymotionCommand(iframeRef.current, 'muted', [muted]);
     }
     if (videoRef.current) {
       videoRef.current.muted = muted;
       videoRef.current.volume = 1;
     }
-  }, [muted, embedUrl, resolvedMediaUrl]);
+  }, [muted, videoSource.kind, resolvedDirectUrl]);
 
   useEffect(() => {
-    if (!embedUrl && !resolvedMediaUrl) return;
+    if (videoSource.kind !== 'youtube') return;
     const handleMessage = (event: MessageEvent) => {
       if (
         typeof event.origin === 'string' &&
@@ -469,27 +507,131 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(({
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [embedUrl, resolvedMediaUrl, paused]);
+  }, [videoSource.kind, paused, triggerAutoRecover, clearRecoveryTimers]);
 
   const handleIframeLoad = useCallback(() => {
     setIsRecovering(false);
     try {
-      iframeRef.current?.contentWindow?.postMessage(
-        '{"event":"listening","id":"dramawin-watch-player"}',
-        '*'
-      );
-      if (mutedRef.current) {
-        postYouTubeCommand(iframeRef.current, 'mute');
-      } else {
-        postYouTubeCommand(iframeRef.current, 'unMute');
-        postYouTubeCommand(iframeRef.current, 'setVolume', [100]);
+      if (sourceKindRef.current === 'youtube') {
+        iframeRef.current?.contentWindow?.postMessage(
+          '{"event":"listening","id":"dramawin-watch-player"}',
+          '*'
+        );
+        if (mutedRef.current) {
+          postYouTubeCommand(iframeRef.current, 'mute');
+        } else {
+          postYouTubeCommand(iframeRef.current, 'unMute');
+          postYouTubeCommand(iframeRef.current, 'setVolume', [100]);
+        }
+      } else if (sourceKindRef.current === 'dailymotion') {
+        postDailymotionCommand(iframeRef.current, 'muted', [mutedRef.current]);
       }
     } catch {
       // Ignore cross-origin postMessage restrictions
     }
   }, []);
 
+  const handleVideoLoadedMetadata = useCallback((e: React.SyntheticEvent<HTMLVideoElement>) => {
+    e.currentTarget.muted = mutedRef.current;
+    e.currentTarget.volume = 1;
+    if (savedTimeRef.current > 1 && Number.isFinite(e.currentTarget.duration)) {
+      const targetTime = Math.min(savedTimeRef.current, Math.max(0, e.currentTarget.duration - 1));
+      try {
+        e.currentTarget.currentTime = targetTime;
+      } catch {
+        // Ignore seek errors before readyState
+      }
+    }
+  }, []);
+
+  const handleVideoCanPlay = useCallback(() => {
+    clearRecoveryTimers();
+    setIsRecovering(false);
+    setRecoveryFailed(false);
+  }, [clearRecoveryTimers]);
+
+  const handleVideoPlaying = useCallback(() => {
+    clearRecoveryTimers();
+    setIsRecovering(false);
+    setRecoveryFailed(false);
+    onPlayingChangeRef.current?.(true);
+  }, [clearRecoveryTimers]);
+
+  const handleVideoPlay = useCallback(
+    (e: React.SyntheticEvent<HTMLVideoElement>) => {
+      e.currentTarget.muted = mutedRef.current;
+      e.currentTarget.volume = 1;
+      if (
+        savedTimeRef.current > 1 &&
+        e.currentTarget.currentTime < 0.5 &&
+        Number.isFinite(e.currentTarget.duration)
+      ) {
+        try {
+          e.currentTarget.currentTime = Math.min(
+            savedTimeRef.current,
+            Math.max(0, e.currentTarget.duration - 0.5)
+          );
+        } catch {
+          // Ignore seek errors
+        }
+      }
+      clearRecoveryTimers();
+      setIsRecovering(false);
+      setRecoveryFailed(false);
+      onPlayingChangeRef.current?.(true);
+    },
+    [clearRecoveryTimers]
+  );
+
+  const handleVideoTimeUpdate = useCallback(
+    (e: React.SyntheticEvent<HTMLVideoElement>) => {
+      if (e.currentTarget.currentTime > 0) {
+        savedTimeRef.current = e.currentTarget.currentTime;
+      }
+      if (stallTimerRef.current !== null) {
+        clearRecoveryTimers();
+        setIsRecovering(false);
+      }
+    },
+    [clearRecoveryTimers]
+  );
+
+  const handleVideoWaitingOrStalled = useCallback(() => {
+    if (!pausedRef.current && stallTimerRef.current === null) {
+      stallTimerRef.current = window.setTimeout(() => {
+        stallTimerRef.current = null;
+        triggerAutoRecover(true);
+      }, 4500);
+    }
+  }, [triggerAutoRecover]);
+
+  const handleVideoError = useCallback(() => {
+    onPlayingChangeRef.current?.(false);
+    triggerAutoRecover(true);
+  }, [triggerAutoRecover]);
+
+  const handleVideoPause = useCallback(
+    (e: React.SyntheticEvent<HTMLVideoElement>) => {
+      if (e.currentTarget.currentTime > 0) {
+        savedTimeRef.current = e.currentTarget.currentTime;
+      }
+      clearRecoveryTimers();
+      onPlayingChangeRef.current?.(false);
+    },
+    [clearRecoveryTimers]
+  );
+
+  const handleVideoEnded = useCallback(() => {
+    clearRecoveryTimers();
+    onPlayingChangeRef.current?.(false);
+    onVideoEndedRef.current?.();
+  }, [clearRecoveryTimers]);
+
   const iframeClassName = `absolute inset-0 w-full h-full border-0 block pointer-events-auto transition-transform duration-300 ease-out origin-center ${
+    zoomed ? 'object-cover scale-[1.95]' : 'object-contain scale-100'
+  }`;
+
+  const directVideoClassName = `absolute inset-0 w-full h-full bg-black transition-transform duration-300 ease-out origin-center ${
     zoomed ? 'object-cover scale-[1.95]' : 'object-contain scale-100'
   }`;
 
@@ -513,13 +655,17 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(({
     </div>
   );
 
-  if (embedUrl) {
+  if (
+    videoSource.kind === 'youtube' ||
+    videoSource.kind === 'dailymotion' ||
+    videoSource.kind === 'iframe'
+  ) {
     return (
       <>
         <IsolatedYouTubeIframe
           iframeRef={iframeRef}
-          iframeKey={`${episode.id}-${embedUrl}-r${retryCount}`}
-          src={embedUrl}
+          iframeKey={`${episode.id}-${videoSource.url}-r${retryCount}`}
+          src={videoSource.url}
           title={episode.title}
           onLoad={handleIframeLoad}
           referrerPolicy="strict-origin-when-cross-origin"
@@ -532,132 +678,26 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(({
     );
   }
 
-  if (resolvedMediaUrl) {
-    if (isDirectVideoMediaUrl(rawVideoUrl) || isDirectVideoMediaUrl(resolvedMediaUrl)) {
-      return (
-        <>
-          <video
-            ref={videoRef}
-            key={`${episode.id}-${resolvedMediaUrl}-r${retryCount}`}
-            src={resolvedMediaUrl}
-            controls
-            autoPlay
-            muted={muted}
-            playsInline
-            preload="auto"
-            onLoadedMetadata={(e) => {
-              e.currentTarget.muted = muted;
-              e.currentTarget.volume = 1;
-              if (savedTimeRef.current > 1 && Number.isFinite(e.currentTarget.duration)) {
-                const targetTime = Math.min(savedTimeRef.current, Math.max(0, e.currentTarget.duration - 1));
-                try {
-                  e.currentTarget.currentTime = targetTime;
-                } catch {
-                  // Ignore seek errors before readyState
-                }
-              }
-            }}
-            onCanPlay={() => {
-              clearRecoveryTimers();
-              setIsRecovering(false);
-              setRecoveryFailed(false);
-            }}
-            onPlaying={() => {
-              clearRecoveryTimers();
-              setIsRecovering(false);
-              setRecoveryFailed(false);
-              onPlayingChangeRef.current?.(true);
-            }}
-            onPlay={(e) => {
-              e.currentTarget.muted = muted;
-              e.currentTarget.volume = 1;
-              if (
-                savedTimeRef.current > 1 &&
-                e.currentTarget.currentTime < 0.5 &&
-                Number.isFinite(e.currentTarget.duration)
-              ) {
-                try {
-                  e.currentTarget.currentTime = Math.min(
-                    savedTimeRef.current,
-                    Math.max(0, e.currentTarget.duration - 0.5)
-                  );
-                } catch {
-                  // Ignore seek errors
-                }
-              }
-              clearRecoveryTimers();
-              setIsRecovering(false);
-              setRecoveryFailed(false);
-              onPlayingChangeRef.current?.(true);
-            }}
-            onTimeUpdate={(e) => {
-              if (e.currentTarget.currentTime > 0) {
-                savedTimeRef.current = e.currentTarget.currentTime;
-              }
-              if (stallTimerRef.current !== null) {
-                clearRecoveryTimers();
-                setIsRecovering(false);
-              }
-            }}
-            onWaiting={() => {
-              if (!paused && stallTimerRef.current === null) {
-                stallTimerRef.current = window.setTimeout(() => {
-                  stallTimerRef.current = null;
-                  triggerAutoRecover(true);
-                }, 4500);
-              }
-            }}
-            onStalled={() => {
-              if (!paused && stallTimerRef.current === null) {
-                stallTimerRef.current = window.setTimeout(() => {
-                  stallTimerRef.current = null;
-                  triggerAutoRecover(true);
-                }, 4500);
-              }
-            }}
-            onError={() => {
-              onPlayingChangeRef.current?.(false);
-              triggerAutoRecover(true);
-            }}
-            onPause={(e) => {
-              if (e.currentTarget.currentTime > 0) {
-                savedTimeRef.current = e.currentTarget.currentTime;
-              }
-              clearRecoveryTimers();
-              onPlayingChangeRef.current?.(false);
-            }}
-            onEnded={() => {
-              clearRecoveryTimers();
-              onPlayingChangeRef.current?.(false);
-              onVideoEndedRef.current?.();
-            }}
-            className={`absolute inset-0 w-full h-full bg-black transition-transform duration-300 ease-out origin-center ${
-              zoomed ? 'object-cover scale-[1.95]' : 'object-contain scale-100'
-            }`}
-          />
-          {recoveryOverlay}
-        </>
-      );
-    }
-
-    const finalIframeUrl =
-      /youtube\.com|youtu\.be/i.test(resolvedMediaUrl) &&
-      !resolvedMediaUrl.includes('enablejsapi=1')
-        ? `${resolvedMediaUrl}${resolvedMediaUrl.includes('?') ? '&' : '?'}enablejsapi=1`
-        : resolvedMediaUrl;
-
+  if (videoSource.kind === 'direct' && resolvedDirectUrl) {
     return (
       <>
-        <IsolatedYouTubeIframe
-          iframeRef={iframeRef}
-          iframeKey={`${episode.id}-${finalIframeUrl}-r${retryCount}`}
-          src={finalIframeUrl}
-          title={episode.title}
-          onLoad={handleIframeLoad}
-          referrerPolicy="strict-origin-when-cross-origin"
-          allow={YOUTUBE_IFRAME_ALLOW}
-          allowFullScreen
-          className={iframeClassName}
+        <IsolatedHtml5Video
+          videoRef={videoRef}
+          videoKey={`${episode.id}-${resolvedDirectUrl}-r${retryCount}`}
+          src={resolvedDirectUrl}
+          autoPlay
+          muted={muted}
+          onLoadedMetadata={handleVideoLoadedMetadata}
+          onCanPlay={handleVideoCanPlay}
+          onPlaying={handleVideoPlaying}
+          onPlay={handleVideoPlay}
+          onTimeUpdate={handleVideoTimeUpdate}
+          onWaiting={handleVideoWaitingOrStalled}
+          onStalled={handleVideoWaitingOrStalled}
+          onError={handleVideoError}
+          onPause={handleVideoPause}
+          onEnded={handleVideoEnded}
+          className={directVideoClassName}
         />
         {recoveryOverlay}
       </>
@@ -668,8 +708,8 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(({
     <div className="absolute inset-0 w-full h-full flex flex-col items-center justify-center p-6 text-center gap-3 bg-[#08080B]">
       <Film className="w-10 h-10 text-[#D4AF37]" />
       <p className="text-sm text-[#C4BDB0] max-w-sm">
-        Paste a specific YouTube video (<span className="font-mono text-[#FCE7A2]">youtu.be/...</span> or{' '}
-        <span className="font-mono text-[#FCE7A2]">?v=...</span>), playlist (<span className="font-mono text-[#FCE7A2]">?list=...</span>), or MP4 link in{' '}
+        Paste a YouTube link, Dailymotion link (<span className="font-mono text-[#FCE7A2]">dai.ly/...</span>), or direct{' '}
+        <span className="font-mono text-[#FCE7A2]">.mp4 / .m3u8</span> / Bunny Stream URL in{' '}
         <span className="font-mono text-[#FCE7A2]">/admin → Series Watch Sheet</span>.
       </p>
     </div>
@@ -686,6 +726,9 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
   qualificationThreshold,
   muted,
   resumePlaybackSignal = 0,
+  hasNextEpisode = false,
+  nextEpisodeLabel,
+  onNextEpisode,
   onToggleMute,
   onAwardCoinPot,
   onStartSponsorReward,
@@ -910,83 +953,118 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
         className="min-h-[100dvh] h-[100dvh] w-full flex flex-col bg-[#09090b] overflow-hidden"
       >
         {/* Top Episode Title Bar + Controls + Sunday Tournament Progress Bar */}
-        <header className="flex-none bg-[#09090b] border-b border-[#D4AF37]/25 px-2.5 sm:px-5 pt-[max(0.5rem,env(safe-area-inset-top))] pb-2 space-y-1.5 z-40 relative">
-          <div className="flex items-center justify-between gap-1.5 sm:gap-2">
-            <div className="flex-1 min-w-0">
-              <p className="text-[11px] text-[#E8C96D] font-medium truncate">
-                {episode.series} · {episode.episodeLabel}
-              </p>
-              <h2 className="text-sm sm:text-base font-display font-bold text-[#F6F2E9] truncate">
-                {episode.title}
-              </h2>
-            </div>
-
-            <div className="flex items-center gap-1 sm:gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={onToggleMute}
-                aria-pressed={!muted}
-                aria-label={muted ? 'Sound Off' : 'Sound On'}
-                className={`min-h-[36px] px-2 sm:px-2.5 rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap cursor-pointer ${
-                  muted
-                    ? 'border-white/[0.14] text-[#8D867A] hover:text-[#F6F2E9]'
-                    : 'border-[#D4AF37]/40 bg-[#17130A] text-[#FCE7A2]'
-                }`}
-              >
-                {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4 text-[#D4AF37]" />}
-                <span className="hidden sm:inline">{muted ? 'Sound Off' : 'Sound On'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setIsZoomed((prev) => !prev)}
-                aria-pressed={isZoomed}
-                aria-label={isZoomed ? 'Zoomed full-screen — tap to switch to Fit' : 'Standard Fit — tap to Zoom'}
-                title={isZoomed ? 'Zoomed (1.95x) — tap for Fit' : 'Fit — tap for Zoom'}
-                className={`min-h-[36px] px-2 sm:px-2.5 rounded-xl border text-[11px] sm:text-xs font-semibold inline-flex items-center gap-1 sm:gap-1.5 transition-colors whitespace-nowrap cursor-pointer ${
-                  isZoomed
-                    ? 'border-[#D4AF37]/45 bg-[#17130A] text-[#FCE7A2]'
-                    : 'border-white/[0.14] text-[#A69F91] hover:text-[#F6F2E9]'
-                }`}
-              >
-                {isZoomed ? (
-                  <>
-                    <ZoomIn className="w-3.5 h-3.5 text-[#D4AF37]" />
-                    <span>Zoom / Fit</span>
-                  </>
-                ) : (
-                  <>
-                    <Scan className="w-3.5 h-3.5" />
-                    <span>Fit / Zoom</span>
-                  </>
-                )}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => void handleToggleFullscreen()}
-                aria-label={isExpandedFull ? 'Exit full screen' : 'Full screen'}
-                title={isExpandedFull ? 'Exit full screen' : 'Full screen'}
-                className="min-h-[36px] px-2 sm:px-2.5 rounded-xl border border-[#D4AF37]/30 text-[#E8C96D] hover:bg-[#D4AF37]/10 text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer"
-              >
-                {isExpandedFull ? (
-                  <>
-                    <Minimize2 className="w-4 h-4" />
-                    <span className="hidden sm:inline">Exit Fullscreen</span>
-                  </>
-                ) : (
-                  <>
-                    <Maximize2 className="w-4 h-4" />
-                    <span className="hidden sm:inline">Fullscreen</span>
-                  </>
-                )}
-              </button>
+        <header className="flex-none bg-[#09090b] border-b border-[#D4AF37]/25 px-2.5 sm:px-5 pt-[max(0.45rem,env(safe-area-inset-top))] pb-1.5 space-y-1.5 z-40 relative">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5 sm:gap-2">
+            <div className="flex items-center justify-between gap-2 min-w-0 sm:flex-1">
+              <div className="flex-1 min-w-0">
+                <p className="text-[11px] text-[#E8C96D] font-medium truncate">
+                  {episode.series} · {episode.episodeLabel}
+                </p>
+                <h2 className="text-sm sm:text-base font-display font-bold text-[#F6F2E9] truncate">
+                  {episode.title}
+                </h2>
+              </div>
 
               <button
                 type="button"
                 onClick={handleClose}
                 aria-label="Close video player"
-                className="min-h-[36px] min-w-[36px] rounded-xl border border-white/[0.15] flex items-center justify-center text-[#A69F91] hover:text-[#F6F2E9] hover:border-[#D4AF37]/45 transition-colors cursor-pointer"
+                className="sm:hidden min-h-[34px] min-w-[34px] rounded-xl border border-white/[0.15] flex items-center justify-center text-[#A69F91] hover:text-[#F6F2E9] hover:border-[#D4AF37]/45 transition-colors cursor-pointer shrink-0"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between sm:justify-end gap-1 sm:gap-2 shrink-0">
+              <div className="flex items-center gap-1 sm:gap-2">
+                <button
+                  type="button"
+                  onClick={onToggleMute}
+                  aria-pressed={!muted}
+                  aria-label={muted ? 'Sound Off' : 'Sound On'}
+                  className={`min-h-[34px] sm:min-h-[36px] px-2 sm:px-2.5 rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap cursor-pointer ${
+                    muted
+                      ? 'border-white/[0.14] text-[#8D867A] hover:text-[#F6F2E9]'
+                      : 'border-[#D4AF37]/40 bg-[#17130A] text-[#FCE7A2]'
+                  }`}
+                >
+                  {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4 text-[#D4AF37]" />}
+                  <span className="hidden sm:inline">{muted ? 'Sound Off' : 'Sound On'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsZoomed((prev) => !prev)}
+                  aria-pressed={isZoomed}
+                  aria-label={isZoomed ? 'Zoomed full-screen — tap to switch to Fit' : 'Standard Fit — tap to Zoom'}
+                  title={isZoomed ? 'Zoomed (1.95x) — tap for Fit' : 'Fit — tap for Zoom'}
+                  className={`min-h-[34px] sm:min-h-[36px] px-2 sm:px-2.5 rounded-xl border text-[11px] sm:text-xs font-semibold inline-flex items-center gap-1 sm:gap-1.5 transition-colors whitespace-nowrap cursor-pointer ${
+                    isZoomed
+                      ? 'border-[#D4AF37]/45 bg-[#17130A] text-[#FCE7A2]'
+                      : 'border-white/[0.14] text-[#A69F91] hover:text-[#F6F2E9]'
+                  }`}
+                >
+                  {isZoomed ? (
+                    <>
+                      <ZoomIn className="w-3.5 h-3.5 text-[#D4AF37]" />
+                      <span>Zoom / Fit</span>
+                    </>
+                  ) : (
+                    <>
+                      <Scan className="w-3.5 h-3.5" />
+                      <span>Fit / Zoom</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => void handleToggleFullscreen()}
+                  aria-label={isExpandedFull ? 'Exit full screen' : 'Full screen'}
+                  title={isExpandedFull ? 'Exit full screen' : 'Full screen'}
+                  className="min-h-[34px] sm:min-h-[36px] px-2 sm:px-2.5 rounded-xl border border-[#D4AF37]/30 text-[#E8C96D] hover:bg-[#D4AF37]/10 text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  {isExpandedFull ? (
+                    <>
+                      <Minimize2 className="w-4 h-4" />
+                      <span className="hidden sm:inline">Exit Fullscreen</span>
+                    </>
+                  ) : (
+                    <>
+                      <Maximize2 className="w-4 h-4" />
+                      <span className="hidden sm:inline">Fullscreen</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {onNextEpisode && (
+                <button
+                  type="button"
+                  onClick={onNextEpisode}
+                  disabled={!hasNextEpisode}
+                  title={
+                    hasNextEpisode && nextEpisodeLabel
+                      ? `Watch next: ${nextEpisodeLabel}`
+                      : hasNextEpisode
+                        ? 'Watch next episode'
+                        : 'No more episodes'
+                  }
+                  className={`min-h-[34px] sm:min-h-[36px] px-2.5 sm:px-3 rounded-xl text-[11px] sm:text-xs font-extrabold inline-flex items-center gap-1 whitespace-nowrap transition-all ${
+                    hasNextEpisode
+                      ? 'bg-gradient-to-r from-[#FCE7A2] via-[#E8C96D] to-[#D4AF37] text-[#181307] shadow-[0_0_12px_rgba(212,175,55,0.35)] hover:brightness-110 active:scale-[0.98] cursor-pointer'
+                      : 'border border-white/[0.1] bg-white/[0.04] text-zinc-500 cursor-not-allowed'
+                  }`}
+                >
+                  <span>Next Episode ⏭️</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={handleClose}
+                aria-label="Close video player"
+                className="hidden sm:flex min-h-[36px] min-w-[36px] rounded-xl border border-white/[0.15] items-center justify-center text-[#A69F91] hover:text-[#F6F2E9] hover:border-[#D4AF37]/45 transition-colors cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>

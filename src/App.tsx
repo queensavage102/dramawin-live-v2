@@ -37,6 +37,7 @@ import {
   awardHeroBonusCoins,
   awardMysteryBoxCoins,
   awardWatchPotCoins,
+  awardWhatsappShareCoins,
   claimStreakDay,
   ensureAdminSeededData,
   evaluateSundayPoolRollover,
@@ -75,12 +76,14 @@ import {
   applyLocalCoinMutation,
   claimLocalMysteryBox,
   getOrCreateGuestSession,
+  getWhatsappShareClaimDate,
   loadLocalAppConfig,
   loadLocalLeaderboard,
   loadLocalMysteryWinners,
   loadLocalPrizeWins,
   loadLocalTransactions,
   loadMyListSeriesIds,
+  markWhatsappShareClaimedToday,
   mergeLeaderboardWithSeedPlayers,
   resetLocalPlayerCoins,
   saveLocalAppConfig,
@@ -1234,6 +1237,70 @@ function DramaWinApp() {
     showToast(`+${bonusCoins} Coins Added to Wallet!`, bonusCoins, 'gold', undefined, 3000);
   }, [showToast]);
 
+  const [whatsappShareClaimDate, setWhatsappShareClaimDate] = useState<string>(() =>
+    getWhatsappShareClaimDate(guestPlayer.uid)
+  );
+
+  useEffect(() => {
+    setWhatsappShareClaimDate(getWhatsappShareClaimDate(currentPlayer.uid));
+  }, [currentPlayer.uid]);
+
+  const whatsappShareClaimedToday = whatsappShareClaimDate === getTodayDateKey();
+
+  const handleWhatsappShareReward = useCallback(async (): Promise<void> => {
+    const {
+      isCloudMode: cloudNow,
+      currentPlayer: playerNow,
+      privateProfile: privNow,
+      appConfig: cfgNow,
+      muted: mutedNow,
+    } = latestStateRef.current;
+
+    const todayKey = getTodayDateKey();
+    if (getWhatsappShareClaimDate(playerNow.uid) === todayKey) {
+      setWhatsappShareClaimDate(todayKey);
+      showToast(
+        'WhatsApp share bonus already claimed today! Thanks for sharing.',
+        undefined,
+        'neutral',
+        undefined,
+        2600
+      );
+      return;
+    }
+
+    markWhatsappShareClaimedToday(playerNow.uid, todayKey);
+    setWhatsappShareClaimDate(todayKey);
+
+    const shareBonusCoins = 500;
+    const threshold = cfgNow.qualificationThreshold || DEFAULT_QUALIFICATION_THRESHOLD;
+
+    if (cloudNow) {
+      await awardWhatsappShareCoins(playerNow, privNow, threshold);
+      playCoinChime(mutedNow);
+      showToast(`+${shareBonusCoins} Coins Added to Wallet!`, shareBonusCoins, 'gold', undefined, 3000);
+      return;
+    }
+
+    const res = applyLocalCoinMutation({
+      player: playerNow,
+      privateProfile: privNow,
+      walletDelta: shareBonusCoins,
+      qualificationThreshold: threshold,
+      recordStreakActivity: true,
+      txMeta: {
+        category: 'whatsapp-share',
+        title: 'Daily WhatsApp Share Bonus (+500 Coins)',
+      },
+    });
+    setGuestPlayer(res.player);
+    setGuestPrivate(res.privateProfile);
+    setLocalTransactions(res.transactions);
+    setLocalLeaderboard(loadLocalLeaderboard(res.player));
+    playCoinChime(mutedNow);
+    showToast(`+${shareBonusCoins} Coins Added to Wallet!`, shareBonusCoins, 'gold', undefined, 3000);
+  }, [showToast]);
+
   const handleToggleMyList = useCallback(
     (seriesId: string, seriesName: string) => {
       const { list, added } = toggleMyListSeriesId(seriesId);
@@ -1964,11 +2031,13 @@ function DramaWinApp() {
             qualificationThreshold={qualificationThreshold}
             streakActivityDates={privateProfile.streakActivityDates || []}
             transactions={transactions}
+            whatsappShareClaimedToday={whatsappShareClaimedToday}
             onSundayZeroTick={handleSundayZeroTick}
             onCompleteCheckIn={handleCompleteDailyCheckIn}
             onStartSponsorReward={startSponsorRewardFlow}
             onOpenMysteryBox={handleOpenMysteryBox}
             onDismissVoucherModal={() => setMysteryVoucherModal(null)}
+            onWhatsappShareReward={handleWhatsappShareReward}
           />
         )}
 

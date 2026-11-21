@@ -125,6 +125,7 @@ export type TransactionCategory =
   | 'banner'
   | 'mystery-box'
   | 'mystery-entry'
+  | 'whatsapp-share'
   | 'admin-adjustment';
 
 export interface CoinTransaction {

@@ -21,11 +21,10 @@ import {
   DEFAULT_SPONSOR_URL,
   DEFAULT_VIDEO_START_SECONDS,
   getEpisodeSeriesId,
-  getYouTubeEmbedUrl,
   getYouTubeFallbackThumbnailUrl,
   inferEpisodeCategory,
-  isYouTubeDomainOnly,
   normalizeEpisodeStartSeconds,
+  resolveVideoSource,
   sanitizeMediaUrl,
   sanitizePosterUrl,
 } from '../constants';
@@ -34,12 +33,13 @@ import { resolveEpisodeCover } from '../utils/localState';
 import { useResolvedMediaUrl } from '../utils/mediaStore';
 import { DoubleRewardModal } from './DoubleRewardModal';
 import { EpisodeWatchScreen } from './EpisodeWatchScreen';
-import { IsolatedYouTubeIframe } from './IsolatedYouTubeIframe';
+import { IsolatedHtml5Video, IsolatedYouTubeIframe } from './IsolatedYouTubeIframe';
 
 const FORYOU_YOUTUBE_ALLOW =
   'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
 const FORYOU_IFRAME_CLASS =
   'pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[max(100%,177.78dvh)] h-[max(100dvh,56.25vw)] border-0 block';
+const FORYOU_VIDEO_CLASS = 'pointer-events-none w-full h-full object-cover';
 
 interface ForYouTabProps {
   episodes: DramaEpisode[];
@@ -60,14 +60,6 @@ interface ForYouTabProps {
   onSwitchToHome: () => void;
 }
 
-const isDirectVideoMediaUrl = (url: string): boolean => {
-  if (!url) return false;
-  if (url.startsWith('idb://') || url.startsWith('blob:') || url.startsWith('data:video')) {
-    return true;
-  }
-  return /\.(mp4|webm|ogg|mov|m4v|m3u8)(\?|#|$)/i.test(url);
-};
-
 function postYouTubeCommand(
   iframe: HTMLIFrameElement | null,
   func: string,
@@ -76,6 +68,21 @@ function postYouTubeCommand(
   try {
     iframe?.contentWindow?.postMessage(
       JSON.stringify({ event: 'command', func, args }),
+      '*'
+    );
+  } catch {
+    // Ignore cross-origin postMessage restrictions
+  }
+}
+
+function postDailymotionCommand(
+  iframe: HTMLIFrameElement | null,
+  command: string,
+  parameters: unknown[] = []
+) {
+  try {
+    iframe?.contentWindow?.postMessage(
+      JSON.stringify({ command, parameters }),
       '*'
     );
   } catch {
@@ -122,7 +129,7 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
   const retryDelayTimerRef = useRef<number | null>(null);
   const savedTimeRef = useRef<number>(0);
 
-  const clearRecoveryTimers = () => {
+  const clearRecoveryTimers = useCallback(() => {
     if (stallTimerRef.current !== null) {
       window.clearTimeout(stallTimerRef.current);
       stallTimerRef.current = null;
@@ -131,7 +138,7 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
       window.clearTimeout(retryDelayTimerRef.current);
       retryDelayTimerRef.current = null;
     }
-  };
+  }, []);
 
   const triggerAutoRecover = useCallback((isDirect: boolean) => {
     if (!isPlayingRef.current || rewardModalOpenRef.current) return;
@@ -188,9 +195,18 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
   const startSeconds = currentEpisode
     ? normalizeEpisodeStartSeconds(currentEpisode.startTime)
     : DEFAULT_VIDEO_START_SECONDS;
-  const embedUrl = rawVideoUrl ? getYouTubeEmbedUrl(rawVideoUrl, startSeconds) : null;
-  const bareYouTubeDomain = rawVideoUrl ? isYouTubeDomainOnly(rawVideoUrl) : false;
-  const resolvedMediaUrl = useResolvedMediaUrl(embedUrl || bareYouTubeDomain ? '' : rawVideoUrl);
+
+  const videoSource = useMemo(
+    () =>
+      rawVideoUrl
+        ? resolveVideoSource(rawVideoUrl, { startSeconds, muted: false, autoplay: true })
+        : { kind: 'empty' as const, url: '', rawUrl: '' },
+    [rawVideoUrl, startSeconds]
+  );
+
+  const resolvedMediaUrl = useResolvedMediaUrl(
+    videoSource.kind === 'direct' ? videoSource.url : ''
+  );
 
   const fallbackCoverUrl = useResolvedMediaUrl(
     currentEpisode ? resolveEpisodeCover(currentEpisode) : ''
@@ -222,35 +238,137 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
     elapsedMsRef.current = 0;
     setRingProgress(0);
     return () => clearRecoveryTimers();
-  }, [currentEpisode?.id]);
+  }, [currentEpisode?.id, clearRecoveryTimers]);
 
   const prevIsPlayingRef = useRef(true);
   const mutedRef = useRef(muted);
+  const sourceKindRef = useRef(videoSource.kind);
 
   useEffect(() => {
     mutedRef.current = muted;
   }, [muted]);
 
+  useEffect(() => {
+    sourceKindRef.current = videoSource.kind;
+  }, [videoSource.kind]);
+
   const handleIframeLoad = useCallback(() => {
     setIsRecovering(false);
     try {
-      iframeRef.current?.contentWindow?.postMessage(
-        '{"event":"listening","id":"dramawin-foryou-player"}',
-        '*'
-      );
-      if (mutedRef.current) {
-        postYouTubeCommand(iframeRef.current, 'mute');
-      } else {
-        postYouTubeCommand(iframeRef.current, 'unMute');
-        postYouTubeCommand(iframeRef.current, 'setVolume', [100]);
-      }
-      if (!isPlayingRef.current) {
-        postYouTubeCommand(iframeRef.current, 'pauseVideo');
+      if (sourceKindRef.current === 'youtube') {
+        iframeRef.current?.contentWindow?.postMessage(
+          '{"event":"listening","id":"dramawin-foryou-player"}',
+          '*'
+        );
+        if (mutedRef.current) {
+          postYouTubeCommand(iframeRef.current, 'mute');
+        } else {
+          postYouTubeCommand(iframeRef.current, 'unMute');
+          postYouTubeCommand(iframeRef.current, 'setVolume', [100]);
+        }
+        if (!isPlayingRef.current) {
+          postYouTubeCommand(iframeRef.current, 'pauseVideo');
+        }
+      } else if (sourceKindRef.current === 'dailymotion') {
+        postDailymotionCommand(iframeRef.current, 'muted', [mutedRef.current]);
+        if (!isPlayingRef.current) {
+          postDailymotionCommand(iframeRef.current, 'pause');
+        }
       }
     } catch {
       // Ignore cross-origin postMessage restrictions
     }
   }, []);
+
+  const handleVideoLoadedMetadata = useCallback((e: React.SyntheticEvent<HTMLVideoElement>) => {
+    e.currentTarget.muted = mutedRef.current;
+    e.currentTarget.volume = 1;
+    if (savedTimeRef.current > 1 && Number.isFinite(e.currentTarget.duration)) {
+      const targetTime = Math.min(savedTimeRef.current, Math.max(0, e.currentTarget.duration - 1));
+      try {
+        e.currentTarget.currentTime = targetTime;
+      } catch {
+        // Ignore seek errors before readyState
+      }
+    }
+  }, []);
+
+  const handleVideoCanPlay = useCallback(() => {
+    clearRecoveryTimers();
+    setIsRecovering(false);
+    setRecoveryFailed(false);
+  }, [clearRecoveryTimers]);
+
+  const handleVideoPlaying = useCallback(() => {
+    clearRecoveryTimers();
+    setIsRecovering(false);
+    setRecoveryFailed(false);
+    setIsPlaying(true);
+  }, [clearRecoveryTimers]);
+
+  const handleVideoPlay = useCallback(
+    (e: React.SyntheticEvent<HTMLVideoElement>) => {
+      e.currentTarget.muted = mutedRef.current;
+      e.currentTarget.volume = 1;
+      if (
+        savedTimeRef.current > 1 &&
+        e.currentTarget.currentTime < 0.5 &&
+        Number.isFinite(e.currentTarget.duration)
+      ) {
+        try {
+          e.currentTarget.currentTime = Math.min(
+            savedTimeRef.current,
+            Math.max(0, e.currentTarget.duration - 0.5)
+          );
+        } catch {
+          // Ignore seek errors
+        }
+      }
+      clearRecoveryTimers();
+      setIsRecovering(false);
+      setRecoveryFailed(false);
+      setIsPlaying(true);
+    },
+    [clearRecoveryTimers]
+  );
+
+  const handleVideoTimeUpdate = useCallback(
+    (e: React.SyntheticEvent<HTMLVideoElement>) => {
+      if (e.currentTarget.currentTime > 0) {
+        savedTimeRef.current = e.currentTarget.currentTime;
+      }
+      if (stallTimerRef.current !== null) {
+        clearRecoveryTimers();
+        setIsRecovering(false);
+      }
+    },
+    [clearRecoveryTimers]
+  );
+
+  const handleVideoWaitingOrStalled = useCallback(() => {
+    if (isPlayingRef.current && stallTimerRef.current === null) {
+      stallTimerRef.current = window.setTimeout(() => {
+        stallTimerRef.current = null;
+        triggerAutoRecover(true);
+      }, 4500);
+    }
+  }, [triggerAutoRecover]);
+
+  const handleVideoError = useCallback(() => {
+    setIsPlaying(false);
+    triggerAutoRecover(true);
+  }, [triggerAutoRecover]);
+
+  const handleVideoPause = useCallback(
+    (e: React.SyntheticEvent<HTMLVideoElement>) => {
+      if (e.currentTarget.currentTime > 0) {
+        savedTimeRef.current = e.currentTarget.currentTime;
+      }
+      clearRecoveryTimers();
+      setIsPlaying(false);
+    },
+    [clearRecoveryTimers]
+  );
 
   useEffect(() => {
     const saveDirectTimestamp = () => {
@@ -272,12 +390,15 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
     prevIsPlayingRef.current = isPlaying;
     isPlayingRef.current = isPlaying;
 
-    if (embedUrl || (resolvedMediaUrl && !isDirectVideoMediaUrl(resolvedMediaUrl))) {
+    if (videoSource.kind === 'youtube') {
       if (isPlaying && !wasPlaying && savedTimeRef.current > 0.5) {
         postYouTubeCommand(iframeRef.current, 'seekTo', [savedTimeRef.current, true]);
       }
       postYouTubeCommand(iframeRef.current, isPlaying ? 'playVideo' : 'pauseVideo');
+    } else if (videoSource.kind === 'dailymotion') {
+      postDailymotionCommand(iframeRef.current, isPlaying ? 'play' : 'pause');
     }
+
     if (videoRef.current) {
       if (isPlaying) {
         if (
@@ -307,23 +428,25 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
         clearRecoveryTimers();
       }
     }
-  }, [isPlaying, embedUrl, resolvedMediaUrl, retryCount]);
+  }, [isPlaying, videoSource.kind, resolvedMediaUrl, retryCount, clearRecoveryTimers]);
 
   useEffect(() => {
-    if (embedUrl || (resolvedMediaUrl && !isDirectVideoMediaUrl(resolvedMediaUrl))) {
+    if (videoSource.kind === 'youtube') {
       postYouTubeCommand(iframeRef.current, muted ? 'mute' : 'unMute');
       if (!muted) {
         postYouTubeCommand(iframeRef.current, 'setVolume', [100]);
       }
+    } else if (videoSource.kind === 'dailymotion') {
+      postDailymotionCommand(iframeRef.current, 'muted', [muted]);
     }
     if (videoRef.current) {
       videoRef.current.muted = muted;
       videoRef.current.volume = 1;
     }
-  }, [muted, embedUrl, resolvedMediaUrl, currentEpisode?.id]);
+  }, [muted, videoSource.kind, resolvedMediaUrl, currentEpisode?.id]);
 
   useEffect(() => {
-    if (!embedUrl && !resolvedMediaUrl) return;
+    if (videoSource.kind !== 'youtube') return;
     const handleMessage = (event: MessageEvent) => {
       if (
         typeof event.origin === 'string' &&
@@ -395,7 +518,7 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [embedUrl, resolvedMediaUrl, currentEpisode, onMarkEpisodeWatched, fullScreenEpisode, triggerAutoRecover]);
+  }, [videoSource.kind, resolvedMediaUrl, currentEpisode, onMarkEpisodeWatched, fullScreenEpisode, triggerAutoRecover, clearRecoveryTimers]);
 
   // Smooth circular Coin Progress Ring timer
   useEffect(() => {
@@ -482,6 +605,22 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
       })
       .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
   }, [drawerSeriesId, episodes]);
+
+  const nextFullScreenEpisode = useMemo(() => {
+    if (!fullScreenEpisode) return null;
+    const sId = getEpisodeSeriesId(fullScreenEpisode);
+    const sameSeries = episodes
+      .filter((ep) => ep?.id && getEpisodeSeriesId(ep) === sId)
+      .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+    const idxInSeries = sameSeries.findIndex((ep) => ep.id === fullScreenEpisode.id);
+    if (idxInSeries >= 0 && idxInSeries + 1 < sameSeries.length) {
+      return sameSeries[idxInSeries + 1];
+    }
+    if (episodes.length <= 1) return null;
+    const idxAll = episodes.findIndex((ep) => ep.id === fullScreenEpisode.id);
+    const candidate = idxAll >= 0 ? episodes[(idxAll + 1) % episodes.length] : episodes[0];
+    return candidate && candidate.id !== fullScreenEpisode.id ? candidate : null;
+  }, [fullScreenEpisode, episodes]);
 
   const watchedIdSet = useMemo(() => {
     const set = new Set<string>();
@@ -577,112 +716,39 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
           />
         )}
 
-        {/* Video Frame Layer — pointer-events-none blocks youtube.com taps completely */}
+        {/* Video Frame Layer — pointer-events-none blocks accidental external taps completely */}
         <div className="absolute inset-0 w-full h-full bg-black overflow-hidden">
-          {embedUrl ? (
+          {videoSource.kind === 'youtube' ||
+          videoSource.kind === 'dailymotion' ||
+          videoSource.kind === 'iframe' ? (
             <IsolatedYouTubeIframe
               iframeRef={iframeRef}
-              iframeKey={`fy-${currentEpisode.id}-${embedUrl}-r${retryCount}`}
-              src={embedUrl}
+              iframeKey={`fy-${currentEpisode.id}-${videoSource.url}-r${retryCount}`}
+              src={videoSource.url}
               title={currentEpisode.title}
               onLoad={handleIframeLoad}
               referrerPolicy="strict-origin-when-cross-origin"
               allow={FORYOU_YOUTUBE_ALLOW}
               className={FORYOU_IFRAME_CLASS}
             />
-          ) : resolvedMediaUrl &&
-            (isDirectVideoMediaUrl(rawVideoUrl) || isDirectVideoMediaUrl(resolvedMediaUrl)) ? (
-            <video
-              ref={videoRef}
-              key={`fy-vid-${currentEpisode.id}-${resolvedMediaUrl}-r${retryCount}`}
+          ) : videoSource.kind === 'direct' && resolvedMediaUrl ? (
+            <IsolatedHtml5Video
+              videoRef={videoRef}
+              videoKey={`fy-vid-${currentEpisode.id}-${resolvedMediaUrl}-r${retryCount}`}
               src={resolvedMediaUrl}
               autoPlay
               loop
               muted={muted}
-              playsInline
-              preload="auto"
-              onLoadedMetadata={(e) => {
-                e.currentTarget.muted = muted;
-                e.currentTarget.volume = 1;
-                if (savedTimeRef.current > 1 && Number.isFinite(e.currentTarget.duration)) {
-                  const targetTime = Math.min(savedTimeRef.current, Math.max(0, e.currentTarget.duration - 1));
-                  try {
-                    e.currentTarget.currentTime = targetTime;
-                  } catch {
-                    // Ignore seek errors before readyState
-                  }
-                }
-              }}
-              onCanPlay={() => {
-                clearRecoveryTimers();
-                setIsRecovering(false);
-                setRecoveryFailed(false);
-              }}
-              onPlaying={() => {
-                clearRecoveryTimers();
-                setIsRecovering(false);
-                setRecoveryFailed(false);
-                setIsPlaying(true);
-              }}
-              onPlay={(e) => {
-                e.currentTarget.muted = muted;
-                e.currentTarget.volume = 1;
-                if (
-                  savedTimeRef.current > 1 &&
-                  e.currentTarget.currentTime < 0.5 &&
-                  Number.isFinite(e.currentTarget.duration)
-                ) {
-                  try {
-                    e.currentTarget.currentTime = Math.min(
-                      savedTimeRef.current,
-                      Math.max(0, e.currentTarget.duration - 0.5)
-                    );
-                  } catch {
-                    // Ignore seek errors
-                  }
-                }
-                clearRecoveryTimers();
-                setIsRecovering(false);
-                setRecoveryFailed(false);
-                setIsPlaying(true);
-              }}
-              onTimeUpdate={(e) => {
-                if (e.currentTarget.currentTime > 0) {
-                  savedTimeRef.current = e.currentTarget.currentTime;
-                }
-                if (stallTimerRef.current !== null) {
-                  clearRecoveryTimers();
-                  setIsRecovering(false);
-                }
-              }}
-              onWaiting={() => {
-                if (isPlayingRef.current && stallTimerRef.current === null) {
-                  stallTimerRef.current = window.setTimeout(() => {
-                    stallTimerRef.current = null;
-                    triggerAutoRecover(true);
-                  }, 4500);
-                }
-              }}
-              onStalled={() => {
-                if (isPlayingRef.current && stallTimerRef.current === null) {
-                  stallTimerRef.current = window.setTimeout(() => {
-                    stallTimerRef.current = null;
-                    triggerAutoRecover(true);
-                  }, 4500);
-                }
-              }}
-              onError={() => {
-                setIsPlaying(false);
-                triggerAutoRecover(true);
-              }}
-              onPause={(e) => {
-                if (e.currentTarget.currentTime > 0) {
-                  savedTimeRef.current = e.currentTarget.currentTime;
-                }
-                clearRecoveryTimers();
-                setIsPlaying(false);
-              }}
-              className="pointer-events-none w-full h-full object-cover"
+              onLoadedMetadata={handleVideoLoadedMetadata}
+              onCanPlay={handleVideoCanPlay}
+              onPlaying={handleVideoPlaying}
+              onPlay={handleVideoPlay}
+              onTimeUpdate={handleVideoTimeUpdate}
+              onWaiting={handleVideoWaitingOrStalled}
+              onStalled={handleVideoWaitingOrStalled}
+              onError={handleVideoError}
+              onPause={handleVideoPause}
+              className={FORYOU_VIDEO_CLASS}
             />
           ) : (
             <div className="flex flex-col items-center justify-center p-6 text-center gap-3">
@@ -1039,6 +1105,13 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
           qualificationThreshold={qualificationThreshold}
           muted={muted}
           resumePlaybackSignal={resumePlaybackSignal}
+          hasNextEpisode={Boolean(nextFullScreenEpisode)}
+          nextEpisodeLabel={nextFullScreenEpisode?.episodeLabel}
+          onNextEpisode={() => {
+            if (nextFullScreenEpisode) {
+              setFullScreenEpisode(nextFullScreenEpisode);
+            }
+          }}
           onToggleMute={onToggleMute}
           onAwardCoinPot={onAwardCoinPot}
           onStartSponsorReward={onStartSponsorReward}

@@ -1044,5 +1044,183 @@ export function getYouTubeWatchUrl(rawUrl: string): string | null {
   return extractYouTubeMedia(rawUrl).watchUrl;
 }
 
+export function extractDailymotionVideoId(rawUrl: string): string | null {
+  const unwrapped = normalizeYouTubeInput(rawUrl);
+  if (!unwrapped) return null;
+
+  const regexPatterns = [
+    /(?:dai\.ly\/)([a-zA-Z0-9]+)(?:[?#&_/]|$)/i,
+    /(?:dailymotion\.com\/(?:embed\/)?video\/)([a-zA-Z0-9]+)(?:[_?#&/]|$)/i,
+    /(?:geo\.dailymotion\.com\/player\.html[^#]*[?&]video=)([a-zA-Z0-9]+)(?:[&#]|$)/i,
+  ];
+
+  for (const regex of regexPatterns) {
+    const match = unwrapped.match(regex);
+    if (match?.[1] && /^[a-zA-Z0-9]{4,24}$/.test(match[1])) {
+      return match[1];
+    }
+  }
+
+  try {
+    const normalized =
+      /^https?:\/\//i.test(unwrapped)
+        ? unwrapped
+        : unwrapped.startsWith('//')
+          ? `https:${unwrapped}`
+          : `https://${unwrapped}`;
+    const parsed = new URL(normalized);
+    const host = parsed.hostname.replace(/^(www|m|touch)\./i, '').toLowerCase();
+
+    if (host === 'dai.ly') {
+      const firstSeg = parsed.pathname.split('/').filter(Boolean)[0] || '';
+      const cleanId = firstSeg.split('_')[0];
+      return cleanId && /^[a-zA-Z0-9]{4,24}$/.test(cleanId) ? cleanId : null;
+    }
+
+    if (host === 'dailymotion.com' || host.endsWith('.dailymotion.com')) {
+      const videoParam = parsed.searchParams.get('video');
+      if (videoParam && /^[a-zA-Z0-9]{4,24}$/.test(videoParam)) {
+        return videoParam;
+      }
+      const hashMatch = parsed.hash.match(/video=([a-zA-Z0-9]{4,24})/i);
+      if (hashMatch?.[1]) {
+        return hashMatch[1];
+      }
+      const parts = parsed.pathname.split('/').filter(Boolean);
+      const videoIdx = parts.findIndex((p) => p.toLowerCase() === 'video');
+      if (videoIdx !== -1 && parts[videoIdx + 1]) {
+        const cleanId = parts[videoIdx + 1].split('_')[0];
+        if (/^[a-zA-Z0-9]{4,24}$/.test(cleanId)) {
+          return cleanId;
+        }
+      }
+    }
+  } catch {
+    // Regex fallback already attempted above
+  }
+
+  return null;
+}
+
+export function getDailymotionEmbedUrl(
+  rawUrl: string,
+  options?: { autoplay?: boolean; muted?: boolean; startSeconds?: number }
+): string | null {
+  const videoId = extractDailymotionVideoId(rawUrl);
+  if (!videoId) return null;
+
+  const params = new URLSearchParams();
+  params.set('autoplay', options?.autoplay === false ? '0' : '1');
+  params.set('mute', options?.muted ? '1' : '0');
+  params.set('api', 'postMessage');
+  if (
+    typeof options?.startSeconds === 'number' &&
+    Number.isFinite(options.startSeconds) &&
+    options.startSeconds > 0
+  ) {
+    params.set('start', String(Math.floor(options.startSeconds)));
+  }
+
+  return `https://www.dailymotion.com/embed/video/${videoId}?${params.toString()}`;
+}
+
+export function getBunnyEmbedUrl(rawUrl: string): string | null {
+  const unwrapped = normalizeYouTubeInput(rawUrl);
+  if (!unwrapped) return null;
+  try {
+    const normalized = /^https?:\/\//i.test(unwrapped) ? unwrapped : `https://${unwrapped}`;
+    const parsed = new URL(normalized);
+    const host = parsed.hostname.toLowerCase();
+    if (
+      (host === 'iframe.mediadelivery.net' || host === 'video.bunnycdn.com') &&
+      /^\/(embed|play)\//i.test(parsed.pathname)
+    ) {
+      const embedPath = parsed.pathname.replace(/^\/play\//i, '/embed/');
+      return `https://iframe.mediadelivery.net${embedPath}${parsed.search}`;
+    }
+  } catch {
+    // Not a valid URL
+  }
+  return null;
+}
+
+export function isDirectVideoStreamUrl(rawUrl?: string): boolean {
+  const clean = (rawUrl || '').trim();
+  if (!clean) return false;
+  if (clean.startsWith('idb://') || clean.startsWith('blob:') || clean.startsWith('data:video')) {
+    return true;
+  }
+  if (/\.(mp4|m3u8|webm|ogg|mov|m4v)(\?|#|$)/i.test(clean)) {
+    return true;
+  }
+  try {
+    const normalized = /^https?:\/\//i.test(clean) ? clean : `https://${clean}`;
+    const parsed = new URL(normalized);
+    const host = parsed.hostname.toLowerCase();
+    // Bunny Stream / CDN direct stream pull zones (excluding iframe HTML embed player paths)
+    if (
+      (host.endsWith('.b-cdn.net') ||
+        host.endsWith('.bunnycdn.com') ||
+        host.endsWith('.bunny.net')) &&
+      !/^\/(embed|play)\//i.test(parsed.pathname)
+    ) {
+      return true;
+    }
+  } catch {
+    // Ignore parse errors
+  }
+  return false;
+}
+
+export type VideoSourceKind = 'youtube' | 'dailymotion' | 'direct' | 'iframe' | 'empty';
+
+export interface ResolvedVideoSource {
+  kind: VideoSourceKind;
+  url: string;
+  rawUrl: string;
+}
+
+export function resolveVideoSource(
+  rawInput?: string,
+  options?: { startSeconds?: number; muted?: boolean; autoplay?: boolean }
+): ResolvedVideoSource {
+  const cleaned = sanitizeMediaUrl(rawInput);
+  if (!cleaned) {
+    return { kind: 'empty', url: '', rawUrl: '' };
+  }
+
+  // 1) YouTube (watch, shorts, live, youtu.be, playlists -> youtube-nocookie.com/embed/...)
+  const ytEmbed =
+    options?.autoplay === false
+      ? getYouTubePreviewEmbedUrl(cleaned)
+      : getYouTubeEmbedUrl(cleaned, options?.startSeconds, Boolean(options?.muted));
+  if (ytEmbed) {
+    return { kind: 'youtube', url: ytEmbed, rawUrl: cleaned };
+  }
+
+  if (isYouTubeDomainOnly(cleaned)) {
+    return { kind: 'empty', url: '', rawUrl: cleaned };
+  }
+
+  // 2) Dailymotion (dailymotion.com/video/... or dai.ly/... -> https://www.dailymotion.com/embed/video/...)
+  const dmEmbed = getDailymotionEmbedUrl(cleaned, options);
+  if (dmEmbed) {
+    return { kind: 'dailymotion', url: dmEmbed, rawUrl: cleaned };
+  }
+
+  // 3) Bunny Stream HTML embed page (iframe.mediadelivery.net/embed|play/... or video.bunnycdn.com/play/...)
+  const bunnyEmbed = getBunnyEmbedUrl(cleaned);
+  if (bunnyEmbed) {
+    return { kind: 'iframe', url: bunnyEmbed, rawUrl: cleaned };
+  }
+
+  // 4) Direct .mp4 / .m3u8 / Bunny Stream CDN / local idb/blob video URL
+  if (isDirectVideoStreamUrl(cleaned)) {
+    return { kind: 'direct', url: cleaned, rawUrl: cleaned };
+  }
+
+  // 5) Any other external embeddable URL
+  return { kind: 'iframe', url: cleaned, rawUrl: cleaned };
+}
 
 

@@ -792,6 +792,29 @@ export async function awardMysteryBoxCoins(
   );
 }
 
+export async function awardWhatsappShareCoins(
+  player: LeaderboardPlayer,
+  privateState: PlayerPrivate,
+  qualificationThreshold: number
+): Promise<void> {
+  const todayKey = getTodayDateKey();
+  await awardPlayerCoins(
+    player,
+    privateState,
+    500,
+    qualificationThreshold,
+    {
+      lastActivityDate: todayKey,
+    },
+    undefined,
+    500,
+    {
+      category: 'whatsapp-share',
+      title: 'Daily WhatsApp Share Bonus (+500 Coins)',
+    }
+  );
+}
+
 function escapeHtml(raw: string): string {
   return raw
     .replace(/&/g, '&amp;')

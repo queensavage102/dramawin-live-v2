@@ -39,11 +39,10 @@ import {
   getCanonicalVideoKey,
   getEpisodeSeriesId,
   getYouTubeFallbackThumbnailUrl,
-  getYouTubePreviewEmbedUrl,
   getYouTubeThumbnailUrl,
   inferEpisodeCategory,
-  isYouTubeDomainOnly,
   normalizeEpisodeStartSeconds,
+  resolveVideoSource,
   resolveYouTubeAutoPosterUrl,
   sanitizeMediaUrl,
   sanitizePosterUrl,
@@ -196,45 +195,18 @@ const AdminVideoPreview: React.FC<{ videoUrl: string; title: string }> = ({
   title,
 }) => {
   const raw = sanitizeMediaUrl(videoUrl.trim());
-  const previewEmbed = raw ? getYouTubePreviewEmbedUrl(raw) : null;
-  const domainOnly = raw ? isYouTubeDomainOnly(raw) : false;
-  const resolvedDirect = useResolvedMediaUrl(previewEmbed || domainOnly ? '' : raw);
+  const source = resolveVideoSource(raw, { autoplay: false, muted: false });
+  const resolvedDirect = useResolvedMediaUrl(source.kind === 'direct' ? source.url : '');
 
-  if (previewEmbed) {
+  if (
+    source.kind === 'youtube' ||
+    source.kind === 'dailymotion' ||
+    source.kind === 'iframe'
+  ) {
     return (
       <iframe
-        key={`yt-preview-${previewEmbed}`}
-        src={previewEmbed}
-        title={title || 'YouTube Video / Playlist Preview'}
-        referrerPolicy="strict-origin-when-cross-origin"
-        allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
-        allowFullScreen
-        className="w-full h-full border-0 block"
-      />
-    );
-  }
-
-  if (resolvedDirect) {
-    const isDirectVid =
-      resolvedDirect.startsWith('blob:') ||
-      resolvedDirect.startsWith('data:video') ||
-      /\.(mp4|webm|ogg|mov|m4v|m3u8)(\?|#|$)/i.test(raw);
-    if (isDirectVid) {
-      return (
-        <video
-          key={`vid-preview-${resolvedDirect}`}
-          src={resolvedDirect}
-          controls
-          playsInline
-          preload="metadata"
-          className="w-full h-full object-contain bg-black"
-        />
-      );
-    }
-    return (
-      <iframe
-        key={`ext-preview-${resolvedDirect}`}
-        src={resolvedDirect}
+        key={`embed-preview-${source.url}`}
+        src={source.url}
         title={title || 'Video Preview'}
         referrerPolicy="strict-origin-when-cross-origin"
         allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
@@ -244,10 +216,25 @@ const AdminVideoPreview: React.FC<{ videoUrl: string; title: string }> = ({
     );
   }
 
+  if (source.kind === 'direct' && resolvedDirect) {
+    return (
+      <video
+        key={`vid-preview-${resolvedDirect}`}
+        src={resolvedDirect}
+        controls
+        playsInline
+        preload="metadata"
+        className="w-full h-full object-contain bg-black"
+      />
+    );
+  }
+
   return (
     <div className="w-full h-full flex flex-col items-center justify-center bg-[#08080B] text-[#8D867A] gap-1.5 p-3 text-center">
       <Video className="w-6 h-6 text-[#D4AF37]/50" />
-      <span className="text-[11px]">Paste a YouTube video/playlist link, MP4 URL, or upload a video</span>
+      <span className="text-[11px]">
+        Paste a YouTube, Dailymotion (dai.ly), MP4 / M3U8, or Bunny Stream URL
+      </span>
     </div>
   );
 };

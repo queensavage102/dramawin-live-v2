@@ -41,3 +41,72 @@ export const IsolatedYouTubeIframe = React.memo<IsolatedYouTubeIframeProps>(
 );
 
 IsolatedYouTubeIframe.displayName = 'IsolatedYouTubeIframe';
+
+export interface IsolatedHtml5VideoProps {
+  videoKey: string;
+  src: string;
+  className: string;
+  autoPlay?: boolean;
+  loop?: boolean;
+  muted?: boolean;
+  videoRef?: React.RefObject<HTMLVideoElement | null>;
+  onLoadedMetadata?: (e: React.SyntheticEvent<HTMLVideoElement>) => void;
+  onCanPlay?: () => void;
+  onPlaying?: () => void;
+  onPlay?: (e: React.SyntheticEvent<HTMLVideoElement>) => void;
+  onTimeUpdate?: (e: React.SyntheticEvent<HTMLVideoElement>) => void;
+  onWaiting?: () => void;
+  onStalled?: () => void;
+  onError?: () => void;
+  onPause?: (e: React.SyntheticEvent<HTMLVideoElement>) => void;
+  onEnded?: () => void;
+}
+
+export const IsolatedHtml5Video = React.memo<IsolatedHtml5VideoProps>(
+  ({
+    videoKey,
+    src,
+    className,
+    autoPlay = true,
+    loop = false,
+    muted = false,
+    videoRef,
+    onLoadedMetadata,
+    onCanPlay,
+    onPlaying,
+    onPlay,
+    onTimeUpdate,
+    onWaiting,
+    onStalled,
+    onError,
+    onPause,
+    onEnded,
+  }) => {
+    return (
+      <video
+        ref={videoRef}
+        key={videoKey}
+        src={src}
+        controls
+        playsInline
+        preload="metadata"
+        autoPlay={autoPlay}
+        loop={loop}
+        muted={muted}
+        onLoadedMetadata={onLoadedMetadata}
+        onCanPlay={onCanPlay}
+        onPlaying={onPlaying}
+        onPlay={onPlay}
+        onTimeUpdate={onTimeUpdate}
+        onWaiting={onWaiting}
+        onStalled={onStalled}
+        onError={onError}
+        onPause={onPause}
+        onEnded={onEnded}
+        className={className}
+      />
+    );
+  }
+);
+
+IsolatedHtml5Video.displayName = 'IsolatedHtml5Video';

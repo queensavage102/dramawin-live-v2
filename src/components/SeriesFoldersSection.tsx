@@ -484,6 +484,23 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
     [categoryBuckets, selectedCategory]
   );
 
+  const nextEpisodeForActivePlayer = useMemo(() => {
+    if (!activePlayerEpisode) return null;
+    const orderedSeries = seriesGroups.flatMap((g) => g.episodes);
+    if (orderedSeries.length > 1) {
+      const currentIdx = orderedSeries.findIndex((ep) => ep.id === activePlayerEpisode.id);
+      if (currentIdx >= 0) {
+        const candidate = orderedSeries[(currentIdx + 1) % orderedSeries.length];
+        return candidate && candidate.id !== activePlayerEpisode.id ? candidate : null;
+      }
+    }
+    const fallbackSorted = [...episodes].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+    if (fallbackSorted.length <= 1) return null;
+    const fbIdx = fallbackSorted.findIndex((ep) => ep.id === activePlayerEpisode.id);
+    const candidate = fbIdx >= 0 ? fallbackSorted[(fbIdx + 1) % fallbackSorted.length] : fallbackSorted[0];
+    return candidate && candidate.id !== activePlayerEpisode.id ? candidate : null;
+  }, [activePlayerEpisode, seriesGroups, episodes]);
+
   const activeHero = heroSlides[heroIndex] || null;
   const horrorBucketIndex = categoryBuckets.findIndex(
     (b) => b.category.toLowerCase() === 'horror'
@@ -968,6 +985,15 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
           qualificationThreshold={qualificationThreshold}
           muted={muted}
           resumePlaybackSignal={resumePlaybackSignal}
+          hasNextEpisode={Boolean(nextEpisodeForActivePlayer)}
+          nextEpisodeLabel={nextEpisodeForActivePlayer?.episodeLabel}
+          onNextEpisode={() => {
+            if (!nextEpisodeForActivePlayer) return;
+            setActivePlayerEpisode(nextEpisodeForActivePlayer);
+            if (selectedSeriesId) {
+              setSelectedSeriesId(getEpisodeSeriesId(nextEpisodeForActivePlayer));
+            }
+          }}
           onToggleMute={onToggleMute}
           onAwardCoinPot={onAwardCoinPot}
           onStartSponsorReward={onStartSponsorReward}

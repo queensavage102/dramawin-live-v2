@@ -880,3 +880,24 @@ export function toggleMyListSeriesId(seriesId: string): { list: string[]; added:
   safeWriteJson(MY_LIST_STORAGE_KEY, next);
   return { list: next, added: !exists };
 }
+
+const WHATSAPP_SHARE_DATE_PREFIX = 'dramawin_whatsapp_share_date_v1_';
+
+export function getWhatsappShareClaimDate(uid: string): string {
+  if (!uid || typeof window === 'undefined') return '';
+  try {
+    return window.localStorage.getItem(`${WHATSAPP_SHARE_DATE_PREFIX}${uid}`) || '';
+  } catch {
+    return '';
+  }
+}
+
+export function markWhatsappShareClaimedToday(uid: string, dateKey: string): void {
+  if (!uid || typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(`${WHATSAPP_SHARE_DATE_PREFIX}${uid}`, dateKey);
+  } catch {
+    // Ignore storage errors
+  }
+}
+
