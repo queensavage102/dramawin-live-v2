@@ -113,10 +113,12 @@ export async function fetchPlayerProfile(uid: string): Promise<{
 export async function createPlayerProfile(
   uid: string,
   rawUsername: string,
-  rawContact: string
+  rawContact: string,
+  trackingId?: string
 ): Promise<{ publicProfile: LeaderboardPlayer; privateProfile: PlayerPrivate }> {
   const username = rawUsername.trim().slice(0, 32);
   const contact = rawContact.trim().slice(0, 120);
+  const cleanTrackingId = (trackingId || uid).trim().slice(0, 128);
   const weekKey = getCurrentWeekKey();
 
   if (username.length < 2) {
@@ -128,6 +130,7 @@ export async function createPlayerProfile(
 
   const publicData: LeaderboardPlayer = {
     uid,
+    trackingId: cleanTrackingId,
     username,
     coins: 0,
     weeklyCoins: 0,
@@ -139,6 +142,7 @@ export async function createPlayerProfile(
 
   const privateData: PlayerPrivate = {
     uid,
+    trackingId: cleanTrackingId,
     contact,
     dailyGiftLastClaimed: '',
     weekKey,
@@ -168,6 +172,41 @@ export async function createPlayerProfile(
   }
 
   return { publicProfile: publicData, privateProfile: privateData };
+}
+
+export async function syncPlayerTrackingId(
+  uid: string,
+  trackingId: string,
+  options?: { syncPublic?: boolean; syncPrivate?: boolean }
+): Promise<void> {
+  const cleanTrackingId = trackingId.trim().slice(0, 128);
+  if (!uid || !cleanTrackingId || !/^[a-zA-Z0-9_\-]+$/.test(cleanTrackingId)) {
+    return;
+  }
+
+  const syncPublic = options?.syncPublic ?? true;
+  const syncPrivate = options?.syncPrivate ?? true;
+  if (!syncPublic && !syncPrivate) return;
+
+  const batch = writeBatch(db);
+  if (syncPublic) {
+    batch.update(doc(db, 'leaderboard', uid), {
+      trackingId: cleanTrackingId,
+      updatedAt: serverTimestamp(),
+    });
+  }
+  if (syncPrivate) {
+    batch.update(doc(db, 'playerPrivate', uid), {
+      trackingId: cleanTrackingId,
+      updatedAt: serverTimestamp(),
+    });
+  }
+
+  try {
+    await batch.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `leaderboard/${uid}`);
+  }
 }
 
 export function subscribeLeaderboard(
@@ -772,7 +811,7 @@ export async function awardMysteryBoxCoins(
   isJackpot = false
 ): Promise<void> {
   const todayKey = getTodayDateKey();
-  const safeReward = Math.max(100, Math.min(5000, Math.round(rewardCoins)));
+  const safeReward = Math.max(100, Math.min(1000, Math.round(rewardCoins)));
   await awardPlayerCoins(
     player,
     privateState,
@@ -786,8 +825,8 @@ export async function awardMysteryBoxCoins(
     {
       category: 'mystery-box',
       title: isJackpot
-        ? `Mystery Box #${boxNumber} — 11th Box Mega Surprise (+1,500 Coins)`
-        : `Mystery Box #${boxNumber} Bonus (+100 Coins)`,
+        ? `Mystery Box #${boxNumber} — Hidden +1,000 Coins Gift!`
+        : `Mystery Box #${boxNumber} Bonus (+${safeReward} Coins)`,
     }
   );
 }
@@ -811,6 +850,31 @@ export async function awardWhatsappShareCoins(
     {
       category: 'whatsapp-share',
       title: 'Daily WhatsApp Share Bonus (+500 Coins)',
+    }
+  );
+}
+
+export async function awardSpinWheelCoins(
+  player: LeaderboardPlayer,
+  privateState: PlayerPrivate,
+  rewardCoins: number,
+  qualificationThreshold: number
+): Promise<void> {
+  const todayKey = getTodayDateKey();
+  const safeReward = Math.max(100, Math.min(1000, Math.round(rewardCoins)));
+  await awardPlayerCoins(
+    player,
+    privateState,
+    safeReward,
+    qualificationThreshold,
+    {
+      lastActivityDate: todayKey,
+    },
+    undefined,
+    safeReward,
+    {
+      category: 'spin-wheel',
+      title: `Daily Lucky Spin Wheel (+${safeReward.toLocaleString()} Coins)`,
     }
   );
 }
@@ -1646,7 +1710,11 @@ export async function evaluateSundayPoolRollover(
     const p1 = Math.round(currentPool * 0.5);
     const p2 = Math.round(currentPool * 0.3);
     const p3 = Math.round(currentPool * 0.2);
-    const summary = `1st: ${first.username} (R${p1}) · 2nd: ${second.username} (R${p2}) · 3rd: ${third.username} (R${p3})`;
+    const c1 = (p1 >= 1000 ? p1 : p1 * 1000).toLocaleString();
+    const c2 = (p2 >= 1000 ? p2 : p2 * 1000).toLocaleString();
+    const c3 = (p3 >= 1000 ? p3 : p3 * 1000).toLocaleString();
+    const totalCoinsDisplay = (currentPool >= 1000 ? currentPool : currentPool * 1000).toLocaleString();
+    const summary = `1st: ${first.username} (${c1} Coins) · 2nd: ${second.username} (${c2} Coins) · 3rd: ${third.username} (${c3} Coins)`;
 
     const awardMap = new Map<string, number>([
       [first.uid, p1],
@@ -1670,12 +1738,12 @@ export async function evaluateSundayPoolRollover(
 
       const actorUid = auth.currentUser?.uid || first.uid;
       const topWinners = [
-        { player: first, rank: 1, prizeZar: p1 },
-        { player: second, rank: 2, prizeZar: p2 },
-        { player: third, rank: 3, prizeZar: p3 },
+        { player: first, rank: 1, prizeZar: p1, coinsDisplay: c1 },
+        { player: second, rank: 2, prizeZar: p2, coinsDisplay: c2 },
+        { player: third, rank: 3, prizeZar: p3, coinsDisplay: c3 },
       ];
 
-      topWinners.forEach(({ player: winner, rank, prizeZar }) => {
+      topWinners.forEach(({ player: winner, rank, prizeZar, coinsDisplay }) => {
         const winId = `pw-pool-${Date.now()}-${rank}-${Math.random().toString(36).slice(2, 6)}`;
         batch.set(doc(db, 'prize_wins', winId), {
           uid: winner.uid,
@@ -1686,7 +1754,7 @@ export async function evaluateSundayPoolRollover(
           coinsAwarded: 0,
           rank,
           weekKey: nextWeekKey,
-          summary: `Sunday Pool #${rank} Place — R${prizeZar} (${winner.username})`,
+          summary: `Sunday Pool #${rank} Place — ${coinsDisplay} Coins (${winner.username})`,
           status: 'recorded',
           createdAt: serverTimestamp(),
         });
@@ -1698,20 +1766,20 @@ export async function evaluateSundayPoolRollover(
         buildMailPayload({
           uid: actorUid,
           eventType: 'prize_win',
-          subject: `[DramaWin Sunday Pool] R${currentPool} Payout Winners (${nextWeekKey})`,
+          subject: `[DramaWin Sunday Pool] ${totalCoinsDisplay} Coins Winners (${nextWeekKey})`,
           text: [
-            `Sunday Prize Pool Payout Triggered (${nextWeekKey})`,
-            `Total Pool: R${currentPool}`,
-            `1st Place: ${first.username} (${first.uid}) — R${p1}`,
-            `2nd Place: ${second.username} (${second.uid}) — R${p2}`,
-            `3rd Place: ${third.username} (${third.uid}) — R${p3}`,
+            `Sunday Coin Pool Winners (${nextWeekKey})`,
+            `Total Pool: ${totalCoinsDisplay} Coins`,
+            `1st Place: ${first.username} (${first.uid}) — ${c1} Coins`,
+            `2nd Place: ${second.username} (${second.uid}) — ${c2} Coins`,
+            `3rd Place: ${third.username} (${third.uid}) — ${c3} Coins`,
           ].join('\n'),
-          html: `<h2>DramaWin Sunday Prize Pool Payout (${escapeHtml(nextWeekKey)})</h2>
-<p><strong>Total Pool:</strong> R${currentPool}</p>
+          html: `<h2>DramaWin Sunday Coin Pool (${escapeHtml(nextWeekKey)})</h2>
+<p><strong>Total Pool:</strong> ${escapeHtml(totalCoinsDisplay)} Coins</p>
 <ol>
-  <li><strong>${escapeHtml(first.username)}</strong> (${escapeHtml(first.uid)}) — <strong>R${p1}</strong></li>
-  <li><strong>${escapeHtml(second.username)}</strong> (${escapeHtml(second.uid)}) — <strong>R${p2}</strong></li>
-  <li><strong>${escapeHtml(third.username)}</strong> (${escapeHtml(third.uid)}) — <strong>R${p3}</strong></li>
+  <li><strong>${escapeHtml(first.username)}</strong> (${escapeHtml(first.uid)}) — <strong>${escapeHtml(c1)} Coins</strong></li>
+  <li><strong>${escapeHtml(second.username)}</strong> (${escapeHtml(second.uid)}) — <strong>${escapeHtml(c2)} Coins</strong></li>
+  <li><strong>${escapeHtml(third.username)}</strong> (${escapeHtml(third.uid)}) — <strong>${escapeHtml(c3)} Coins</strong></li>
 </ol>`,
         })
       );
@@ -1731,9 +1799,11 @@ export async function evaluateSundayPoolRollover(
     };
   }
 
-  // Fewer than 3 qualified -> do NOT pay out; roll over 100% of unclaimed pool + new week's R50 base (R50 -> R100)
+  // Fewer than 3 qualified -> do NOT award; roll over 100% of unclaimed pool + new week's base Coins
   const nextPoolZar = currentPool + DEFAULT_POOL_PRIZE_ZAR;
-  const summary = `Unclaimed R${currentPool} rolled over into R${nextPoolZar} pool (${sortedQualified.length}/3 qualified).`;
+  const curCoins = (currentPool >= 1000 ? currentPool : currentPool * 1000).toLocaleString();
+  const nxtCoins = (nextPoolZar >= 1000 ? nextPoolZar : nextPoolZar * 1000).toLocaleString();
+  const summary = `Unclaimed ${curCoins} Coins rolled over into ${nxtCoins} Coins pool (${sortedQualified.length}/3 qualified).`;
 
   try {
     await setDoc(

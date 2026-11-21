@@ -13,7 +13,7 @@ import { LeaderboardTab } from './LeaderboardTab';
 import { MysteryRevealState, MysteryVaultCard } from './MysteryVaultCard';
 
 const WHATSAPP_INVITE_MESSAGE =
-  '🔥 Watch free short dramas & win real Sunday cash prizes on DramaWin! Join me & earn coins here: https://vercel.app';
+  '🔥 Watch free short dramas & win virtual Coins on DramaWin! Join me & earn Coins here: https://vercel.app';
 const WHATSAPP_SHARE_URL = `https://wa.me/?text=${encodeURIComponent(WHATSAPP_INVITE_MESSAGE)}`;
 
 interface CheckInVaultTabProps {
@@ -40,12 +40,18 @@ interface CheckInVaultTabProps {
   streakActivityDates?: string[];
   transactions?: CoinTransaction[];
   whatsappShareClaimedToday?: boolean;
+  spinAvailableCount?: number;
+  spinExtraUnlocked?: number;
   onSundayZeroTick?: () => void;
   onCompleteCheckIn: (dayKey: WeekDayKey, rewardCoins: number) => Promise<void>;
-  onStartSponsorReward?: (rewardAction?: () => Promise<void>) => void;
+  onStartSponsorReward?: (
+    rewardAction?: () => Promise<void>,
+    options?: { claimLabel?: string; readyHeadline?: string }
+  ) => void;
   onOpenMysteryBox: (boxNumber: number) => void;
   onDismissVoucherModal: () => void;
   onWhatsappShareReward?: () => Promise<void> | void;
+  onOpenSpinWheel?: () => void;
 }
 
 export const CheckInVaultTab: React.FC<CheckInVaultTabProps> = ({
@@ -65,12 +71,15 @@ export const CheckInVaultTab: React.FC<CheckInVaultTabProps> = ({
   streakActivityDates = [],
   transactions = [],
   whatsappShareClaimedToday = false,
+  spinAvailableCount = 0,
+  spinExtraUnlocked = 0,
   onSundayZeroTick,
   onCompleteCheckIn,
   onStartSponsorReward,
   onOpenMysteryBox,
   onDismissVoucherModal,
   onWhatsappShareReward,
+  onOpenSpinWheel,
 }) => {
   const [subView, setSubView] = useState<'gifts' | 'leaderboard'>('gifts');
   const todayKey = getTodayDateKey();
@@ -158,6 +167,35 @@ export const CheckInVaultTab: React.FC<CheckInVaultTabProps> = ({
               )}
             </a>
           </div>
+
+          {/* Daily Lucky Spin Wheel Card */}
+          {onOpenSpinWheel && (
+            <div className="rounded-2xl bg-gradient-to-r from-[#1A1409] via-[#111116] to-[#1A1409] border border-[#D4AF37]/40 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 shadow-[0_8px_28px_rgba(212,175,55,0.12)]">
+              <div className="space-y-1 min-w-0">
+                <div className="inline-flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-wider text-[#E8C96D]">
+                  <span>Daily Lucky Wheel</span>
+                </div>
+                <h3 className="text-base sm:text-lg font-display font-bold text-white">
+                  Spin to Win Up to +1,000 Coins
+                </h3>
+                <p className="text-xs text-zinc-400 leading-relaxed">
+                  {spinAvailableCount > 0
+                    ? `You have ${spinAvailableCount} spin${spinAvailableCount === 1 ? '' : 's'} ready! Extra partner spins unlocked today: ${spinExtraUnlocked}/3.`
+                    : spinExtraUnlocked < 3
+                      ? `Daily free spin used — unlock up to ${3 - spinExtraUnlocked} more extra partner spin${3 - spinExtraUnlocked === 1 ? '' : 's'} today!`
+                      : 'All daily spins claimed (1 Free + 3 Extra). Come back tomorrow!'}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={onOpenSpinWheel}
+                className="min-h-[46px] px-5 rounded-xl bg-gradient-to-r from-[#FCE7A2] via-[#E8C96D] to-[#D4AF37] text-[#181307] text-xs sm:text-sm font-extrabold inline-flex items-center justify-center gap-2 shrink-0 shadow-[0_0_22px_rgba(212,175,55,0.35)] hover:brightness-105 active:scale-[0.98] transition-all cursor-pointer"
+              >
+                <span>🎡 Daily Spin</span>
+              </button>
+            </div>
+          )}
 
           <DailyCheckInBox
             privateState={privateState}

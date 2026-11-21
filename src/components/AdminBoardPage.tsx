@@ -922,7 +922,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
         lastPoolWinnerSummary: '',
         lastWinnerUids: [],
       });
-      setStatusMessage(`Test rollover applied: Pool rolled over from R${currentPool} to R${nextPool}.`);
+      setStatusMessage(`Test rollover applied: Pool rolled over from ${(currentPool >= 1000 ? currentPool : currentPool * 1000).toLocaleString()} to ${(nextPool >= 1000 ? nextPool : nextPool * 1000).toLocaleString()} Coins.`);
     } catch (err) {
       setStatusMessage(err instanceof Error ? err.message : 'Rollover failed.');
     } finally {
@@ -942,7 +942,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
         lastPoolWinnerSummary: '',
         lastWinnerUids: [],
       });
-      setStatusMessage(`Sunday Prize Pool reset to base R${DEFAULT_POOL_PRIZE_ZAR}.`);
+      setStatusMessage(`Sunday Coin Pool reset to base ${(DEFAULT_POOL_PRIZE_ZAR * 1000).toLocaleString()} Coins.`);
     } catch (err) {
       setStatusMessage(err instanceof Error ? err.message : 'Pool reset failed.');
     } finally {
@@ -2619,7 +2619,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
               </div>
             </section>
 
-            {/* 4. Secret Mystery Vault (11-Box Cycle), Ticker & Sunday Pool Controls */}
+            {/* 4. Secret Mystery Vault (12-Box Cycle), Ticker & Sunday Pool Controls */}
             <section className="obsidian-card rounded-2xl p-5 sm:p-6 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
@@ -2629,7 +2629,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                   </h2>
                 </div>
                 <span className="text-[11px] font-mono-num text-[#E8C96D]">
-                  Box #11: +1,500 Bonus Coins &amp; auto-reset · Gmail: {ADMIN_NOTIFICATION_EMAIL}
+                  Box #11: +1,000 Coins Jackpot · Auto-reset after 12 boxes · Gmail: {ADMIN_NOTIFICATION_EMAIL}
                 </span>
               </div>
 
@@ -2638,7 +2638,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                 className="grid grid-cols-1 sm:grid-cols-2 gap-3"
               >
                 <div className="space-y-1">
-                  <label className="text-[11px] text-[#A69F91]">Sunday Prize Pool (R)</label>
+                  <label className="text-[11px] text-[#A69F91]">Sunday Coin Pool Base Units (x1,000 Coins)</label>
                   <input
                     type="number"
                     min={0}
@@ -2649,7 +2649,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[11px] text-[#A69F91]">Rollover From Last Week (R)</label>
+                  <label className="text-[11px] text-[#A69F91]">Rollover From Last Week (Units)</label>
                   <input
                     type="number"
                     min={0}
@@ -2683,7 +2683,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                     onClick={() => void handleQuickTestRollover()}
                     className="min-h-[40px] px-3.5 rounded-xl border border-[#D4AF37]/35 text-[#E8C96D] hover:bg-[#D4AF37]/10 text-xs font-semibold"
                   >
-                    Trigger Test Rollover (+R50)
+                    Trigger Test Rollover (+50,000 Coins)
                   </button>
                   <button
                     type="button"
@@ -2692,7 +2692,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                     className="min-h-[40px] px-3.5 rounded-xl border border-white/[0.12] text-[#A69F91] hover:text-[#F6F2E9] text-xs font-medium inline-flex items-center gap-1.5"
                   >
                     <RotateCcw className="w-3.5 h-3.5" />
-                    <span>Reset Pool to R50</span>
+                    <span>Reset Pool to 50,000 Coins</span>
                   </button>
                 </div>
               </form>
@@ -2818,11 +2818,6 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                           </p>
                         </div>
                         <div className="flex items-center gap-2 font-mono-num shrink-0">
-                          {win.amountZar > 0 && (
-                            <span className="px-2 py-0.5 rounded bg-[#D4AF37]/15 text-[#FCE7A2] font-bold">
-                              R{win.amountZar}
-                            </span>
-                          )}
                           {win.coinsAwarded > 0 && (
                             <span className="text-[#E8C96D]">
                               +{win.coinsAwarded.toLocaleString()} Coins
@@ -2897,7 +2892,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                           {p.username}
                         </p>
                         <p className="font-mono-num text-xs text-[#8D867A]">
-                          Total: {p.coins.toLocaleString()} · Weekly: {p.weeklyCoins.toLocaleString()} · Sunday Bonus: R{(p.sundayBonusZar || 0).toLocaleString()}
+                          Total: {p.coins.toLocaleString()} Coins · Weekly: {p.weeklyCoins.toLocaleString()} Coins
                         </p>
                       </div>
 

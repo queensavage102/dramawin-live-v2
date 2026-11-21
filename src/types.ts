@@ -12,6 +12,7 @@ export interface StreakDaySpec {
 
 export interface LeaderboardPlayer {
   uid: string;
+  trackingId?: string;
   username: string;
   avatar?: string;
   coins: number;
@@ -41,6 +42,7 @@ export interface DramaSeries {
 
 export interface PlayerPrivate {
   uid: string;
+  trackingId?: string;
   contact: string;
   dailyGiftLastClaimed: string;
   weekKey: string;
@@ -126,6 +128,7 @@ export type TransactionCategory =
   | 'mystery-box'
   | 'mystery-entry'
   | 'whatsapp-share'
+  | 'spin-wheel'
   | 'admin-adjustment';
 
 export interface CoinTransaction {

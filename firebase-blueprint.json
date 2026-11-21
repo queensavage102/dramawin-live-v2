@@ -12,6 +12,13 @@
           "pattern": "^[a-zA-Z0-9_\\-]+$",
           "description": "Firebase Auth UID of the player."
         },
+        "trackingId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Permanent unique Offerwall & Support Player Tracking ID (DW-XXXXXXXX or Firebase Auth UID)."
+        },
         "username": {
           "type": "string",
           "minLength": 2,
@@ -69,6 +76,12 @@
       "type": "object",
       "properties": {
         "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "trackingId": {
           "type": "string",
           "minLength": 1,
           "maxLength": 128,

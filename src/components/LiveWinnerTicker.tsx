@@ -20,18 +20,20 @@ export const LiveWinnerTicker: React.FC<LiveWinnerTickerProps> = ({
 
     if (cleanNames.length === 0) return [];
 
+    const poolCoinsDisplay = (poolPrizeZar >= 1000 ? poolPrizeZar : poolPrizeZar * 1000).toLocaleString();
+
     return cleanNames.map((name, index) => {
       const pattern = index % 4;
       if (pattern === 0) {
-        return `🎉 ${name} just unlocked +1,500 Bonus Coins in the Secret Mystery Vault!`;
+        return `🎉 ${name} just unlocked +1,000 Coins in the Secret Mystery Vault!`;
       }
       if (pattern === 1) {
-        return `🏆 ${name} qualified for the R${poolPrizeZar} Sunday Pool!`;
+        return `🏆 ${name} qualified for the ${poolCoinsDisplay} Coins Sunday Pool!`;
       }
       if (pattern === 2) {
         return `🎁 ${name} claimed +600 Coins with Double Rewards!`;
       }
-      return `🎉 ${name} unlocked the 11-Box Mystery Vault surprise (+1,500 Bonus Coins)!`;
+      return `🎉 ${name} found the hidden +1,000 Coins gift in the 12-Box Mystery Vault!`;
     });
   }, [names, poolPrizeZar]);
 

@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { User, onAuthStateChanged, signInAnonymously, signInWithPopup } from 'firebase/auth';
-import { AlertTriangle, CheckCircle2, Crown, ExternalLink, Flame, Lock, Play, X } from 'lucide-react';
+import { AlertTriangle, Crown, Flame, X } from 'lucide-react';
 import { AdminBoardPage } from './components/AdminBoardPage';
-import { BottomAdBanner } from './components/BottomAdBanner';
 import { BottomNavBar } from './components/BottomNavBar';
 import { CheckInVaultTab } from './components/CheckInVaultTab';
 import { ConfettiExplosion } from './components/ConfettiExplosion';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { FeaturedPartnerOfferModal } from './components/FeaturedPartnerOfferModal';
 import { ForYouTab } from './components/ForYouTab';
 import { InAppBrowserBanner } from './components/InAppBrowserBanner';
+import { LuckySpinWheelModal, type SpinSliceSpec } from './components/LuckySpinWheelModal';
 import { MeTab } from './components/MeTab';
 import { MysteryRevealState, MysteryVaultCard } from './components/MysteryVaultCard';
 import { RealisticGoldCoin } from './components/RealisticGoldCoin';
@@ -36,6 +37,7 @@ import {
   adminAdjustPlayerCoins,
   awardHeroBonusCoins,
   awardMysteryBoxCoins,
+  awardSpinWheelCoins,
   awardWatchPotCoins,
   awardWhatsappShareCoins,
   claimStreakDay,
@@ -45,14 +47,13 @@ import {
   markEpisodeAsWatched,
   mergeWatchedEpisodeId,
   purgeLegacyAndStrayEpisodesFromFirestore,
-  recordPrizeWinAndNotifyEmail,
-  resetPlayerCoinsToZero,
   subscribeAppConfig,
   subscribeLeaderboard,
   subscribeMysteryWinners,
   subscribePlayerPrivate,
   subscribePrizeWins,
   subscribeTransactions,
+  syncPlayerTrackingId,
   unlockAdminAccess,
   updateEmbeddedAdHtml,
   updateLiveTickerConfig,
@@ -72,11 +73,15 @@ import {
   WeekDayKey,
 } from './types';
 import {
+  DailySpinState,
+  MAX_EXTRA_SPINS_PER_DAY,
   addLocalPrizeWin,
   applyLocalCoinMutation,
   claimLocalMysteryBox,
   getOrCreateGuestSession,
+  getOrCreatePlayerTrackingId,
   getWhatsappShareClaimDate,
+  loadDailySpinState,
   loadLocalAppConfig,
   loadLocalLeaderboard,
   loadLocalMysteryWinners,
@@ -85,7 +90,7 @@ import {
   loadMyListSeriesIds,
   markWhatsappShareClaimedToday,
   mergeLeaderboardWithSeedPlayers,
-  resetLocalPlayerCoins,
+  saveDailySpinState,
   saveLocalAppConfig,
   toggleMyListSeriesId,
   updateLocalGuestUsername,
@@ -186,7 +191,6 @@ function DramaWinApp() {
   const [toast, setToast] = useState<ToastNotice | null>(null);
   const [cloudOpenedBoxes, setCloudOpenedBoxes] = useState<number[]>([]);
   const [mysteryReveal, setMysteryReveal] = useState<MysteryRevealState | null>(null);
-  const [pendingGiftBoxNumber, setPendingGiftBoxNumber] = useState<number | null>(null);
   const [mysteryVoucherModal, setMysteryVoucherModal] = useState<{
     winner: MysteryWinnerRecord;
     newPoolPrizeZar?: number;
@@ -198,321 +202,57 @@ function DramaWinApp() {
   });
   const [confettiActive, setConfettiActive] = useState(false);
   const [splashDone, setSplashDone] = useState<boolean>(() => isAdminPath());
-  const [sponsorLoading, setSponsorLoading] = useState<{
-    progress: number;
-    secondsLeft: number;
-    completed?: boolean;
+  const [sponsorOffer, setSponsorOffer] = useState<{
+    claimLabel: string;
+    readyHeadline?: string;
+    rewardAction?: () => Promise<void>;
+    onCancel?: () => void;
   } | null>(null);
   const [resumePlaybackSignal, setResumePlaybackSignal] = useState(0);
 
   const streakReminderShownRef = useRef<string | null>(null);
   const purgedStrayFirestoreRef = useRef<boolean>(false);
   const triedAnonAuthRef = useRef<boolean>(false);
-  const pendingGiftBoxNumberRef = useRef<number | null>(null);
   const cloudOpenedBoxesRef = useRef<number[]>(cloudOpenedBoxes);
   const toastTimerRef = useRef<number | null>(null);
-  const sponsorIntervalRef = useRef<number | null>(null);
-  const sponsorRafRef = useRef<number | null>(null);
-  const sponsorFlowRef = useRef<{
-    active: boolean;
-    startedAt: number;
-    durationMs: number;
-    activeElapsedMs: number;
-    lastVisibleTick: number;
-    leftApp: boolean;
-    isMysteryBox: boolean;
-    pushedHistory: boolean;
-    rewardAction: (() => Promise<void>) | null;
-  }>({
-    active: false,
-    startedAt: 0,
-    durationMs: 20000,
-    activeElapsedMs: 0,
-    lastVisibleTick: 0,
-    leftApp: false,
-    isMysteryBox: false,
-    pushedHistory: false,
-    rewardAction: null,
-  });
-
-  const stopSponsorTimers = useCallback(() => {
-    if (sponsorIntervalRef.current !== null) {
-      window.clearInterval(sponsorIntervalRef.current);
-      sponsorIntervalRef.current = null;
-    }
-    if (sponsorRafRef.current !== null) {
-      window.cancelAnimationFrame(sponsorRafRef.current);
-      sponsorRafRef.current = null;
-    }
-  }, []);
 
   useEffect(() => {
     cloudOpenedBoxesRef.current = cloudOpenedBoxes;
   }, [cloudOpenedBoxes]);
 
-  useEffect(() => {
-    pendingGiftBoxNumberRef.current = pendingGiftBoxNumber;
-  }, [pendingGiftBoxNumber]);
-
-  const finishSponsorRewardFlow = useCallback(() => {
-    const flow = sponsorFlowRef.current;
-    if (!flow.active) return;
-    const isMystery = flow.isMysteryBox || pendingGiftBoxNumberRef.current !== null;
-    if (!isMystery && (document.hidden || document.visibilityState === 'hidden')) {
-      return;
-    }
-    flow.active = false;
-    flow.leftApp = false;
-    stopSponsorTimers();
-    const pendingReward = flow.rewardAction;
-    flow.rewardAction = null;
-
-    if (isMystery) {
-      setSponsorLoading(null);
-      setPendingGiftBoxNumber(null);
-      setResumePlaybackSignal((prev) => prev + 1);
-    } else {
-      setSponsorLoading({ progress: 100, secondsLeft: 0, completed: true });
-    }
-
-    if (pendingReward) {
-      void pendingReward().catch(() => {});
-    }
-  }, [stopSponsorTimers]);
-
-  const cancelSponsorRewardFlowEarly = useCallback(
-    (showEarlyNotice = false, fromPopState = false) => {
-      const flow = sponsorFlowRef.current;
-      if (!flow.active) return;
-      flow.active = false;
-      flow.startedAt = 0;
-      flow.activeElapsedMs = 0;
-      flow.lastVisibleTick = 0;
-      flow.leftApp = false;
-      flow.rewardAction = null;
-      stopSponsorTimers();
-      if (!fromPopState && flow.pushedHistory) {
-        flow.pushedHistory = false;
-        try {
-          window.history.back();
-        } catch {
-          // Ignore history back errors
-        }
-      } else {
-        flow.pushedHistory = false;
-      }
-      setSponsorLoading(null);
-      setPendingGiftBoxNumber(null);
-      setResumePlaybackSignal((prev) => prev + 1);
-      if (showEarlyNotice) {
-        const toastId = `${Date.now()}-early-ad`;
-        if (toastTimerRef.current !== null) {
-          window.clearTimeout(toastTimerRef.current);
-          toastTimerRef.current = null;
-        }
-        setToast({
-          id: toastId,
-          message: 'Sponsor ad closed early — watch for 20s to unlock your Gift Box.',
-          tone: 'neutral',
-        });
-        toastTimerRef.current = window.setTimeout(() => {
-          setToast((current) => (current?.id === toastId ? null : current));
-          toastTimerRef.current = null;
-        }, 4000);
-      }
-    },
-    [stopSponsorTimers]
-  );
-
   const startSponsorRewardFlow = useCallback(
-    (rewardAction?: () => Promise<void>) => {
-      stopSponsorTimers();
-      if (sponsorFlowRef.current.active && sponsorFlowRef.current.rewardAction) {
-        sponsorFlowRef.current.rewardAction = null;
+    (
+      rewardAction?: () => Promise<void>,
+      options?: {
+        claimLabel?: string;
+        readyHeadline?: string;
+        onCancel?: () => void;
       }
-      setPendingGiftBoxNumber(null);
-      const durationMs = 20000;
-      sponsorFlowRef.current = {
-        active: true,
-        startedAt: Date.now(),
-        durationMs,
-        activeElapsedMs: 0,
-        lastVisibleTick: document.hidden ? 0 : Date.now(),
-        leftApp: false,
-        isMysteryBox: false,
-        pushedHistory: false,
-        rewardAction: rewardAction || null,
-      };
-      setSponsorLoading({ progress: 0, secondsLeft: 20, completed: false });
+    ) => {
+      setSponsorOffer({
+        claimLabel: options?.claimLabel || 'Claim Reward',
+        readyHeadline: options?.readyHeadline,
+        rewardAction,
+        onCancel: options?.onCancel,
+      });
     },
-    [stopSponsorTimers]
+    []
   );
-
-  const isSponsorFlowActive = Boolean(sponsorLoading && !sponsorLoading.completed);
-
-  useEffect(() => {
-    if (!isSponsorFlowActive) return;
-
-    const totalMs = sponsorFlowRef.current.durationMs || 20000;
-    const isMystery = sponsorFlowRef.current.isMysteryBox || pendingGiftBoxNumberRef.current !== null;
-
-    if (!isMystery && typeof window !== 'undefined' && !sponsorFlowRef.current.pushedHistory) {
-      try {
-        window.history.pushState({ dramawinSponsorAd: true }, '');
-        sponsorFlowRef.current.pushedHistory = true;
-      } catch {
-        // Ignore history restrictions
-      }
-    }
-
-    // Strict useRef interval timer enforcing 20s visible completion
-    sponsorIntervalRef.current = window.setInterval(() => {
-      const flow = sponsorFlowRef.current;
-      if (!flow.active) {
-        stopSponsorTimers();
-        return;
-      }
-
-      if (flow.isMysteryBox || pendingGiftBoxNumberRef.current !== null) {
-        const elapsed = Date.now() - flow.startedAt;
-        const progress = Math.min(100, (elapsed / totalMs) * 100);
-        const secondsLeft = Math.max(0, Math.ceil((totalMs - elapsed) / 1000));
-        setSponsorLoading({ progress, secondsLeft, completed: false });
-        if (elapsed >= totalMs) {
-          finishSponsorRewardFlow();
-        }
-        return;
-      }
-
-      // Non-mystery strict mode: immediate zero-coin abort if tab hidden or app switched
-      if (document.hidden || document.visibilityState === 'hidden') {
-        cancelSponsorRewardFlowEarly(false, false);
-        return;
-      }
-
-      const elapsed = Date.now() - flow.startedAt;
-      const secondsLeft = Math.max(0, Math.ceil((totalMs - elapsed) / 1000));
-      setSponsorLoading((prev) =>
-        prev && !prev.completed
-          ? { ...prev, secondsLeft }
-          : { progress: Math.min(100, (elapsed / totalMs) * 100), secondsLeft, completed: false }
-      );
-
-      if (elapsed >= totalMs) {
-        finishSponsorRewardFlow();
-      }
-    }, 100);
-
-    // Smooth 60fps progress & circular countdown ring updates
-    if (!isMystery) {
-      const tick60fps = () => {
-        const flow = sponsorFlowRef.current;
-        if (!flow.active || flow.isMysteryBox || pendingGiftBoxNumberRef.current !== null) return;
-        if (document.hidden || document.visibilityState === 'hidden') {
-          cancelSponsorRewardFlowEarly(false, false);
-          return;
-        }
-        const elapsed = Date.now() - flow.startedAt;
-        const progress = Math.min(100, Math.max(0, (elapsed / totalMs) * 100));
-        const secondsLeft = Math.max(0, Math.ceil((totalMs - elapsed) / 1000));
-        setSponsorLoading({ progress, secondsLeft, completed: false });
-
-        if (elapsed >= totalMs) {
-          finishSponsorRewardFlow();
-          return;
-        }
-        sponsorRafRef.current = window.requestAnimationFrame(tick60fps);
-      };
-      sponsorRafRef.current = window.requestAnimationFrame(tick60fps);
-    }
-
-    const handleLeave = () => {
-      if (sponsorFlowRef.current.active && pendingGiftBoxNumberRef.current !== null) {
-        sponsorFlowRef.current.leftApp = true;
-      }
-    };
-
-    const handleVisibility = () => {
-      const flow = sponsorFlowRef.current;
-      if (!flow.active) return;
-
-      if (flow.isMysteryBox || pendingGiftBoxNumberRef.current !== null) {
-        if (document.visibilityState === 'hidden') {
-          flow.leftApp = true;
-          return;
-        }
-        if (document.visibilityState === 'visible' && flow.leftApp) {
-          const elapsed = Date.now() - flow.startedAt;
-          if (elapsed >= totalMs) {
-            finishSponsorRewardFlow();
-          } else {
-            cancelSponsorRewardFlowEarly(true);
-          }
-        }
-        return;
-      }
-
-      if (document.hidden || document.visibilityState === 'hidden') {
-        cancelSponsorRewardFlowEarly(false, false);
-      }
-    };
-
-    const handlePageHide = () => {
-      const flow = sponsorFlowRef.current;
-      if (!flow.active) return;
-      if (!flow.isMysteryBox && pendingGiftBoxNumberRef.current === null) {
-        cancelSponsorRewardFlowEarly(false, false);
-      }
-    };
-
-    const handleFocusReturn = () => {
-      if (
-        !sponsorFlowRef.current.active ||
-        !sponsorFlowRef.current.leftApp ||
-        pendingGiftBoxNumberRef.current === null
-      ) {
-        return;
-      }
-      const elapsed = Date.now() - sponsorFlowRef.current.startedAt;
-      if (elapsed >= totalMs) {
-        finishSponsorRewardFlow();
-      } else {
-        cancelSponsorRewardFlowEarly(true);
-      }
-    };
-
-    const handlePopState = () => {
-      const flow = sponsorFlowRef.current;
-      if (!flow.active || pendingGiftBoxNumberRef.current !== null) return;
-      flow.pushedHistory = false;
-      cancelSponsorRewardFlowEarly(false, true);
-    };
-
-    window.addEventListener('blur', handleLeave);
-    window.addEventListener('focus', handleFocusReturn);
-    window.addEventListener('pagehide', handlePageHide);
-    window.addEventListener('popstate', handlePopState);
-    document.addEventListener('visibilitychange', handleVisibility);
-
-    return () => {
-      stopSponsorTimers();
-      window.removeEventListener('blur', handleLeave);
-      window.removeEventListener('focus', handleFocusReturn);
-      window.removeEventListener('pagehide', handlePageHide);
-      window.removeEventListener('popstate', handlePopState);
-      document.removeEventListener('visibilitychange', handleVisibility);
-    };
-  }, [isSponsorFlowActive, finishSponsorRewardFlow, cancelSponsorRewardFlowEarly, stopSponsorTimers]);
 
   // Use cloud session only if user is signed into Firebase Auth AND has a cloud profile;
   // otherwise run 100% seamlessly in instant localStorage mode with zero auth wall.
   const isCloudMode = Boolean(firebaseUser && cloudPrivateProfile);
+
+  const guestTrackingId = useMemo(() => getOrCreatePlayerTrackingId(), []);
+  const playerTrackingId =
+    firebaseUser && !firebaseUser.isAnonymous ? firebaseUser.uid : guestTrackingId;
 
   const currentPlayer: LeaderboardPlayer = useMemo(() => {
     if (isCloudMode && firebaseUser) {
       return (
         cloudLeaderboard.find((p) => p.uid === firebaseUser.uid) || {
           uid: firebaseUser.uid,
+          trackingId: playerTrackingId,
           username: 'Player',
           coins: 0,
           weeklyCoins: 0,
@@ -523,12 +263,37 @@ function DramaWinApp() {
       );
     }
     return guestPlayer;
-  }, [isCloudMode, firebaseUser, cloudLeaderboard, cloudPrivateProfile, guestPlayer]);
+  }, [isCloudMode, firebaseUser, cloudLeaderboard, cloudPrivateProfile, guestPlayer, playerTrackingId]);
 
   const privateProfile: PlayerPrivate = useMemo(
     () => (isCloudMode && cloudPrivateProfile ? cloudPrivateProfile : guestPrivate),
     [isCloudMode, cloudPrivateProfile, guestPrivate]
   );
+
+  const syncedTrackingRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isCloudMode || !firebaseUser || firebaseUser.isAnonymous) return;
+    const needPublicSync = currentPlayer.trackingId !== playerTrackingId;
+    const needPrivateSync = privateProfile.trackingId !== playerTrackingId;
+    if (!needPublicSync && !needPrivateSync) return;
+
+    const attemptKey = `${firebaseUser.uid}:${playerTrackingId}:${needPublicSync ? 1 : 0}${needPrivateSync ? 1 : 0}`;
+    if (syncedTrackingRef.current === attemptKey) return;
+    syncedTrackingRef.current = attemptKey;
+
+    void syncPlayerTrackingId(firebaseUser.uid, playerTrackingId, {
+      syncPublic: needPublicSync,
+      syncPrivate: needPrivateSync,
+    }).catch(() => {
+      // Keep non-blocking if offline or rules reject
+    });
+  }, [
+    isCloudMode,
+    firebaseUser,
+    currentPlayer.trackingId,
+    privateProfile.trackingId,
+    playerTrackingId,
+  ]);
 
   const leaderboard: LeaderboardPlayer[] = useMemo(
     () =>
@@ -845,34 +610,8 @@ function DramaWinApp() {
     [leaderboard, qualificationThreshold]
   );
 
-  const sundayBonusZar = useMemo(() => {
-    const awardedBalance = currentPlayer.sundayBonusZar || 0;
-    const isSunday = getTodayWeekdayKey() === 'Sun';
-    if (!isSunday || qualifiedCount < 3) return awardedBalance;
-
-    const pool = appConfig.poolPrizeZar || DEFAULT_POOL_PRIZE_ZAR;
-    const qualifiedTop3 = leaderboard
-      .filter((p) => (p.weeklyCoins || 0) >= qualificationThreshold)
-      .slice(0, 3);
-    const qualifiedIndex = qualifiedTop3.findIndex((p) => p.uid === currentPlayer.uid);
-
-    let liveShare = 0;
-    if (qualifiedIndex === 0) liveShare = Math.round(pool * 0.5);
-    else if (qualifiedIndex === 1) liveShare = Math.round(pool * 0.3);
-    else if (qualifiedIndex === 2) liveShare = Math.round(pool * 0.2);
-
-    return awardedBalance + liveShare;
-  }, [
-    currentPlayer,
-    leaderboard,
-    qualifiedCount,
-    appConfig.poolPrizeZar,
-    qualificationThreshold,
-  ]);
-
   const resolveGiftBoxOutcome = useCallback(
     (boxNumber: number) => {
-      setPendingGiftBoxNumber(null);
       const todayKey = getTodayDateKey();
       const {
         isCloudMode: cloudNow,
@@ -891,34 +630,38 @@ function DramaWinApp() {
         }
 
         const nextOpenedRaw = Array.from(new Set([...currentOpened, boxNumber]));
-        const is11thBoxJackpot = nextOpenedRaw.length >= MYSTERY_CYCLE_BOXES;
-        // Auto-reset immediately back to 0 / 11 Boxes Opened on Box #11
-        const persistedOpened = is11thBoxJackpot ? [] : nextOpenedRaw;
+        const isWinningBox = boxNumber === 11;
+        const cycleCompleted = nextOpenedRaw.length >= MYSTERY_CYCLE_BOXES;
+        // Auto-reset back to Box #1 once all 12 mystery boxes are opened
+        const persistedOpened = cycleCompleted ? [] : nextOpenedRaw;
         cloudOpenedBoxesRef.current = persistedOpened;
         setCloudOpenedBoxes(persistedOpened);
         writeCloudOpenedBoxes(activeUser.uid, todayKey, persistedOpened);
 
         const threshold = latestCfg.qualificationThreshold || DEFAULT_QUALIFICATION_THRESHOLD;
 
-        if (is11thBoxJackpot) {
+        if (isWinningBox) {
           setMysteryReveal({
             dateKey: todayKey,
             boxNumber,
             kind: 'jackpot',
-            coins: 1500,
+            coins: 1000,
+            cycleReset: cycleCompleted,
           });
           setConfettiActive(true);
           playCoinPotCashChime(isMutedNow);
           playVictoryFanfare(isMutedNow);
           showToast(
-            '🎉 Surprise! +1,500 Bonus Coins! Vault reset — tap any box to start a new 11-box cycle!',
-            1500
+            cycleCompleted
+              ? '🎉 Jackpot! You found the hidden +1,000 Coins gift! Grid reset to Box #1.'
+              : '🎉 Jackpot! You found the hidden +1,000 Coins gift!',
+            1000
           );
           void awardMysteryBoxCoins(
             player,
             priv,
             boxNumber,
-            1500,
+            1000,
             threshold,
             true
           ).catch(() => {});
@@ -926,19 +669,19 @@ function DramaWinApp() {
           setMysteryReveal({
             dateKey: todayKey,
             boxNumber,
-            kind: 'coins',
-            coins: 100,
+            kind: 'oops',
+            coins: 0,
+            cycleReset: cycleCompleted,
           });
-          playCoinChime(isMutedNow);
-          showToast(`🎁 Gift Box #${boxNumber} Opened! +100 Coins Added to Wallet!`, 100);
-          void awardMysteryBoxCoins(
-            player,
-            priv,
-            boxNumber,
-            100,
-            threshold,
-            false
-          ).catch(() => {});
+          showToast(
+            cycleCompleted
+              ? `Oops, sorry! Try the next box 🥲 (${MYSTERY_CYCLE_BOXES}/${MYSTERY_CYCLE_BOXES} opened — grid reset to Box #1)`
+              : `Oops, sorry! Try the next box 🥲 (Box #${boxNumber} Claimed · ${persistedOpened.length}/${MYSTERY_CYCLE_BOXES})`,
+            undefined,
+            'reminder',
+            undefined,
+            3500
+          );
         }
         return;
       }
@@ -961,6 +704,7 @@ function DramaWinApp() {
           boxNumber,
           kind: result.outcome.kind,
           coins: result.outcome.coins,
+          cycleReset: result.cycleReset,
         };
         setMysteryReveal(revealPayload);
 
@@ -969,14 +713,21 @@ function DramaWinApp() {
           playCoinPotCashChime(isMutedNow);
           playVictoryFanfare(isMutedNow);
           showToast(
-            '🎉 Surprise! +1,500 Bonus Coins! Vault reset — tap any box to start a new 11-box cycle!',
-            1500
+            result.cycleReset
+              ? '🎉 Jackpot! You found the hidden +1,000 Coins gift! Grid reset to Box #1.'
+              : '🎉 Jackpot! You found the hidden +1,000 Coins gift!',
+            1000
           );
         } else {
-          playCoinChime(isMutedNow);
+          const openedNow = (result.privateProfile.openedMysteryBoxesToday || []).length;
           showToast(
-            `🎁 Gift Box #${boxNumber} Opened! +${result.outcome.coins} Coins Added to Wallet!`,
-            result.outcome.coins
+            result.cycleReset
+              ? `Oops, sorry! Try the next box 🥲 (${MYSTERY_CYCLE_BOXES}/${MYSTERY_CYCLE_BOXES} opened — grid reset to Box #1)`
+              : `Oops, sorry! Try the next box 🥲 (Box #${boxNumber} Claimed · ${openedNow}/${MYSTERY_CYCLE_BOXES})`,
+            undefined,
+            'reminder',
+            undefined,
+            3500
           );
         }
       } catch (err) {
@@ -990,7 +741,7 @@ function DramaWinApp() {
     [showToast]
   );
 
-  // Mystery Box Flow: opens MONETAG_LINK in a new tab and awards +100 Coins (+1,500 Bonus Coins on Box #11 + grid reset)
+  // Mystery Box Flow: opens the dark-and-gold Featured Partner Offer modal (20s away timer) before resolving Box #11 (+1,000 Coins Jackpot) or #1-#10 / #12 (0 Coins Oops) and auto-resetting after all 12 boxes
   const handleOpenMysteryBox = (boxNumber: number) => {
     const todayKey = getTodayDateKey();
     const rawOpened = isCloudMode
@@ -1004,11 +755,15 @@ function DramaWinApp() {
       return;
     }
 
-    const activeSponsorLink = resolveSponsorLink(appConfig.sponsorAdUrl);
-    if (activeSponsorLink && activeSponsorLink !== '#') {
-      window.open(activeSponsorLink, '_blank', 'noopener,noreferrer');
-    }
-    resolveGiftBoxOutcome(boxNumber);
+    startSponsorRewardFlow(
+      async () => {
+        resolveGiftBoxOutcome(boxNumber);
+      },
+      {
+        claimLabel: `Unlock Box #${boxNumber}`,
+        readyHeadline: `Mystery Box #${boxNumber} • Ready to Open!`,
+      }
+    );
   };
 
   const handleOpenGiftVaultFromHeader = () => {
@@ -1101,18 +856,6 @@ function DramaWinApp() {
     setGuestPlayer(updated);
     setLocalLeaderboard(loadLocalLeaderboard(updated));
     showToast(`Leaderboard name updated to "${updated.username}"`);
-  };
-
-  const handleResetMyCoins = async () => {
-    if (isCloudMode && firebaseUser) {
-      await resetPlayerCoinsToZero(firebaseUser.uid);
-      showToast('Coins reset to 0 for testing.', undefined, 'neutral');
-      return;
-    }
-    const { player: resetPlayer, leaderboard: nextLb } = resetLocalPlayerCoins(guestPlayer);
-    setGuestPlayer(resetPlayer);
-    setLocalLeaderboard(nextLb);
-    showToast('Coins reset to 0 for testing.', undefined, 'neutral');
   };
 
   const handleMarkEpisodeWatched = useCallback(async (episode: DramaEpisode): Promise<void> => {
@@ -1301,6 +1044,167 @@ function DramaWinApp() {
     showToast(`+${shareBonusCoins} Coins Added to Wallet!`, shareBonusCoins, 'gold', undefined, 3000);
   }, [showToast]);
 
+  const [spinState, setSpinState] = useState<DailySpinState>(() =>
+    loadDailySpinState(guestPlayer.uid)
+  );
+  const [spinModalOpen, setSpinModalOpen] = useState(false);
+  const hasAutoShownSpinAfterIntroRef = useRef(false);
+
+  useEffect(() => {
+    setSpinState(loadDailySpinState(currentPlayer.uid));
+  }, [currentPlayer.uid]);
+
+  // Always show Lucky Spin Wheel right after the Intro screen finishes (even if free spin was used)
+  useEffect(() => {
+    if (isAdminRoute || !splashDone || hasAutoShownSpinAfterIntroRef.current) return;
+    hasAutoShownSpinAfterIntroRef.current = true;
+    const todayKey = getTodayDateKey();
+    const current = loadDailySpinState(currentPlayer.uid, todayKey);
+    if (current.popupShownDate !== todayKey) {
+      setSpinState(
+        saveDailySpinState(currentPlayer.uid, {
+          ...current,
+          popupShownDate: todayKey,
+        })
+      );
+    }
+    setSpinModalOpen(true);
+  }, [isAdminRoute, splashDone, currentPlayer.uid]);
+
+  const spinAvailableCount =
+    (spinState.freeSpinUsed ? 0 : 1) +
+    Math.max(0, spinState.extraSpinsUnlocked - spinState.extraSpinsUsed);
+
+  const handleSpinWheelWin = useCallback(
+    async (slice: SpinSliceSpec, usedExtraSpin: boolean): Promise<void> => {
+      const {
+        isCloudMode: cloudNow,
+        currentPlayer: playerNow,
+        privateProfile: privNow,
+        appConfig: cfgNow,
+        muted: mutedNow,
+      } = latestStateRef.current;
+
+      const todayKey = getTodayDateKey();
+      const current = loadDailySpinState(playerNow.uid, todayKey);
+
+      if (slice.kind === 'respin') {
+        // Grant +1 free spin immediately (refund current spin / unlock free spin without consuming extra spins)
+        const nextSpin = saveDailySpinState(playerNow.uid, {
+          ...current,
+          popupShownDate: todayKey,
+          freeSpinUsed: false,
+          extraSpinsUsed: current.extraSpinsUsed,
+        });
+        setSpinState(nextSpin);
+        playCoinChime(mutedNow);
+        showToast('🎉 Lucky! You won 1 Free Respin!', undefined, 'gold', undefined, 3200);
+        return;
+      }
+
+      const nextSpin = saveDailySpinState(playerNow.uid, {
+        ...current,
+        popupShownDate: todayKey,
+        freeSpinUsed: usedExtraSpin ? current.freeSpinUsed : true,
+        extraSpinsUsed: usedExtraSpin
+          ? Math.min(MAX_EXTRA_SPINS_PER_DAY, current.extraSpinsUsed + 1)
+          : current.extraSpinsUsed,
+      });
+      setSpinState(nextSpin);
+
+      if (slice.kind === 'oops') {
+        showToast(
+          '😅 Oops! No coins this time—unlock an extra spin below!',
+          undefined,
+          'neutral',
+          undefined,
+          3200
+        );
+        return;
+      }
+
+      const safeCoins = Math.max(100, Math.min(1000, Math.round(slice.coins)));
+      const threshold = cfgNow.qualificationThreshold || DEFAULT_QUALIFICATION_THRESHOLD;
+
+      if (cloudNow) {
+        await awardSpinWheelCoins(playerNow, privNow, safeCoins, threshold);
+      } else {
+        const res = applyLocalCoinMutation({
+          player: playerNow,
+          privateProfile: privNow,
+          walletDelta: safeCoins,
+          qualificationThreshold: threshold,
+          recordStreakActivity: true,
+          txMeta: {
+            category: 'spin-wheel',
+            title: `Daily Lucky Spin Wheel (+${safeCoins.toLocaleString()} Coins)`,
+          },
+        });
+        setGuestPlayer(res.player);
+        setGuestPrivate(res.privateProfile);
+        setLocalTransactions(res.transactions);
+        setLocalLeaderboard(loadLocalLeaderboard(res.player));
+      }
+
+      if (safeCoins >= 500) {
+        setConfettiActive(true);
+        playVictoryFanfare(mutedNow);
+      } else {
+        playCoinChime(mutedNow);
+      }
+      showToast(
+        `🎡 Lucky Spin Won +${safeCoins.toLocaleString()} Coins!`,
+        safeCoins,
+        'gold',
+        undefined,
+        3500
+      );
+    },
+    [showToast]
+  );
+
+  const handleUnlockExtraSpin = useCallback(() => {
+    const { currentPlayer: playerNow } = latestStateRef.current;
+    const todayKey = getTodayDateKey();
+    const current = loadDailySpinState(playerNow.uid, todayKey);
+    if (current.extraSpinsUnlocked >= MAX_EXTRA_SPINS_PER_DAY) {
+      showToast('All 3 extra partner spins already unlocked today!', undefined, 'neutral', undefined, 2800);
+      return;
+    }
+
+    setSpinModalOpen(false);
+    startSponsorRewardFlow(
+      async () => {
+        const uid = latestStateRef.current.currentPlayer.uid;
+        const latestSpin = loadDailySpinState(uid, getTodayDateKey());
+        const updated = saveDailySpinState(uid, {
+          ...latestSpin,
+          extraSpinsUnlocked: Math.min(
+            MAX_EXTRA_SPINS_PER_DAY,
+            latestSpin.extraSpinsUnlocked + 1
+          ),
+        });
+        setSpinState(updated);
+        setSpinModalOpen(true);
+        playCoinChime(latestStateRef.current.muted);
+        showToast(
+          `🎡 Extra Spin Unlocked! (${updated.extraSpinsUnlocked}/${MAX_EXTRA_SPINS_PER_DAY})`,
+          undefined,
+          'gold',
+          undefined,
+          3000
+        );
+      },
+      {
+        claimLabel: 'Unlock +1 Spin',
+        readyHeadline: 'Sponsor Ad • Extra Lucky Spin Unlocked!',
+        onCancel: () => {
+          setSpinModalOpen(true);
+        },
+      }
+    );
+  }, [showToast, startSponsorRewardFlow]);
+
   const handleToggleMyList = useCallback(
     (seriesId: string, seriesName: string) => {
       const { list, added } = toggleMyListSeriesId(seriesId);
@@ -1354,7 +1258,8 @@ function DramaWinApp() {
         playVictoryFanfare(muted);
         showToast(`Sunday Pool Distributed! ${res.summary}`);
       } else {
-        showToast(`🔥 ROLLOVER JACKPOT: R${res.nextPoolZar} carried forward!`);
+        const nextCoins = res.nextPoolZar >= 1000 ? res.nextPoolZar : res.nextPoolZar * 1000;
+        showToast(`🔥 ROLLOVER POOL: ${nextCoins.toLocaleString()} Coins carried forward!`);
       }
     });
   }, [adminUnlocked, isCloudMode, appConfig, leaderboard, muted, showToast]);
@@ -1470,7 +1375,8 @@ function DramaWinApp() {
         playVictoryFanfare(muted);
         showToast(`Sunday Reset Complete! ${res.summary}`);
       } else {
-        showToast(`🔥 Weekly scores reset — R${res.nextPoolZar} carried forward!`);
+        const nextCoins = res.nextPoolZar >= 1000 ? res.nextPoolZar : res.nextPoolZar * 1000;
+        showToast(`🔥 Weekly scores reset — ${nextCoins.toLocaleString()} Coins carried forward!`);
       }
       return res;
     }
@@ -1489,15 +1395,18 @@ function DramaWinApp() {
       const p1 = Math.round(currentPool * 0.5);
       const p2 = Math.round(currentPool * 0.3);
       const p3 = Math.round(currentPool * 0.2);
+      const c1 = (p1 >= 1000 ? p1 : p1 * 1000).toLocaleString();
+      const c2 = (p2 >= 1000 ? p2 : p2 * 1000).toLocaleString();
+      const c3 = (p3 >= 1000 ? p3 : p3 * 1000).toLocaleString();
       const weekKey = getCurrentWeekKey();
-      const summary = `1st: ${first.username} (R${p1}) · 2nd: ${second.username} (R${p2}) · 3rd: ${third.username} (R${p3})`;
+      const summary = `1st: ${first.username} (${c1} Coins) · 2nd: ${second.username} (${c2} Coins) · 3rd: ${third.username} (${c3} Coins)`;
 
       const topWinners = [
-        { player: first, rank: 1, prizeZar: p1 },
-        { player: second, rank: 2, prizeZar: p2 },
-        { player: third, rank: 3, prizeZar: p3 },
+        { player: first, rank: 1, prizeZar: p1, coinsDisplay: c1 },
+        { player: second, rank: 2, prizeZar: p2, coinsDisplay: c2 },
+        { player: third, rank: 3, prizeZar: p3, coinsDisplay: c3 },
       ];
-      topWinners.forEach(({ player: w, rank, prizeZar }) => {
+      topWinners.forEach(({ player: w, rank, prizeZar, coinsDisplay }) => {
         setLocalPrizeWins(
           addLocalPrizeWin({
             id: `pw-loc-pool-${Date.now()}-${rank}`,
@@ -1509,7 +1418,7 @@ function DramaWinApp() {
             coinsAwarded: 0,
             rank,
             weekKey,
-            summary: `Sunday Pool #${rank} Place — R${prizeZar} (${w.username})`,
+            summary: `Sunday Pool #${rank} Place — ${coinsDisplay} Coins (${w.username})`,
             status: 'recorded',
             createdAtMs: Date.now(),
           })
@@ -1539,7 +1448,9 @@ function DramaWinApp() {
     }
 
     const nextPoolZar = currentPool + DEFAULT_POOL_PRIZE_ZAR;
-    const summary = `Unclaimed R${currentPool} rolled over into R${nextPoolZar} pool (${sortedQualified.length}/3 qualified).`;
+    const curCoins = (currentPool >= 1000 ? currentPool : currentPool * 1000).toLocaleString();
+    const nxtCoins = (nextPoolZar >= 1000 ? nextPoolZar : nextPoolZar * 1000).toLocaleString();
+    const summary = `Unclaimed ${curCoins} Coins rolled over into ${nxtCoins} Coins pool (${sortedQualified.length}/3 qualified).`;
     setLocalAppConfig(
       saveLocalAppConfig({
         ...appConfig,
@@ -1640,15 +1551,6 @@ function DramaWinApp() {
     );
   }
 
-  const pendingGiftBox =
-    pendingGiftBoxNumber !== null && sponsorLoading
-      ? {
-          boxNumber: pendingGiftBoxNumber,
-          secondsLeft: sponsorLoading.secondsLeft,
-          progress: sponsorLoading.progress,
-        }
-      : null;
-
   return (
     <div className="min-h-screen bg-[#09090b] text-[#F6F2E9] pb-24">
       {!splashDone && <VipSplashScreen onComplete={() => setSplashDone(true)} />}
@@ -1658,238 +1560,41 @@ function DramaWinApp() {
         onComplete={() => setConfettiActive(false)}
       />
 
-      {/* Clear Sponsored Ad Countdown & "Ad Complete! +Coins Earned" Overlay */}
-      {sponsorLoading && pendingGiftBoxNumber === null && (() => {
-        const isComplete = sponsorLoading.completed;
-        const ringSize = 84;
-        const strokeWidth = 5;
-        const radius = (ringSize - strokeWidth) / 2;
-        const circumference = 2 * Math.PI * radius;
-        const activePct = isComplete ? 100 : sponsorLoading.progress;
-        const dashOffset = circumference * (1 - activePct / 100);
+      {/* Unified Dark-and-Gold 20s Pause-on-Return Featured Partner Offer Modal */}
+      <FeaturedPartnerOfferModal
+        open={Boolean(sponsorOffer)}
+        sponsorUrl={appConfig.sponsorAdUrl}
+        claimLabel={sponsorOffer?.claimLabel || 'Claim Reward'}
+        readyHeadline={sponsorOffer?.readyHeadline}
+        onClaim={async () => {
+          const action = sponsorOffer?.rewardAction;
+          setSponsorOffer(null);
+          setResumePlaybackSignal((prev) => prev + 1);
+          if (action) {
+            await action();
+          }
+        }}
+        onCancel={() => {
+          const cancelCb = sponsorOffer?.onCancel;
+          setSponsorOffer(null);
+          setResumePlaybackSignal((prev) => prev + 1);
+          cancelCb?.();
+        }}
+      />
 
-        return (
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label={isComplete ? 'Ad Complete! +Coins Earned' : 'Sponsored Ad Countdown'}
-            className="fixed inset-0 z-[2147483600] bg-black/92 backdrop-blur-md flex flex-col justify-between p-3 sm:p-6 overflow-y-auto"
-          >
-            <div className="w-full max-w-lg mx-auto rounded-2xl border border-[#D4AF37]/45 bg-[#12100B]/95 shadow-[0_10px_40px_rgba(0,0,0,0.85)] overflow-hidden shrink-0">
-              <div className="px-4 py-3 flex items-center justify-between gap-3">
-                {isComplete ? (
-                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-400 text-emerald-300 text-xs sm:text-sm font-extrabold shadow-[0_0_20px_rgba(16,185,129,0.35)]">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                    <span>Ad Complete! +Coins Earned</span>
-                  </div>
-                ) : (
-                  <div className="inline-flex items-center gap-2 text-xs sm:text-sm font-extrabold text-[#FCE7A2]">
-                    <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping shrink-0" />
-                    <span>
-                      Sponsored Ad • Reward in{' '}
-                      <span className="font-mono-num text-amber-300">
-                        {sponsorLoading.secondsLeft}s
-                      </span>
-                      ...
-                    </span>
-                  </div>
-                )}
-
-                <button
-                  type="button"
-                  disabled={!isComplete}
-                  aria-disabled={!isComplete}
-                  onClick={() => {
-                    if (!isComplete) return;
-                    if (sponsorFlowRef.current.pushedHistory) {
-                      sponsorFlowRef.current.pushedHistory = false;
-                      try {
-                        window.history.back();
-                      } catch {
-                        // Ignore history back errors
-                      }
-                    }
-                    setSponsorLoading(null);
-                    setResumePlaybackSignal((prev) => prev + 1);
-                  }}
-                  aria-label={
-                    isComplete
-                      ? 'Close ad overlay'
-                      : `Close locked until countdown reaches 0 (${sponsorLoading.secondsLeft}s)`
-                  }
-                  className={`min-h-[36px] px-2.5 rounded-xl border text-xs font-bold inline-flex items-center gap-1 transition-all shrink-0 ${
-                    isComplete
-                      ? 'border-emerald-400/60 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25 cursor-pointer'
-                      : 'border-white/10 bg-white/[0.04] text-zinc-500 opacity-50 cursor-not-allowed'
-                  }`}
-                >
-                  {isComplete ? (
-                    <X className="w-4 h-4" />
-                  ) : (
-                    <Lock className="w-3.5 h-3.5" />
-                  )}
-                </button>
-              </div>
-
-              <div className="h-2.5 w-full bg-black/70 overflow-hidden">
-                <div
-                  className={`h-full will-change-[width] ${
-                    isComplete
-                      ? 'bg-gradient-to-r from-emerald-400 via-green-400 to-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.8)]'
-                      : 'bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 shadow-[0_0_12px_rgba(251,191,36,0.9)]'
-                  }`}
-                  style={{ width: `${activePct}%` }}
-                />
-              </div>
-            </div>
-
-            <div className="my-auto w-full max-w-sm mx-auto rounded-3xl bg-gradient-to-b from-[#17121E] via-[#0F0D14] to-[#09090b] border border-amber-400/45 shadow-[0_0_70px_rgba(245,158,11,0.3)] p-5 text-center space-y-4">
-              {isComplete ? (
-                <>
-                  <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-emerald-500/20 border border-emerald-400/70 text-emerald-300 text-xs font-extrabold">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                    <span>Ad Complete! +Coins Earned</span>
-                  </div>
-                  <p className="text-xs text-zinc-300">
-                    Your coin reward has been added to your tournament wallet.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (sponsorFlowRef.current.pushedHistory) {
-                        sponsorFlowRef.current.pushedHistory = false;
-                        try {
-                          window.history.back();
-                        } catch {
-                          // Ignore history back errors
-                        }
-                      }
-                      setSponsorLoading(null);
-                      setResumePlaybackSignal((prev) => prev + 1);
-                    }}
-                    className="w-full min-h-[48px] px-4 rounded-2xl bg-gradient-to-r from-emerald-400 via-green-400 to-emerald-500 text-zinc-950 font-extrabold text-sm shadow-[0_0_28px_rgba(16,185,129,0.5)] hover:brightness-105 active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    <Play className="w-4 h-4 fill-current" />
-                    <span>Continue Movie ▶</span>
-                  </button>
-                </>
-              ) : (
-                <>
-                  {/* Animated 60fps Circular Countdown Ring (20s -> 0s) */}
-                  <div className="flex flex-col items-center gap-2.5">
-                    <div className="relative w-[84px] h-[84px] flex items-center justify-center">
-                      <svg
-                        width={ringSize}
-                        height={ringSize}
-                        viewBox={`0 0 ${ringSize} ${ringSize}`}
-                        className="-rotate-90 absolute inset-0"
-                        aria-hidden="true"
-                      >
-                        <defs>
-                          <linearGradient id="app-ad-ring-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-                            <stop offset="0%" stopColor="#FEF08A" />
-                            <stop offset="50%" stopColor="#FBBF24" />
-                            <stop offset="100%" stopColor="#F59E0B" />
-                          </linearGradient>
-                        </defs>
-                        <circle
-                          cx={ringSize / 2}
-                          cy={ringSize / 2}
-                          r={radius}
-                          fill="rgba(0,0,0,0.55)"
-                          stroke="rgba(255,255,255,0.12)"
-                          strokeWidth={strokeWidth}
-                        />
-                        <circle
-                          cx={ringSize / 2}
-                          cy={ringSize / 2}
-                          r={radius}
-                          fill="none"
-                          stroke="url(#app-ad-ring-grad)"
-                          strokeWidth={strokeWidth}
-                          strokeLinecap="round"
-                          strokeDasharray={circumference}
-                          strokeDashoffset={dashOffset}
-                        />
-                      </svg>
-                      <div className="relative flex flex-col items-center">
-                        <span className="font-mono-num text-2xl font-black text-amber-300 leading-none">
-                          {sponsorLoading.secondsLeft}s
-                        </span>
-                        <span className="text-[9px] font-bold uppercase tracking-wider text-zinc-400 mt-0.5">
-                          Stay Active
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Pulsing Anti-Freeze Badge Around Live Ad Container */}
-                    <div className="w-full rounded-2xl border border-amber-400/50 bg-[#0A0A0F] p-2.5 space-y-2 shadow-[0_0_24px_rgba(251,191,36,0.18)] animate-pulse">
-                      <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-400/15 border border-amber-400/40 text-[11px] font-extrabold text-amber-200">
-                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
-                        <span>Ad Playing • Stay 20s for Bonus Coins</span>
-                      </div>
-                      <div className="rounded-xl overflow-hidden bg-[#09090b] border border-white/10 py-1">
-                        <BottomAdBanner />
-                      </div>
-                    </div>
-
-                    <p className="text-xs text-zinc-300 leading-relaxed">
-                      Sponsored Ad active — wait {sponsorLoading.secondsLeft}s to unlock your coin
-                      reward.
-                    </p>
-                  </div>
-
-                  {(() => {
-                    const activeSponsorLink = resolveSponsorLink(appConfig.sponsorAdUrl);
-                    return (
-                      <a
-                        href={activeSponsorLink}
-                        target={activeSponsorLink !== '#' ? '_blank' : undefined}
-                        rel={activeSponsorLink !== '#' ? 'noopener noreferrer' : undefined}
-                        onClick={(e) => {
-                          if (activeSponsorLink === '#') {
-                            e.preventDefault();
-                          }
-                        }}
-                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-amber-400/35 bg-amber-400/10 text-amber-200 text-xs font-semibold hover:bg-amber-400/20 cursor-pointer"
-                      >
-                        <ExternalLink className="w-3.5 h-3.5" />
-                        <span>View Sponsor Page</span>
-                      </a>
-                    );
-                  })()}
-
-                  <div className="space-y-2">
-                    <button
-                      type="button"
-                      disabled
-                      className="w-full min-h-[46px] px-4 rounded-2xl bg-white/[0.06] border border-white/10 text-zinc-400 font-bold text-xs flex items-center justify-center gap-2 cursor-not-allowed"
-                    >
-                      <Lock className="w-3.5 h-3.5" />
-                      <span>Reward unlocks in {sponsorLoading.secondsLeft}s...</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => cancelSponsorRewardFlowEarly(false)}
-                      className="w-full py-1.5 text-[11px] font-medium text-zinc-400 hover:text-zinc-200 underline underline-offset-4 transition-colors cursor-pointer"
-                    >
-                      Exit Ad (No Coins)
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-
-            <div className="h-2 shrink-0" aria-hidden="true" />
-          </div>
-        );
-      })()}
+      {/* Daily Lucky Spin Wheel Modal */}
+      <LuckySpinWheelModal
+        open={spinModalOpen && !sponsorOffer}
+        spinState={spinState}
+        onSpinWin={handleSpinWheelWin}
+        onUnlockExtraSpin={handleUnlockExtraSpin}
+        onClose={() => setSpinModalOpen(false)}
+      />
 
       <InAppBrowserBanner />
 
       <TopHeader
         coins={currentPlayer.coins}
-        sundayBonusZar={sundayBonusZar}
         muted={muted}
         onOpenGiftVault={handleOpenGiftVaultFromHeader}
         onToggleMute={handleToggleMute}
@@ -2020,7 +1725,6 @@ function DramaWinApp() {
             sponsorAdUrl={appConfig.sponsorAdUrl}
             openedBoxesOverride={isCloudMode ? cloudOpenedBoxes : undefined}
             mysteryReveal={mysteryReveal}
-            pendingGiftBox={pendingGiftBox}
             voucherModal={mysteryVoucherModal}
             players={leaderboard}
             currentUserId={currentPlayer.uid}
@@ -2032,12 +1736,15 @@ function DramaWinApp() {
             streakActivityDates={privateProfile.streakActivityDates || []}
             transactions={transactions}
             whatsappShareClaimedToday={whatsappShareClaimedToday}
+            spinAvailableCount={spinAvailableCount}
+            spinExtraUnlocked={spinState.extraSpinsUnlocked}
             onSundayZeroTick={handleSundayZeroTick}
             onCompleteCheckIn={handleCompleteDailyCheckIn}
             onStartSponsorReward={startSponsorRewardFlow}
             onOpenMysteryBox={handleOpenMysteryBox}
             onDismissVoucherModal={() => setMysteryVoucherModal(null)}
             onWhatsappShareReward={handleWhatsappShareReward}
+            onOpenSpinWheel={() => setSpinModalOpen(true)}
           />
         )}
 
@@ -2045,12 +1752,12 @@ function DramaWinApp() {
           <MeTab
             player={currentPlayer}
             privateState={privateProfile}
+            trackingId={playerTrackingId}
             episodes={episodes}
             myListSeriesIds={myListSeriesIds}
             qualificationThreshold={qualificationThreshold}
             poolPrizeZar={appConfig.poolPrizeZar}
             onUpdatePlayerName={handleUpdatePlayerName}
-            onResetMyCoins={handleResetMyCoins}
             onToggleMyList={handleToggleMyList}
             onGoToHome={() => setActiveTab('watch')}
           />
@@ -2110,7 +1817,6 @@ function DramaWinApp() {
               privateState={privateProfile}
               openedBoxesOverride={isCloudMode ? cloudOpenedBoxes : undefined}
               mysteryReveal={mysteryReveal}
-              pendingGiftBox={pendingGiftBox}
               voucherModal={mysteryVoucherModal}
               onOpenMysteryBox={handleOpenMysteryBox}
               onDismissVoucherModal={() => setMysteryVoucherModal(null)}

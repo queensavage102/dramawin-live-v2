@@ -9,7 +9,6 @@ import {
 
 interface TopHeaderProps {
   coins: number;
-  sundayBonusZar: number;
   muted: boolean;
   onOpenGiftVault: () => void;
   onToggleMute: () => void;
@@ -18,7 +17,6 @@ interface TopHeaderProps {
 
 export const TopHeader: React.FC<TopHeaderProps> = ({
   coins,
-  sundayBonusZar,
   muted,
   onOpenGiftVault,
   onToggleMute,
@@ -91,17 +89,8 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
           </span>
         </div>
 
-        {/* Top-Right: Reward/Cash Pool Pill + Standalone Gift Box + Utility Controls */}
+        {/* Top-Right: Standalone Gift Box + Utility Controls */}
         <div className="flex items-center gap-2 shrink-0">
-          <div className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-fuchsia-500/15 via-purple-500/15 to-amber-500/15 backdrop-blur-md border border-fuchsia-400/30 px-2.5 sm:px-3 py-1.5 min-h-[36px] shrink-0">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
-            <span className="font-mono-num text-xs font-bold text-white whitespace-nowrap">
-              R{sundayBonusZar}
-            </span>
-            <span className="text-[10px] font-semibold text-fuchsia-200/85 whitespace-nowrap hidden sm:inline">
-              Pool Reward
-            </span>
-          </div>
 
           <button
             type="button"

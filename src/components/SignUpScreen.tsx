@@ -81,7 +81,7 @@ export const SignUpScreen: React.FC<SignUpScreenProps> = ({
               Your nightly drama ritual, rewarded in gold.
             </h1>
             <p className="text-sm lg:text-base text-[#C4BDB0] leading-relaxed">
-              Check in daily, unlock featured short-drama episodes, and climb the Top 1,000 leaderboard for the R50 Sunday Airtime Pool.
+              Check in daily, unlock featured short-drama episodes, and climb the Top 1,000 leaderboard for the 50,000-Coin Sunday Tournament.
             </p>
           </div>
         </div>
@@ -95,7 +95,7 @@ export const SignUpScreen: React.FC<SignUpScreenProps> = ({
               Create Player Profile
             </h2>
             <p className="text-sm text-[#A69F91]">
-              Set up your player handle and payout contact before entering DramaWin Coins.
+              Set up your player handle and contact before entering DramaWin Coins.
             </p>
           </div>
 
@@ -139,7 +139,7 @@ export const SignUpScreen: React.FC<SignUpScreenProps> = ({
                 className="w-full min-h-[46px] px-4 rounded-xl bg-[#070709] border border-[#D4AF37]/25 text-sm text-[#F6F2E9] placeholder-[#6B655B] focus:outline-none focus:border-[#D4AF37] transition-colors"
               />
               <p className="text-xs text-[#8D867A]">
-                Used strictly for Sunday Airtime Pool winner delivery.
+                Used strictly for tournament account &amp; leaderboard notices.
               </p>
             </div>
 
@@ -185,9 +185,9 @@ export const SignUpScreen: React.FC<SignUpScreenProps> = ({
           <div className="flex items-center justify-between text-xs text-[#8D867A] px-1">
             <span className="inline-flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5 text-[#D4AF37]" />
-              R50 Weekly Sunday Pool
+              50,000 Coins Sunday Pool
             </span>
-            <span>1st R25 · 2nd R15 · 3rd R10</span>
+            <span>1st 25k · 2nd 15k · 3rd 10k Coins</span>
           </div>
         </div>
       </div>

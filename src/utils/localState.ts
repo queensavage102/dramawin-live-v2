@@ -40,6 +40,7 @@ import { BoxOutcome } from '../components/MysteryVaultCard';
 
 const GUEST_PLAYER_KEY = 'dramawin_guest_player_v1';
 const GUEST_PRIVATE_KEY = 'dramawin_guest_private_v1';
+const PLAYER_TRACKING_ID_KEY = 'dramawin_player_tracking_id_v1';
 const GUEST_LEADERBOARD_KEY = 'dramawin_local_leaderboard_v1';
 const GUEST_TX_KEY = 'dramawin_local_transactions_v1';
 const LOCAL_EPISODES_KEY = 'dramawin_episodes';
@@ -89,11 +90,46 @@ function safeWriteJson(key: string, value: unknown): void {
   }
 }
 
+function generatePlayerTrackingId(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let suffix = '';
+  if (typeof window !== 'undefined' && window.crypto?.getRandomValues) {
+    const bytes = new Uint8Array(8);
+    window.crypto.getRandomValues(bytes);
+    for (let i = 0; i < 8; i += 1) {
+      suffix += chars[bytes[i] % chars.length];
+    }
+  } else {
+    for (let i = 0; i < 8; i += 1) {
+      suffix += chars[Math.floor(Math.random() * chars.length)];
+    }
+  }
+  return `DW-${suffix}`;
+}
+
+export function getOrCreatePlayerTrackingId(): string {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return generatePlayerTrackingId();
+  }
+  try {
+    const existing = (window.localStorage.getItem(PLAYER_TRACKING_ID_KEY) || '').trim();
+    if (/^DW-[A-Z0-9]{8}$/.test(existing)) {
+      return existing;
+    }
+    const created = generatePlayerTrackingId();
+    window.localStorage.setItem(PLAYER_TRACKING_ID_KEY, created);
+    return created;
+  } catch {
+    return generatePlayerTrackingId();
+  }
+}
+
 export function getOrCreateGuestSession(): {
   player: LeaderboardPlayer;
   privateProfile: PlayerPrivate;
 } {
   const currentWeek = getCurrentWeekKey();
+  const trackingId = getOrCreatePlayerTrackingId();
   const savedPlayer = safeReadJson<LeaderboardPlayer | null>(GUEST_PLAYER_KEY, null);
   const savedPrivate = safeReadJson<PlayerPrivate | null>(GUEST_PRIVATE_KEY, null);
 
@@ -104,8 +140,13 @@ export function getOrCreateGuestSession(): {
         ? savedPrivate.openedMysteryBoxesToday || []
         : [];
     const normalizedBoxes = rawBoxes.length >= MYSTERY_CYCLE_BOXES ? [] : rawBoxes;
+    const normalizedPlayer: LeaderboardPlayer = {
+      ...savedPlayer,
+      trackingId: savedPlayer.trackingId || trackingId,
+    };
     const normalizedPrivate: PlayerPrivate = {
       ...savedPrivate,
+      trackingId: savedPrivate.trackingId || trackingId,
       claimedDays:
         savedPrivate.weekKey === currentWeek ? savedPrivate.claimedDays || [] : [],
       weekKey: currentWeek,
@@ -114,14 +155,18 @@ export function getOrCreateGuestSession(): {
       lastMysteryPickDate: '',
       streakActivityDates: savedPrivate.streakActivityDates || [],
     };
+    if (!savedPlayer.trackingId) {
+      safeWriteJson(GUEST_PLAYER_KEY, normalizedPlayer);
+    }
     safeWriteJson(GUEST_PRIVATE_KEY, normalizedPrivate);
-    return { player: savedPlayer, privateProfile: normalizedPrivate };
+    return { player: normalizedPlayer, privateProfile: normalizedPrivate };
   }
 
   const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
   const uid = `guest-${Date.now().toString(36)}-${suffix.toLowerCase()}`;
   const player: LeaderboardPlayer = {
     uid,
+    trackingId,
     username: `Player_${suffix}`,
     coins: 0,
     weeklyCoins: 0,
@@ -132,6 +177,7 @@ export function getOrCreateGuestSession(): {
   };
   const privateProfile: PlayerPrivate = {
     uid,
+    trackingId,
     contact: 'Instant Play',
     dailyGiftLastClaimed: '',
     weekKey: currentWeek,
@@ -745,6 +791,7 @@ export function claimLocalMysteryBox(params: {
   appConfig: AppConfig;
 }): {
   outcome: BoxOutcome;
+  cycleReset: boolean;
   player: LeaderboardPlayer;
   privateProfile: PlayerPrivate;
   transactions: CoinTransaction[];
@@ -767,23 +814,24 @@ export function claimLocalMysteryBox(params: {
     throw new Error(`You need at least ${MYSTERY_ENTRY_COST} Coins to unlock.`);
   }
 
-  const is11thBoxJackpot = openedToday.length + 1 >= MYSTERY_CYCLE_BOXES;
-  const chosen: BoxOutcome = is11thBoxJackpot
+  const isWinningBox = boxNumber === 11;
+  const cycleCompleted = openedToday.length + 1 >= MYSTERY_CYCLE_BOXES;
+  const chosen: BoxOutcome = isWinningBox
     ? {
         boxNumber,
         kind: 'jackpot',
-        coins: 1500,
+        coins: 1000,
       }
     : {
         boxNumber,
-        kind: 'coins',
-        coins: 100,
+        kind: 'oops',
+        coins: 0,
       };
 
   const entryCost = paidWithCoins ? MYSTERY_ENTRY_COST : 0;
   const walletDelta = chosen.coins - entryCost;
-  // Automatically reset the Mystery Box grid back to 0 / 11 Boxes Opened right after the 11th box
-  const nextOpened = is11thBoxJackpot ? [] : [...openedToday, boxNumber];
+  // Automatically reset the Mystery Box grid back to 0 / 12 Boxes Opened once all 12 boxes are opened
+  const nextOpened = cycleCompleted ? [] : [...openedToday, boxNumber];
 
   const mutation = applyLocalCoinMutation({
     player,
@@ -795,16 +843,17 @@ export function claimLocalMysteryBox(params: {
       openedMysteryBoxesToday: nextOpened,
       lastMysteryPickDate: '',
     },
-    txMeta: {
-      category: 'mystery-box',
-      title: is11thBoxJackpot
-        ? `Mystery Box #${boxNumber} — +1,500 Bonus Coins!`
-        : `Mystery Box #${boxNumber} Bonus (+100 Coins)`,
-    },
+    txMeta: isWinningBox
+      ? {
+          category: 'mystery-box',
+          title: `Mystery Box #${boxNumber} — Hidden +1,000 Coins Gift!`,
+        }
+      : undefined,
   });
 
   return {
     outcome: chosen,
+    cycleReset: cycleCompleted,
     player: mutation.player,
     privateProfile: mutation.privateProfile,
     transactions: mutation.transactions,
@@ -900,4 +949,70 @@ export function markWhatsappShareClaimedToday(uid: string, dateKey: string): voi
     // Ignore storage errors
   }
 }
+
+export const MAX_EXTRA_SPINS_PER_DAY = 3;
+const DAILY_SPIN_STORAGE_PREFIX = 'dramawin_daily_spin_v1_';
+
+export interface DailySpinState {
+  dateKey: string;
+  freeSpinUsed: boolean;
+  extraSpinsUnlocked: number;
+  extraSpinsUsed: number;
+  popupShownDate: string;
+}
+
+export function loadDailySpinState(uid: string, todayKey = getTodayDateKey()): DailySpinState {
+  const fallback: DailySpinState = {
+    dateKey: todayKey,
+    freeSpinUsed: false,
+    extraSpinsUnlocked: 0,
+    extraSpinsUsed: 0,
+    popupShownDate: '',
+  };
+  if (!uid || typeof window === 'undefined') return fallback;
+  const parsed = safeReadJson<Partial<DailySpinState> | null>(
+    `${DAILY_SPIN_STORAGE_PREFIX}${uid}`,
+    null
+  );
+  if (!parsed || parsed.dateKey !== todayKey) {
+    return {
+      ...fallback,
+      popupShownDate: parsed?.popupShownDate === todayKey ? todayKey : '',
+    };
+  }
+  return {
+    dateKey: todayKey,
+    freeSpinUsed: Boolean(parsed.freeSpinUsed),
+    extraSpinsUnlocked: Math.min(
+      MAX_EXTRA_SPINS_PER_DAY,
+      Math.max(0, Number(parsed.extraSpinsUnlocked) || 0)
+    ),
+    extraSpinsUsed: Math.min(
+      MAX_EXTRA_SPINS_PER_DAY,
+      Math.max(0, Number(parsed.extraSpinsUsed) || 0)
+    ),
+    popupShownDate: typeof parsed.popupShownDate === 'string' ? parsed.popupShownDate : '',
+  };
+}
+
+export function saveDailySpinState(uid: string, state: DailySpinState): DailySpinState {
+  const normalized: DailySpinState = {
+    dateKey: state.dateKey || getTodayDateKey(),
+    freeSpinUsed: Boolean(state.freeSpinUsed),
+    extraSpinsUnlocked: Math.min(
+      MAX_EXTRA_SPINS_PER_DAY,
+      Math.max(0, Math.floor(state.extraSpinsUnlocked || 0))
+    ),
+    extraSpinsUsed: Math.min(
+      MAX_EXTRA_SPINS_PER_DAY,
+      Math.max(0, Math.floor(state.extraSpinsUsed || 0))
+    ),
+    popupShownDate: state.popupShownDate || '',
+  };
+  if (uid && typeof window !== 'undefined') {
+    safeWriteJson(`${DAILY_SPIN_STORAGE_PREFIX}${uid}`, normalized);
+  }
+  return normalized;
+}
+
 

@@ -42,8 +42,9 @@ service cloud.firestore {
     // Entity validation blueprints
     function isValidLeaderboardPlayer(data) {
       return data.keys().hasAll(['uid', 'username', 'coins', 'weeklyCoins', 'qualified', 'streakCount', 'isPublic', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['uid', 'username', 'coins', 'weeklyCoins', 'qualified', 'streakCount', 'sundayBonusZar', 'isPublic', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'trackingId', 'username', 'coins', 'weeklyCoins', 'qualified', 'streakCount', 'sundayBonusZar', 'isPublic', 'createdAt', 'updatedAt'])
         && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$')
+        && (!('trackingId' in data) || (data.trackingId is string && data.trackingId.size() >= 1 && data.trackingId.size() <= 128 && data.trackingId.matches('^[a-zA-Z0-9_\\-]+$')))
         && data.username is string && data.username.size() >= 2 && data.username.size() <= 32
         && data.coins is number && data.coins >= 0 && data.coins <= 100000000
         && data.weeklyCoins is number && data.weeklyCoins >= 0 && data.weeklyCoins <= 100000000
@@ -57,8 +58,9 @@ service cloud.firestore {
 
     function isValidPlayerPrivate(data) {
       return data.keys().hasAll(['uid', 'contact', 'dailyGiftLastClaimed', 'weekKey', 'claimedDays', 'watchedEpisodeIds', 'lastKeepWatchingDate', 'lastBannerClaimAt', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['uid', 'contact', 'dailyGiftLastClaimed', 'weekKey', 'claimedDays', 'watchedEpisodeIds', 'lastKeepWatchingDate', 'lastBannerClaimAt', 'lastActivityDate', 'lastMysteryPickDate', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'trackingId', 'contact', 'dailyGiftLastClaimed', 'weekKey', 'claimedDays', 'watchedEpisodeIds', 'lastKeepWatchingDate', 'lastBannerClaimAt', 'lastActivityDate', 'lastMysteryPickDate', 'createdAt', 'updatedAt'])
         && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$')
+        && (!('trackingId' in data) || (data.trackingId is string && data.trackingId.size() >= 1 && data.trackingId.size() <= 128 && data.trackingId.matches('^[a-zA-Z0-9_\\-]+$')))
         && data.contact is string && data.contact.size() >= 4 && data.contact.size() <= 120
         && data.dailyGiftLastClaimed is string && data.dailyGiftLastClaimed.size() <= 16
         && data.weekKey is string && data.weekKey.size() <= 16
@@ -267,7 +269,9 @@ service cloud.firestore {
             && incoming().qualified == false
             && incoming().diff(existing()).affectedKeys().hasOnly(['coins', 'weeklyCoins', 'qualified', 'updatedAt'])) ||
           (isOwner(playerId)
-            && incoming().diff(existing()).affectedKeys().hasOnly(['username', 'updatedAt']))
+            && incoming().diff(existing()).affectedKeys().hasOnly(['username', 'updatedAt'])) ||
+          (isOwner(playerId)
+            && incoming().diff(existing()).affectedKeys().hasOnly(['trackingId', 'updatedAt']))
         );
       allow delete: if isAdmin() && isValidId(playerId);
     }
@@ -290,6 +294,7 @@ service cloud.firestore {
           isAdmin() ||
           (isOwner(playerId)
             && incoming().diff(existing()).affectedKeys().hasOnly([
+              'trackingId',
               'contact',
               'dailyGiftLastClaimed',
               'weekKey',

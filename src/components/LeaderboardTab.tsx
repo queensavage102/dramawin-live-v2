@@ -57,9 +57,10 @@ export const LeaderboardTab: React.FC<LeaderboardTabProps> = ({
   const userRow = userIndex >= 0 ? players[userIndex] : null;
   const poolUnlocked = qualifiedCount >= 3;
 
-  const p1 = Math.round(poolPrizeZar * 0.5);
-  const p2 = Math.round(poolPrizeZar * 0.3);
-  const p3 = Math.round(poolPrizeZar * 0.2);
+  const poolDisplayCoins = poolPrizeZar >= 1000 ? poolPrizeZar : poolPrizeZar * 1000;
+  const p1 = Math.round(poolDisplayCoins * 0.5);
+  const p2 = Math.round(poolDisplayCoins * 0.3);
+  const p3 = Math.round(poolDisplayCoins * 0.2);
 
   // Strict Sunday Winner Rule:
   // Winners & prize badges are hidden Monday-Saturday and revealed ONLY on Sunday for players >= 500,000 weekly coins.
@@ -115,18 +116,18 @@ export const LeaderboardTab: React.FC<LeaderboardTabProps> = ({
           THE WEEKLY CLIMB — Live Leaderboard
         </h1>
         <p className="text-xs sm:text-sm font-medium text-[#FCE7A2] bg-[#16130A] border border-[#D4AF37]/40 rounded-xl px-4 py-3">
-          Winners crowned every Sunday! Target: 500,000 Coins. If target is not reached, the prize pool rolls over to next Sunday.
+          Winners crowned every Sunday! Target: 500,000 Coins. If target is not reached, the Coin pool rolls over to next Sunday.
         </p>
 
         {rolloverAmountZar > 0 && (
           <div className="inline-block gold-gradient-bg text-[#181307] rounded-xl px-4 py-2 text-xs font-bold shadow-md shadow-[#D4AF37]/20">
-            🔥 ROLLOVER JACKPOT: R{poolPrizeZar} — Unclaimed from last week!
+            🔥 ROLLOVER POOL: {poolDisplayCoins.toLocaleString()} Coins — Carried over from last week!
           </div>
         )}
 
         {lastPoolWinnerSummary && (
           <div className="rounded-xl bg-[#1A1508] border border-[#D4AF37]/45 px-4 py-2.5 text-xs text-[#FCE7A2]">
-            Previous Sunday Payout: {lastPoolWinnerSummary}
+            Previous Sunday Winners: {lastPoolWinnerSummary}
           </div>
         )}
         <p className="text-xs text-[#A69F91]">
@@ -134,7 +135,7 @@ export const LeaderboardTab: React.FC<LeaderboardTabProps> = ({
         </p>
       </div>
 
-      {/* 3 Metric Cards: Qualified players, Prize pool, Live Sunday Countdown */}
+      {/* 3 Metric Cards: Qualified players, Sunday Coin Pool, Live Sunday Countdown */}
       <section className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
         <div className="obsidian-card rounded-2xl p-4 sm:p-5 space-y-2">
           <div className="flex items-center justify-between text-xs text-[#A69F91]">
@@ -151,11 +152,11 @@ export const LeaderboardTab: React.FC<LeaderboardTabProps> = ({
 
         <div className="obsidian-card rounded-2xl p-4 sm:p-5 space-y-2">
           <div className="flex items-center justify-between text-xs text-[#A69F91]">
-            <span>Sunday Prize Pool</span>
+            <span>Sunday Coin Pool</span>
             <Trophy className="w-4 h-4 text-[#D4AF37]" />
           </div>
           <div className="font-mono-num text-2xl font-bold gold-gradient-text">
-            R{poolPrizeZar}
+            {poolDisplayCoins.toLocaleString()} Coins
           </div>
           <p className="text-xs text-[#A69F91]">
             {isSunday
@@ -294,7 +295,7 @@ export const LeaderboardTab: React.FC<LeaderboardTabProps> = ({
                           >
                             <Award className="w-3 h-3" />
                             <span>
-                              {sundayWinner.placeLabel}: R{sundayWinner.prizeZar}
+                              {sundayWinner.placeLabel}: +{sundayWinner.prizeZar.toLocaleString()} Coins
                             </span>
                           </span>
                         )}

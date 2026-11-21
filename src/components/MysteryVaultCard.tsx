@@ -16,6 +16,7 @@ export interface MysteryRevealState {
   boxNumber: number;
   kind: 'airtime' | 'coins' | 'jackpot' | 'oops';
   coins?: number;
+  cycleReset?: boolean;
   winnerRecord?: MysteryWinnerRecord;
   newPoolPrizeZar?: number;
 }
@@ -185,16 +186,11 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
       />
 
       <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-[#FCE7A2] drop-shadow-[0_0_8px_rgba(252,231,162,0.75)]" />
-            <h2 className="text-lg sm:text-xl font-display font-bold gold-gradient-text">
-              Secret Mystery Vault
-            </h2>
-          </div>
-          <p className="text-xs sm:text-sm text-[#BFB7A6]">
-            Tap any glowing gift box to explore a mystery partner offer and claim coins. Unlock {MYSTERY_CYCLE_BOXES} boxes to reveal a hidden mega coin surprise — then the vault resets!
-          </p>
+        <div className="flex items-center gap-2">
+          <Sparkles className="w-4 h-4 text-[#FCE7A2] drop-shadow-[0_0_8px_rgba(252,231,162,0.75)]" />
+          <h2 className="text-lg sm:text-xl font-display font-bold gold-gradient-text">
+            Secret Mystery Vault
+          </h2>
         </div>
 
         <div className="shrink-0">
@@ -207,7 +203,7 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
         </div>
       </div>
 
-      {/* Surprise Banner when opening Box #11 (+1,500 Bonus Coins!) or regular Box (+100 Coins) */}
+      {/* Reveal Banner when opening Box #11 (+1,000 Coins Jackpot) or Boxes #1-#10 / #12 (Oops 0 Coins) */}
       {activeRevealForToday && (
         <div
           role="status"
@@ -223,15 +219,38 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
                 <RealisticGoldCoin sizePx={48} emblem="★" className="shrink-0" />
                 <div>
                   <p className="text-sm sm:text-base font-extrabold leading-tight">
-                    🎉 +1,500 Bonus Coins!
+                    🎉 Jackpot! You found the hidden +1,000 Coins gift!
                   </p>
                   <p className="text-xs font-semibold opacity-90">
-                    11th mystery box surprise unlocked — the vault has auto-reset! Tap any box to start a new cycle.
+                    {activeRevealForToday.cycleReset
+                      ? 'All 12 mystery boxes opened — the grid has reset back to Box #1!'
+                      : `Box #${activeRevealForToday.boxNumber} Claimed · ${openedTodayList.length}/${MYSTERY_CYCLE_BOXES} Boxes Opened`}
                   </p>
                 </div>
               </div>
               <span className="font-mono-num font-black bg-[#181307] text-[#FCE7A2] px-3 py-1 rounded-full text-xs">
-                +1,500 Bonus Coins!
+                +1,000 Coins!
+              </span>
+            </div>
+          ) : activeRevealForToday.kind === 'oops' || (activeRevealForToday.coins ?? 0) === 0 ? (
+            <div className="flex items-center justify-between w-full flex-wrap gap-2">
+              <div className="flex items-center gap-2.5">
+                <span className="w-9 h-9 rounded-full bg-[#241E11] border border-[#D4AF37]/45 flex items-center justify-center text-lg shrink-0">
+                  🥲
+                </span>
+                <div>
+                  <p className="text-sm font-bold text-[#FCE7A2] leading-tight">
+                    Oops, sorry! Try the next box 🥲
+                  </p>
+                  <p className="text-[11px] text-[#BFB7A6]">
+                    {activeRevealForToday.cycleReset
+                      ? `Box #${activeRevealForToday.boxNumber} Claimed (${MYSTERY_CYCLE_BOXES}/${MYSTERY_CYCLE_BOXES}) — grid reset back to Box #1!`
+                      : `Box #${activeRevealForToday.boxNumber} Claimed · ${openedTodayList.length}/${MYSTERY_CYCLE_BOXES} Boxes Opened`}
+                  </p>
+                </div>
+              </div>
+              <span className="font-mono-num font-bold bg-black/50 text-[#C4BDB0] px-2.5 py-0.5 rounded-md border border-[#D4AF37]/30">
+                0 Coins added
               </span>
             </div>
           ) : (
@@ -239,20 +258,21 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
               <div className="flex items-center gap-2.5">
                 <RealisticGoldCoin sizePx={44} emblem="$" className="shrink-0" />
                 <span className="font-semibold">
-                  🎁 Gift Box #{activeRevealForToday.boxNumber} Opened! ({openedTodayList.length}/{MYSTERY_CYCLE_BOXES} Boxes Opened)
+                  🎁 Gift Box #{activeRevealForToday.boxNumber} Opened! ({openedTodayList.length}/
+                  {MYSTERY_CYCLE_BOXES} Boxes Opened)
                 </span>
               </div>
               <span className="font-mono-num font-bold bg-black/50 text-[#FCE7A2] px-2.5 py-0.5 rounded-md border border-[#D4AF37]/35">
-                +{activeRevealForToday.coins ?? 100} Coins added
+                +{activeRevealForToday.coins ?? 0} Coins added
               </span>
             </>
           )}
         </div>
       )}
 
-      {/* 3x4 Grid of 12 Glowing Black & Gold Mystery Gift Boxes */}
-      <div className="relative grid grid-cols-3 sm:grid-cols-4 gap-3 sm:gap-4">
-        {Array.from({ length: 12 }, (_, idx) => {
+      {/* 3-Column Grid of 12 Glowing Black & Gold Mystery Gift Boxes (#1 through #12) */}
+      <div className="relative grid grid-cols-3 gap-3 sm:gap-4">
+        {Array.from({ length: MYSTERY_CYCLE_BOXES }, (_, idx) => {
           const boxNumber = idx + 1;
           const isOpenedToday = openedTodayList.includes(boxNumber);
           const isInteractive = !isOpenedToday;
@@ -305,7 +325,7 @@ export const MysteryVaultCard: React.FC<MysteryVaultCardProps> = ({
                     ✓
                   </div>
                   <span className="text-[10px] font-semibold text-[#FCE7A2] leading-tight">
-                    +100 Coins
+                    Claimed
                   </span>
                   <span className="font-mono-num text-[11px] font-bold text-[#FCE7A2]">
                     #{boxNumber}

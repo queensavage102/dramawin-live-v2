@@ -12,7 +12,10 @@ interface DailyCheckInBoxProps {
   privateState: PlayerPrivate;
   sponsorAdUrl?: string;
   onCompleteCheckIn: (dayKey: WeekDayKey, rewardCoins: number) => Promise<void>;
-  onStartSponsorReward?: (rewardAction?: () => Promise<void>) => void;
+  onStartSponsorReward?: (
+    rewardAction?: () => Promise<void>,
+    options?: { claimLabel?: string; readyHeadline?: string }
+  ) => void;
 }
 
 export const DailyCheckInBox: React.FC<DailyCheckInBoxProps> = ({
@@ -33,14 +36,20 @@ export const DailyCheckInBox: React.FC<DailyCheckInBoxProps> = ({
       return;
     }
     if (onStartSponsorReward) {
-      onStartSponsorReward(async () => {
-        setCollecting(true);
-        try {
-          await onCompleteCheckIn(day.key, day.reward);
-        } finally {
-          setCollecting(false);
+      onStartSponsorReward(
+        async () => {
+          setCollecting(true);
+          try {
+            await onCompleteCheckIn(day.key, day.reward);
+          } finally {
+            setCollecting(false);
+          }
+        },
+        {
+          claimLabel: `Claim +${day.reward}`,
+          readyHeadline: `Sponsor Ad • Ready! +${day.reward} Coins Unlocked`,
         }
-      });
+      );
       return;
     }
 

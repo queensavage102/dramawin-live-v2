@@ -93,14 +93,14 @@ function buildConversationalReply(
 
   if (
     q.includes('11') ||
-    q.includes('r3') ||
+    q.includes('12') ||
     q.includes('mystery') ||
     q.includes('box') ||
     q.includes('boost') ||
     q.includes('vault') ||
     q.includes('reset')
   ) {
-    return `Here is how the Secret Mystery Vault works, ${firstName}:\n\n1. Tap any glowing gift box to explore a mystery partner offer and claim +100 Coins.\n2. Unlock ${MYSTERY_CYCLE_BOXES} boxes to reveal the hidden +1,500 Bonus Coins mega surprise!\n3. Right after Box #${MYSTERY_CYCLE_BOXES}, the vault grid automatically resets so you can repeat it anytime.`;
+    return `Here is how the Secret Mystery Vault works, ${firstName}:\n\n1. Tap any of the ${MYSTERY_CYCLE_BOXES} glowing gift boxes to explore a partner offer.\n2. Find the hidden jackpot box to win +1,000 Coins straight into your wallet!\n3. Once all ${MYSTERY_CYCLE_BOXES} boxes are opened, the vault grid automatically resets back to Box #1.`;
   }
 
   if (
@@ -113,7 +113,7 @@ function buildConversationalReply(
     q.includes('how does this work') ||
     q.includes('how do i play')
   ) {
-    return `You already have ${ctx.coins.toLocaleString()} Coins, ${firstName}! Here are the 3 best ways to stack more fast:\n\n• Watch Episodes: Fill the 60s Coin Pot (+300 Coins) or double it to +600 Coins with AD Double Rewards.\n• Mystery Vault: Open ${MYSTERY_CYCLE_BOXES} glowing boxes for +2,500 total Coins per cycle (+1,500 Bonus Coins on Box #11).\n• Daily Streak: Visit the Rewards tab once a day to claim your streak bonus.`;
+    return `You already have ${ctx.coins.toLocaleString()} Coins, ${firstName}! Here are the best ways to stack more fast:\n\n• Watch Episodes: Fill the 60s Coin Pot (+300 Coins) or double it to +600 Coins with AD Double Rewards.\n• Lucky Spin Wheel: Spin daily to win up to +1,000 Coins or a Free Respin.\n• Mystery Vault: Hunt through ${MYSTERY_CYCLE_BOXES} glowing boxes for the hidden +1,000 Coins gift!\n• Daily Streak: Visit the Rewards tab once a day to claim your streak bonus.`;
   }
 
   if (
@@ -124,17 +124,15 @@ function buildConversationalReply(
     q.includes('leaderboard') ||
     q.includes('winner') ||
     q.includes('prize') ||
-    q.includes('claim') ||
-    q.includes('withdraw') ||
-    q.includes('cash') ||
-    q.includes('money')
+    q.includes('claim')
   ) {
     const progressLine =
       remainingWeekly === 0
         ? `Great news—you've already hit ${currentWeekly.toLocaleString()} weekly coins and are 100% qualified!`
         : `You're currently at ${progressPct}% (${currentWeekly.toLocaleString()} / ${safeThreshold.toLocaleString()} weekly coins), so you just need ${remainingWeekly.toLocaleString()} more weekly coins to qualify.`;
+    const poolCoins = (ctx.poolPrizeZar >= 1000 ? ctx.poolPrizeZar : ctx.poolPrizeZar * 1000).toLocaleString();
 
-    return `Every Sunday at 23:59 SAST, the R${ctx.poolPrizeZar} Sunday Pool is shared among the Top 3 qualified players (50% for 1st, 30% for 2nd, 20% for 3rd).\n\n${progressLine}\n\nIf you're claiming a prize, drop your WhatsApp number or payout details here—your message is automatically sent to our admin Gmail!`;
+    return `Every Sunday at 23:59 SAST, the Top 3 qualified players (500,000+ weekly coins) share the ${poolCoins} Coins Sunday Pool (50% for 1st, 30% for 2nd, 20% for 3rd).\n\n${progressLine}\n\nYour message is also automatically sent to our support inbox if you need help from our team!`;
   }
 
   if (q.includes('sound') || q.includes('volume') || q.includes('audio') || q.includes('mute') || q.includes('video')) {
@@ -161,7 +159,7 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
     return {
       id: 'welcome-bot',
       role: 'assistant',
-      text: `Hey ${firstName}! 👋 I'm your DramaWin VIP Assistant. Ask me anything about your coins, the Secret Mystery Vault, or Sunday Pool payouts!`,
+      text: `Hey ${firstName}! 👋 I'm your DramaWin VIP Assistant. Ask me anything about your Coins, the Secret Mystery Vault, or the Sunday Coin Tournament!`,
     };
   };
 
@@ -316,7 +314,7 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
                     DramaWin VIP Support
                   </h3>
                   <p className="text-[11px] text-zinc-400 truncate">
-                    {coins.toLocaleString()} Coins · R{poolPrizeZar} Sunday Pool
+                    {coins.toLocaleString()} Coins · {(poolPrizeZar >= 1000 ? poolPrizeZar : poolPrizeZar * 1000).toLocaleString()} Coins Sunday Pool
                   </p>
                 </div>
               </div>

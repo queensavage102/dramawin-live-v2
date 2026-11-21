@@ -15,7 +15,10 @@ interface WatchTabProps {
   resumePlaybackSignal?: number;
   onToggleMute: () => void;
   onAwardCoinPot: (episode: DramaEpisode, amount: number) => Promise<void>;
-  onStartSponsorReward?: (rewardAction?: () => Promise<void>) => void;
+  onStartSponsorReward?: (
+    rewardAction?: () => Promise<void>,
+    options?: { claimLabel?: string; readyHeadline?: string }
+  ) => void;
   onClaimHeroBonus?: () => Promise<void>;
   onMarkEpisodeWatched?: (episode: DramaEpisode) => Promise<void>;
 }

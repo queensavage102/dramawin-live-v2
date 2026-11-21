@@ -43,7 +43,10 @@ interface SeriesFoldersSectionProps {
   resumePlaybackSignal?: number;
   onToggleMute: () => void;
   onAwardCoinPot: (episode: DramaEpisode, amount: number) => Promise<void>;
-  onStartSponsorReward?: (rewardAction?: () => Promise<void>) => void;
+  onStartSponsorReward?: (
+    rewardAction?: () => Promise<void>,
+    options?: { claimLabel?: string; readyHeadline?: string }
+  ) => void;
   onClaimHeroBonus?: () => Promise<void>;
   onMarkEpisodeWatched?: (episode: DramaEpisode) => Promise<void>;
 }
@@ -589,11 +592,17 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
                   e.preventDefault();
                   e.stopPropagation();
                   if (onStartSponsorReward) {
-                    onStartSponsorReward(async () => {
-                      if (onClaimHeroBonus) {
-                        await onClaimHeroBonus();
+                    onStartSponsorReward(
+                      async () => {
+                        if (onClaimHeroBonus) {
+                          await onClaimHeroBonus();
+                        }
+                      },
+                      {
+                        claimLabel: 'Claim +100',
+                        readyHeadline: 'Sponsor Ad • Ready! +100 Coins Unlocked',
                       }
-                    });
+                    );
                   } else {
                     const activeSponsorLink = resolveSponsorLink(sponsorAdUrl);
                     if (activeSponsorLink && activeSponsorLink !== '#') {
