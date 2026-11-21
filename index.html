@@ -21,7 +21,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="DramaWin" />
     <link rel="manifest" href="/manifest.json" />
-    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -29,6 +29,23 @@
       href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600&family=Playfair+Display:wght@600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
+    <script>
+      (function () {
+        window.__deferredPrompt = window.__deferredPrompt || null;
+        window.__dramawinInstallPrompt = window.__dramawinInstallPrompt || null;
+        window.addEventListener('beforeinstallprompt', function (e) {
+          e.preventDefault();
+          window.__deferredPrompt = e;
+          window.__dramawinInstallPrompt = e;
+          window.dispatchEvent(new Event('dramawin-pwa-prompt-ready'));
+        });
+        window.addEventListener('appinstalled', function () {
+          window.__deferredPrompt = null;
+          window.__dramawinInstallPrompt = null;
+          window.dispatchEvent(new Event('dramawin-pwa-installed'));
+        });
+      })();
+    </script>
   </head>
   <body class="bg-[#070709] text-[#F6F2E9] antialiased selection:bg-[#D4AF37]/30 selection:text-[#F6F2E9]">
     <div id="root"></div>

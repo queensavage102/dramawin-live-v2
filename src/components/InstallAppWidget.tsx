@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
+  ArrowUp,
   Check,
   Copy,
   Download,
@@ -18,7 +19,7 @@ interface InstallAppWidgetProps {
 }
 
 export const InstallAppWidget: React.FC<InstallAppWidgetProps> = ({
-  storageKey = 'dramawin_install_widget_dismissed_v1',
+  storageKey = 'dramawin_install_home_dismissed_v1',
 }) => {
   const {
     isInstallable,
@@ -41,7 +42,7 @@ export const InstallAppWidget: React.FC<InstallAppWidgetProps> = ({
   const [installing, setInstalling] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
 
-  // Hide all install prompts completely if already running in standalone installed mode
+  // Automatically hide if the app is already running in standalone/installed mode
   if (isInstalled || dismissed) {
     return null;
   }
@@ -89,7 +90,19 @@ export const InstallAppWidget: React.FC<InstallAppWidgetProps> = ({
   const handleCopyLink = async () => {
     if (typeof window === 'undefined') return;
     try {
-      await window.navigator.clipboard.writeText(window.location.href);
+      if (window.navigator.clipboard?.writeText) {
+        await window.navigator.clipboard.writeText(window.location.href);
+      } else {
+        const el = document.createElement('textarea');
+        el.value = window.location.href;
+        el.setAttribute('readonly', '');
+        el.style.position = 'absolute';
+        el.style.left = '-9999px';
+        document.body.appendChild(el);
+        el.select();
+        document.execCommand('copy');
+        document.body.removeChild(el);
+      }
       setCopiedLink(true);
       window.setTimeout(() => setCopiedLink(false), 2500);
     } catch {
@@ -111,12 +124,12 @@ export const InstallAppWidget: React.FC<InstallAppWidgetProps> = ({
               </h3>
               <p className="text-[11px] text-[#B8B0A0] truncate">
                 {hasNativePrompt
-                  ? 'Tap Install DramaWin App for instant 1-tap install.'
+                  ? 'Tap Install DramaWin App for 1-tap instant install.'
                   : isIOS
-                    ? 'Add to your iPhone Home Screen via Safari Share.'
+                    ? 'iPhone / iPad: Tap Share → Add to Home Screen.'
                     : isInAppBrowser
-                      ? 'Open in Chrome or Safari to install to Home Screen.'
-                      : 'Add to your Home Screen for instant full-screen access.'}
+                      ? 'Open in Chrome or Safari to add to Home Screen.'
+                      : 'Add to your Home Screen for fast full-screen viewing.'}
               </p>
             </div>
           </div>
@@ -150,28 +163,28 @@ export const InstallAppWidget: React.FC<InstallAppWidgetProps> = ({
           <div
             role="dialog"
             aria-modal="true"
-            aria-label="Add DramaWin to Home Screen"
+            aria-label="Install DramaWin App"
             onClick={() => setShowModal(false)}
             style={{ zIndex: 2147483647 }}
             className="fixed inset-0 z-[2147483647] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 pb-28 sm:p-6"
           >
             <div
               onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-sm rounded-2xl bg-[#121217] border border-[#D4AF37]/50 p-5 shadow-[0_16px_48px_rgba(0,0,0,0.85)] space-y-4 text-[#F6F2E9]"
+              className="w-full max-w-sm rounded-2xl bg-gradient-to-b from-[#16130B] via-[#101015] to-[#0B0B0F] border border-[#D4AF37]/55 p-5 shadow-[0_20px_60px_rgba(0,0,0,0.9)] space-y-4 text-[#F6F2E9]"
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-2.5">
-                  <div className="w-10 h-10 rounded-xl bg-[#1C180E] border border-[#D4AF37]/60 flex items-center justify-center shrink-0">
+                  <div className="w-10 h-10 rounded-xl bg-[#1C180E] border border-[#D4AF37]/60 flex items-center justify-center shrink-0 shadow-[0_0_18px_rgba(212,175,55,0.25)]">
                     <Smartphone className="w-5 h-5 text-[#FCE7A2]" />
                   </div>
                   <div>
                     <h4 className="text-base font-display font-bold text-[#FCE7A2]">
-                      Add DramaWin to Home Screen
+                      Install DramaWin App
                     </h4>
                     <p className="text-xs text-[#A69F91]">
                       {isIOS
-                        ? 'iOS Safari: Share → Add to Home Screen'
-                        : 'Chrome 3-dot menu (⋮) → Install app'}
+                        ? 'iPhone & iPad Safari Guide'
+                        : 'Browser Menu Install Guide'}
                     </p>
                   </div>
                 </div>
@@ -186,7 +199,7 @@ export const InstallAppWidget: React.FC<InstallAppWidgetProps> = ({
               </div>
 
               {isIOS ? (
-                <div className="space-y-2.5 text-xs text-[#E8E1D3]">
+                <div className="space-y-3 text-xs text-[#E8E1D3]">
                   {isInAppBrowser && (
                     <div className="space-y-2 pb-1">
                       <p className="leading-relaxed text-[#CFC8B8]">
@@ -223,19 +236,22 @@ export const InstallAppWidget: React.FC<InstallAppWidgetProps> = ({
                     </div>
                   )}
 
-                  <ol className="space-y-2 text-xs text-[#E8E1D3]">
-                    <li className="flex items-center gap-2.5 rounded-xl bg-[#0B0B0F] border border-white/10 p-3">
-                      <Share className="w-4 h-4 text-amber-300 shrink-0" />
-                      <span>
-                        1. In Safari, tap the <strong className="text-[#FCE7A2]">Share</strong>{' '}
-                        button at the bottom of your screen.
+                  <ol className="space-y-2.5 text-xs text-[#E8E1D3]">
+                    <li className="flex items-center gap-3 rounded-xl bg-[#09090D] border border-[#D4AF37]/30 p-3">
+                      <div className="w-9 h-9 rounded-lg bg-[#1A160B] border border-[#D4AF37]/50 flex items-center justify-center shrink-0 relative">
+                        <Share className="w-4 h-4 text-[#FCE7A2]" />
+                        <ArrowUp className="w-2.5 h-2.5 text-[#D4AF37] absolute -top-1 -right-1 bg-[#09090D] rounded-full" />
+                      </div>
+                      <span className="leading-relaxed">
+                        <strong className="text-[#FCE7A2]">1. Tap the Share button (⬆️)</strong> in Safari&apos;s bottom bar.
                       </span>
                     </li>
-                    <li className="flex items-center gap-2.5 rounded-xl bg-[#0B0B0F] border border-white/10 p-3">
-                      <PlusSquare className="w-4 h-4 text-amber-300 shrink-0" />
-                      <span>
-                        2. Scroll down and tap{' '}
-                        <strong className="text-[#FCE7A2]">Add to Home Screen</strong>.
+                    <li className="flex items-center gap-3 rounded-xl bg-[#09090D] border border-[#D4AF37]/30 p-3">
+                      <div className="w-9 h-9 rounded-lg bg-[#1A160B] border border-[#D4AF37]/50 flex items-center justify-center shrink-0">
+                        <PlusSquare className="w-4 h-4 text-[#FCE7A2]" />
+                      </div>
+                      <span className="leading-relaxed">
+                        <strong className="text-[#FCE7A2]">2. Scroll down and tap Add to Home Screen</strong>.
                       </span>
                     </li>
                   </ol>
@@ -243,13 +259,13 @@ export const InstallAppWidget: React.FC<InstallAppWidgetProps> = ({
                   <button
                     type="button"
                     onClick={() => setShowModal(false)}
-                    className="w-full min-h-[42px] rounded-xl border border-white/15 bg-white/[0.05] hover:bg-white/[0.1] text-xs font-bold text-[#F6F2E9] cursor-pointer"
+                    className="w-full min-h-[42px] rounded-xl bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-zinc-950 text-xs font-extrabold hover:brightness-105 cursor-pointer"
                   >
                     Got it
                   </button>
                 </div>
               ) : (
-                <div className="space-y-2.5 text-xs text-[#E8E1D3]">
+                <div className="space-y-3 text-xs text-[#E8E1D3]">
                   {isInAppBrowser && (
                     <div className="space-y-2 pb-1">
                       <p className="leading-relaxed text-[#CFC8B8]">
@@ -286,20 +302,21 @@ export const InstallAppWidget: React.FC<InstallAppWidgetProps> = ({
                     </div>
                   )}
 
-                  <ol className="space-y-2 text-xs text-[#E8E1D3]">
-                    <li className="flex items-center gap-2.5 rounded-xl bg-[#0B0B0F] border border-white/10 p-3">
-                      <MoreVertical className="w-4 h-4 text-amber-300 shrink-0" />
-                      <span>
-                        1. Tap the Chrome{' '}
-                        <strong className="text-[#FCE7A2]">3-dot menu (⋮)</strong> in the top-right
-                        corner.
+                  <ol className="space-y-2.5 text-xs text-[#E8E1D3]">
+                    <li className="flex items-center gap-3 rounded-xl bg-[#09090D] border border-[#D4AF37]/30 p-3">
+                      <div className="w-9 h-9 rounded-lg bg-[#1A160B] border border-[#D4AF37]/50 flex items-center justify-center shrink-0">
+                        <MoreVertical className="w-4 h-4 text-[#FCE7A2]" />
+                      </div>
+                      <span className="leading-relaxed">
+                        <strong className="text-[#FCE7A2]">1. Tap your browser&apos;s top-right menu (⋮)</strong>.
                       </span>
                     </li>
-                    <li className="flex items-center gap-2.5 rounded-xl bg-[#0B0B0F] border border-white/10 p-3">
-                      <PlusSquare className="w-4 h-4 text-amber-300 shrink-0" />
-                      <span>
-                        2. Tap <strong className="text-[#FCE7A2]">Install app</strong> or{' '}
-                        <strong className="text-[#FCE7A2]">Add to Home screen</strong>.
+                    <li className="flex items-center gap-3 rounded-xl bg-[#09090D] border border-[#D4AF37]/30 p-3">
+                      <div className="w-9 h-9 rounded-lg bg-[#1A160B] border border-[#D4AF37]/50 flex items-center justify-center shrink-0">
+                        <PlusSquare className="w-4 h-4 text-[#FCE7A2]" />
+                      </div>
+                      <span className="leading-relaxed">
+                        <strong className="text-[#FCE7A2]">2. Tap Install App or Add to Home Screen</strong>.
                       </span>
                     </li>
                   </ol>
@@ -307,7 +324,7 @@ export const InstallAppWidget: React.FC<InstallAppWidgetProps> = ({
                   <button
                     type="button"
                     onClick={() => setShowModal(false)}
-                    className="w-full min-h-[42px] rounded-xl border border-white/15 bg-white/[0.05] hover:bg-white/[0.1] text-xs font-bold text-[#F6F2E9] cursor-pointer"
+                    className="w-full min-h-[42px] rounded-xl bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-zinc-950 text-xs font-extrabold hover:brightness-105 cursor-pointer"
                   >
                     Got it
                   </button>

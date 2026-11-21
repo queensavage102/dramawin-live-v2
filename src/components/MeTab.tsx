@@ -14,7 +14,6 @@ import {
 } from 'lucide-react';
 import { BRAND_NAME, getEpisodeSeriesId } from '../constants';
 import { DramaEpisode, LeaderboardPlayer, PlayerPrivate } from '../types';
-import { InstallAppWidget } from './InstallAppWidget';
 
 interface MeTabProps {
   player: LeaderboardPlayer;
@@ -207,9 +206,6 @@ export const MeTab: React.FC<MeTabProps> = ({
         </form>
         {nameError && <p className="text-xs text-red-300">{nameError}</p>}
       </section>
-
-      {/* Install DramaWin App (PWA) Widget */}
-      <InstallAppWidget storageKey="dramawin_install_me_dismissed_v1" />
 
       {/* Personal Coin Stats */}
       <section className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
