@@ -43,7 +43,7 @@ export class ErrorBoundary extends React.Component<
         <div className="min-h-screen bg-[#070709] text-[#F6F2E9] flex items-center justify-center p-6">
           <div className="obsidian-card rounded-2xl max-w-md w-full p-6 space-y-4 text-center">
             <h1 className="text-2xl font-display font-bold gold-gradient-text">
-              DRAMA WIN TORNEMENT
+              DRAMA WIN TOURNAMENT
             </h1>
             <p className="text-sm text-[#A69F91] leading-relaxed">{readable}</p>
             <button

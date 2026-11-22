@@ -1,6 +1,6 @@
 import { DramaEpisode, StreakDaySpec, WeekDayKey } from './types';
 
-export const BRAND_NAME = 'DRAMA WIN TORNEMENT';
+export const BRAND_NAME = 'DRAMA WIN TOURNAMENT';
 export const MONETAG_LINK = '[MONETAG_LINK]';
 export const DEFAULT_SPONSOR_URL = MONETAG_LINK;
 
@@ -196,6 +196,13 @@ export function getCanonicalVideoKey(rawUrl?: string): string {
   const yt = extractYouTubeMedia(cleaned);
   if (yt.videoId) return `yt:${yt.videoId}`;
   if (yt.playlistId) return `ytpl:${yt.playlistId}`;
+  const dmId = extractDailymotionVideoId(cleaned);
+  if (dmId) return `dm:${dmId.toLowerCase()}`;
+  const vimeo = extractVimeoVideoId(cleaned);
+  if (vimeo) return `vimeo:${vimeo.id}`;
+  const ia = extractInternetArchiveInfo(cleaned);
+  if (ia?.directFileUrl) return `iafile:${ia.directFileUrl.toLowerCase()}`;
+  if (ia?.identifier) return `ia:${ia.identifier.toLowerCase()}`;
   return cleaned.toLowerCase();
 }
 
@@ -1112,6 +1119,10 @@ export function getDailymotionEmbedUrl(
   const params = new URLSearchParams();
   params.set('autoplay', options?.autoplay === false ? '0' : '1');
   params.set('mute', options?.muted ? '1' : '0');
+  params.set('quality', 'auto');
+  params.set('playsinline', '1');
+  params.set('queue-enable', 'false');
+  params.set('sharing-enable', 'false');
   params.set('api', 'postMessage');
   if (
     typeof options?.startSeconds === 'number' &&
@@ -1122,6 +1133,143 @@ export function getDailymotionEmbedUrl(
   }
 
   return `https://www.dailymotion.com/embed/video/${videoId}?${params.toString()}`;
+}
+
+export function extractVimeoVideoId(rawUrl: string): { id: string; hash?: string } | null {
+  const unwrapped = normalizeYouTubeInput(rawUrl);
+  if (!unwrapped) return null;
+
+  try {
+    const normalized =
+      /^https?:\/\//i.test(unwrapped)
+        ? unwrapped
+        : unwrapped.startsWith('//')
+          ? `https:${unwrapped}`
+          : `https://${unwrapped}`;
+    const parsed = new URL(normalized);
+    const host = parsed.hostname.replace(/^www\./i, '').toLowerCase();
+    if (host !== 'vimeo.com' && host !== 'player.vimeo.com') {
+      return null;
+    }
+
+    const parts = parsed.pathname.split('/').filter(Boolean);
+    const queryHash = parsed.searchParams.get('h') || undefined;
+
+    for (let i = 0; i < parts.length; i += 1) {
+      if (/^\d{5,15}$/.test(parts[i])) {
+        const nextSeg = parts[i + 1];
+        const pathHash =
+          nextSeg && /^[a-f0-9]{6,20}$/i.test(nextSeg) ? nextSeg : undefined;
+        return {
+          id: parts[i],
+          hash: queryHash || pathHash,
+        };
+      }
+    }
+  } catch {
+    const match = unwrapped.match(
+      /(?:vimeo\.com\/(?:video\/|channels\/[^/]+\/|groups\/[^/]+\/videos\/)?|player\.vimeo\.com\/video\/)(\d{5,15})(?:\/([a-f0-9]{6,20}))?/i
+    );
+    if (match?.[1]) {
+      return { id: match[1], hash: match[2] };
+    }
+  }
+
+  return null;
+}
+
+export function getVimeoEmbedUrl(
+  rawUrl: string,
+  options?: { autoplay?: boolean; muted?: boolean; startSeconds?: number }
+): string | null {
+  const vimeo = extractVimeoVideoId(rawUrl);
+  if (!vimeo) return null;
+
+  const params = new URLSearchParams();
+  if (vimeo.hash) {
+    params.set('h', vimeo.hash);
+  }
+  params.set('autoplay', options?.autoplay === false ? '0' : '1');
+  params.set('muted', options?.muted ? '1' : '0');
+  params.set('playsinline', '1');
+  params.set('dnt', '1');
+  params.set('title', '0');
+  params.set('byline', '0');
+  params.set('portrait', '0');
+  params.set('api', '1');
+
+  const timeFragment =
+    typeof options?.startSeconds === 'number' &&
+    Number.isFinite(options.startSeconds) &&
+    options.startSeconds > 0
+      ? `#t=${Math.floor(options.startSeconds)}s`
+      : '';
+
+  return `https://player.vimeo.com/video/${vimeo.id}?${params.toString()}${timeFragment}`;
+}
+
+export function extractInternetArchiveInfo(rawUrl: string): {
+  identifier: string | null;
+  embedUrl: string | null;
+  directFileUrl: string | null;
+} | null {
+  const unwrapped = normalizeYouTubeInput(rawUrl);
+  if (!unwrapped) return null;
+  try {
+    const normalized =
+      /^https?:\/\//i.test(unwrapped)
+        ? unwrapped
+        : unwrapped.startsWith('//')
+          ? `https:${unwrapped}`
+          : `https://${unwrapped}`;
+    const parsed = new URL(normalized);
+    const host = parsed.hostname.replace(/^www\./i, '').toLowerCase();
+    if (host !== 'archive.org' && !host.endsWith('.archive.org')) {
+      return null;
+    }
+
+    const parts = parsed.pathname.split('/').filter(Boolean);
+    const action = (parts[0] || '').toLowerCase();
+    const identifier = parts[1] ? decodeURIComponent(parts[1]) : null;
+    if (!identifier) return null;
+
+    if (action === 'download' || action === 'serve') {
+      const hasMediaExt = /\.(mp4|m3u8|webm|ogg|mov|m4v)(\?|#|$)/i.test(parsed.pathname);
+      return {
+        identifier,
+        embedUrl: `https://archive.org/embed/${encodeURIComponent(identifier)}`,
+        directFileUrl: hasMediaExt ? parsed.toString() : null,
+      };
+    }
+
+    if (action === 'details' || action === 'embed') {
+      if (parts.length >= 3 && /\.(mp4|m3u8|webm|ogg|mov|m4v)$/i.test(parts[parts.length - 1])) {
+        const fileRest = parts.slice(1).join('/');
+        return {
+          identifier,
+          embedUrl: `https://archive.org/embed/${encodeURIComponent(identifier)}`,
+          directFileUrl: `https://archive.org/download/${fileRest}`,
+        };
+      }
+      return {
+        identifier,
+        embedUrl: `https://archive.org/embed/${encodeURIComponent(identifier)}`,
+        directFileUrl: null,
+      };
+    }
+  } catch {
+    // Ignore parse failure
+  }
+  return null;
+}
+
+export function getInternetArchiveEmbedUrl(
+  rawUrl: string,
+  options?: { autoplay?: boolean }
+): string | null {
+  const info = extractInternetArchiveInfo(rawUrl);
+  if (!info || info.directFileUrl || !info.embedUrl) return null;
+  return options?.autoplay === false ? info.embedUrl : `${info.embedUrl}?autoplay=1`;
 }
 
 export function getBunnyEmbedUrl(rawUrl: string): string | null {
@@ -1172,12 +1320,37 @@ export function isDirectVideoStreamUrl(rawUrl?: string): boolean {
   return false;
 }
 
-export type VideoSourceKind = 'youtube' | 'dailymotion' | 'direct' | 'iframe' | 'empty';
+export type VideoSourceKind =
+  | 'youtube'
+  | 'dailymotion'
+  | 'vimeo'
+  | 'direct'
+  | 'iframe'
+  | 'empty';
 
 export interface ResolvedVideoSource {
   kind: VideoSourceKind;
   url: string;
   rawUrl: string;
+}
+
+export function describeVideoSourceLabel(rawInput?: string): string {
+  const cleaned = sanitizeMediaUrl(rawInput);
+  if (!cleaned) return 'No Video';
+  if (cleaned.startsWith('idb://')) return 'Uploaded Video';
+  if (extractYouTubePlaylistId(cleaned)) return 'YouTube Playlist';
+  if (extractYouTubeId(cleaned)) return 'YouTube Video';
+  if (extractDailymotionVideoId(cleaned)) return 'Dailymotion';
+  if (extractVimeoVideoId(cleaned)) return 'Vimeo';
+  const ia = extractInternetArchiveInfo(cleaned);
+  if (ia) {
+    return ia.directFileUrl ? 'Internet Archive MP4' : 'Internet Archive';
+  }
+  if (getBunnyEmbedUrl(cleaned)) return 'Bunny Stream';
+  if (isDirectVideoStreamUrl(cleaned)) {
+    return /\.m3u8(\?|#|$)/i.test(cleaned) ? 'HLS Stream (.m3u8)' : 'Direct MP4 / Stream';
+  }
+  return 'External Embed';
 }
 
 export function resolveVideoSource(
@@ -1202,24 +1375,42 @@ export function resolveVideoSource(
     return { kind: 'empty', url: '', rawUrl: cleaned };
   }
 
-  // 2) Dailymotion (dailymotion.com/video/... or dai.ly/... -> https://www.dailymotion.com/embed/video/...)
+  // 2) Dailymotion (dailymotion.com/video/... or dai.ly/... -> https://www.dailymotion.com/embed/video/... with quality=auto)
   const dmEmbed = getDailymotionEmbedUrl(cleaned, options);
   if (dmEmbed) {
     return { kind: 'dailymotion', url: dmEmbed, rawUrl: cleaned };
   }
 
-  // 3) Bunny Stream HTML embed page (iframe.mediadelivery.net/embed|play/... or video.bunnycdn.com/play/...)
+  // 3) Vimeo (vimeo.com/... or player.vimeo.com/video/... -> https://player.vimeo.com/video/...)
+  const vimeoEmbed = getVimeoEmbedUrl(cleaned, options);
+  if (vimeoEmbed) {
+    return { kind: 'vimeo', url: vimeoEmbed, rawUrl: cleaned };
+  }
+
+  // 4) Internet Archive direct .mp4/.m3u8 file or embed page
+  const iaInfo = extractInternetArchiveInfo(cleaned);
+  if (iaInfo) {
+    if (iaInfo.directFileUrl) {
+      return { kind: 'direct', url: iaInfo.directFileUrl, rawUrl: cleaned };
+    }
+    const iaEmbed = getInternetArchiveEmbedUrl(cleaned, options);
+    if (iaEmbed) {
+      return { kind: 'iframe', url: iaEmbed, rawUrl: cleaned };
+    }
+  }
+
+  // 5) Bunny Stream HTML embed page (iframe.mediadelivery.net/embed|play/... or video.bunnycdn.com/play/...)
   const bunnyEmbed = getBunnyEmbedUrl(cleaned);
   if (bunnyEmbed) {
     return { kind: 'iframe', url: bunnyEmbed, rawUrl: cleaned };
   }
 
-  // 4) Direct .mp4 / .m3u8 / Bunny Stream CDN / local idb/blob video URL
+  // 6) Direct .mp4 / .m3u8 / Bunny Stream CDN / local idb/blob video URL -> native HTML5 <video>
   if (isDirectVideoStreamUrl(cleaned)) {
     return { kind: 'direct', url: cleaned, rawUrl: cleaned };
   }
 
-  // 5) Any other external embeddable URL
+  // 7) Any other external embeddable URL
   return { kind: 'iframe', url: cleaned, rawUrl: cleaned };
 }
 

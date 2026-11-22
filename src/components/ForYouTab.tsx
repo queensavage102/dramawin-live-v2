@@ -21,15 +21,12 @@ import {
   DEFAULT_SPONSOR_URL,
   DEFAULT_VIDEO_START_SECONDS,
   getEpisodeSeriesId,
-  getYouTubeFallbackThumbnailUrl,
   inferEpisodeCategory,
   normalizeEpisodeStartSeconds,
   resolveVideoSource,
   sanitizeMediaUrl,
-  sanitizePosterUrl,
 } from '../constants';
 import { DramaEpisode, PlayerPrivate } from '../types';
-import { resolveEpisodeCover } from '../utils/localState';
 import { useResolvedMediaUrl } from '../utils/mediaStore';
 import { DoubleRewardModal } from './DoubleRewardModal';
 import { EpisodeWatchScreen } from './EpisodeWatchScreen';
@@ -37,9 +34,14 @@ import { IsolatedHtml5Video, IsolatedYouTubeIframe } from './IsolatedYouTubeIfra
 
 const FORYOU_YOUTUBE_ALLOW =
   'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
-const FORYOU_IFRAME_CLASS =
-  'pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[max(100%,177.78dvh)] h-[max(100dvh,56.25vw)] border-0 block';
-const FORYOU_VIDEO_CLASS = 'pointer-events-none w-full h-full object-cover';
+const FORYOU_IFRAME_FIT_CLASS =
+  'pointer-events-none absolute inset-0 w-full h-full border-0 block bg-[#060608] transition-all duration-300 ease-out';
+const FORYOU_IFRAME_ZOOM_CLASS =
+  'pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[max(100cqw,177.78cqh)] h-[max(100cqh,56.25cqw)] border-0 block bg-[#060608] transition-all duration-300 ease-out';
+const FORYOU_VIDEO_FIT_CLASS =
+  'pointer-events-none w-full h-full object-contain bg-[#060608] transition-all duration-300 ease-out';
+const FORYOU_VIDEO_ZOOM_CLASS =
+  'pointer-events-none w-full h-full object-cover bg-[#060608] transition-all duration-300 ease-out';
 
 interface ForYouTabProps {
   episodes: DramaEpisode[];
@@ -90,6 +92,19 @@ function postDailymotionCommand(
   }
 }
 
+function postVimeoCommand(
+  iframe: HTMLIFrameElement | null,
+  method: string,
+  value?: unknown
+) {
+  try {
+    const payload = value === undefined ? { method } : { method, value };
+    iframe?.contentWindow?.postMessage(JSON.stringify(payload), '*');
+  } catch {
+    // Ignore cross-origin postMessage restrictions
+  }
+}
+
 export const ForYouTab: React.FC<ForYouTabProps> = ({
   episodes,
   privateState,
@@ -110,6 +125,7 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
 }) => {
   const [activeIndex, setActiveIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(true);
+  const [isZoomed, setIsZoomed] = useState(false);
   const [ringProgress, setRingProgress] = useState(0);
   const [rewardModalOpen, setRewardModalOpen] = useState(false);
   const [drawerSeriesId, setDrawerSeriesId] = useState<string | null>(null);
@@ -208,23 +224,6 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
     videoSource.kind === 'direct' ? videoSource.url : ''
   );
 
-  const fallbackCoverUrl = useResolvedMediaUrl(
-    currentEpisode ? resolveEpisodeCover(currentEpisode) : ''
-  );
-  const sanitizedPoster = sanitizePosterUrl(fallbackCoverUrl);
-  const posterHqFallback =
-    sanitizePosterUrl(getYouTubeFallbackThumbnailUrl(sanitizedPoster || rawVideoUrl) || '') || '';
-  const [usePosterHqFallback, setUsePosterHqFallback] = useState(false);
-  const [posterHidden, setPosterHidden] = useState(false);
-
-  useEffect(() => {
-    setUsePosterHqFallback(false);
-    setPosterHidden(false);
-  }, [sanitizedPoster, posterHqFallback, currentEpisode?.id]);
-
-  const activeBackdropPoster =
-    usePosterHqFallback && posterHqFallback ? posterHqFallback : sanitizedPoster || posterHqFallback;
-
   useEffect(() => {
     clearRecoveryTimers();
     savedTimeRef.current = 0;
@@ -273,6 +272,12 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
         postDailymotionCommand(iframeRef.current, 'muted', [mutedRef.current]);
         if (!isPlayingRef.current) {
           postDailymotionCommand(iframeRef.current, 'pause');
+        }
+      } else if (sourceKindRef.current === 'vimeo') {
+        postVimeoCommand(iframeRef.current, 'setMuted', mutedRef.current);
+        postVimeoCommand(iframeRef.current, 'setVolume', mutedRef.current ? 0 : 1);
+        if (!isPlayingRef.current) {
+          postVimeoCommand(iframeRef.current, 'pause');
         }
       }
     } catch {
@@ -397,6 +402,8 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
       postYouTubeCommand(iframeRef.current, isPlaying ? 'playVideo' : 'pauseVideo');
     } else if (videoSource.kind === 'dailymotion') {
       postDailymotionCommand(iframeRef.current, isPlaying ? 'play' : 'pause');
+    } else if (videoSource.kind === 'vimeo') {
+      postVimeoCommand(iframeRef.current, isPlaying ? 'play' : 'pause');
     }
 
     if (videoRef.current) {
@@ -438,6 +445,9 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
       }
     } else if (videoSource.kind === 'dailymotion') {
       postDailymotionCommand(iframeRef.current, 'muted', [muted]);
+    } else if (videoSource.kind === 'vimeo') {
+      postVimeoCommand(iframeRef.current, 'setMuted', muted);
+      postVimeoCommand(iframeRef.current, 'setVolume', muted ? 0 : 1);
     }
     if (videoRef.current) {
       videoRef.current.muted = muted;
@@ -682,44 +692,13 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
           if (diff > 55) handleNext();
           else if (diff < -55) handlePrev();
         }}
-        className="fixed inset-0 z-[35] h-screen h-[100dvh] w-full overflow-hidden bg-black select-none"
+        className="fixed inset-0 z-[35] h-screen h-[100dvh] w-full overflow-hidden bg-[#060608] select-none"
       >
-        {/* Background fallback poster */}
-        {activeBackdropPoster && !posterHidden && (
-          <img
-            key={activeBackdropPoster}
-            src={activeBackdropPoster}
-            alt=""
-            aria-hidden="true"
-            referrerPolicy="no-referrer"
-            onLoad={(e) => {
-              if (
-                activeBackdropPoster.includes('/maxresdefault.jpg') &&
-                e.currentTarget.naturalWidth > 0 &&
-                e.currentTarget.naturalWidth <= 120
-              ) {
-                if (!usePosterHqFallback && posterHqFallback && activeBackdropPoster !== posterHqFallback) {
-                  setUsePosterHqFallback(true);
-                } else {
-                  setPosterHidden(true);
-                }
-              }
-            }}
-            onError={() => {
-              if (!usePosterHqFallback && posterHqFallback && activeBackdropPoster !== posterHqFallback) {
-                setUsePosterHqFallback(true);
-              } else {
-                setPosterHidden(true);
-              }
-            }}
-            className="absolute inset-0 w-full h-full object-cover opacity-30 blur-md scale-110 pointer-events-none"
-          />
-        )}
-
-        {/* Video Frame Layer — pointer-events-none blocks accidental external taps completely */}
-        <div className="absolute inset-0 w-full h-full bg-black overflow-hidden">
+        {/* Video Frame Layer — Cinema Fit (object-contain) default with sleek dark canvas; pointer-events-none blocks accidental external taps */}
+        <div className="absolute inset-0 w-full h-full bg-[#060608] overflow-hidden [container-type:size]">
           {videoSource.kind === 'youtube' ||
           videoSource.kind === 'dailymotion' ||
+          videoSource.kind === 'vimeo' ||
           videoSource.kind === 'iframe' ? (
             <IsolatedYouTubeIframe
               iframeRef={iframeRef}
@@ -729,7 +708,7 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
               onLoad={handleIframeLoad}
               referrerPolicy="strict-origin-when-cross-origin"
               allow={FORYOU_YOUTUBE_ALLOW}
-              className={FORYOU_IFRAME_CLASS}
+              className={isZoomed ? FORYOU_IFRAME_ZOOM_CLASS : FORYOU_IFRAME_FIT_CLASS}
             />
           ) : videoSource.kind === 'direct' && resolvedMediaUrl ? (
             <IsolatedHtml5Video
@@ -748,10 +727,10 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
               onStalled={handleVideoWaitingOrStalled}
               onError={handleVideoError}
               onPause={handleVideoPause}
-              className={FORYOU_VIDEO_CLASS}
+              className={isZoomed ? FORYOU_VIDEO_ZOOM_CLASS : FORYOU_VIDEO_FIT_CLASS}
             />
           ) : (
-            <div className="flex flex-col items-center justify-center p-6 text-center gap-3">
+            <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center gap-3 bg-[#060608]">
               <Film className="w-10 h-10 text-amber-400" />
               <p className="text-xs text-zinc-400">Video ready in /admin</p>
             </div>
@@ -809,14 +788,26 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
           className="pointer-events-none absolute inset-x-0 bottom-0 h-56 bg-gradient-to-t from-black/95 via-black/65 to-transparent z-10"
         />
 
-        {/* Top Bar Inside Player: Feed Tag + Prev/Next + Sound Toggle */}
-        <div className="absolute top-0 inset-x-0 z-20 bg-gradient-to-b from-[#09090b] via-[#09090b]/95 to-transparent px-3 pt-[max(0.75rem,env(safe-area-inset-top))] pb-6 flex items-center justify-between gap-2">
-          <div className="inline-flex items-center gap-1.5 rounded-full bg-black/55 backdrop-blur-md border border-white/15 px-3 py-1 text-[11px] font-semibold text-white">
-            <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-            <span>For You</span>
-            <span className="text-zinc-400 font-mono-num">
-              {activeIndex + 1}/{episodes.length}
-            </span>
+        {/* Top Bar Inside Player: Feed Tag + Corner Fit/Zoom Toggle + Prev/Next + Sound Toggle */}
+        <div className="absolute top-0 inset-x-0 z-20 bg-gradient-to-b from-[#09090b] via-[#09090b]/95 to-transparent px-3 pt-[max(0.75rem,env(safe-area-inset-top))] pb-6 flex items-start justify-between gap-2">
+          <div className="flex flex-col items-start gap-1.5">
+            <div className="inline-flex items-center gap-1.5 rounded-full bg-black/55 backdrop-blur-md border border-white/15 px-3 py-1 text-[11px] font-semibold text-white">
+              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+              <span>For You</span>
+              <span className="text-zinc-400 font-mono-num">
+                {activeIndex + 1}/{episodes.length}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsZoomed((prev) => !prev)}
+              aria-pressed={isZoomed}
+              aria-label={isZoomed ? 'Switch to Cinema Fit' : 'Switch to Zoomed full screen'}
+              className="px-2.5 py-1 rounded-full bg-[#0D0A05]/90 hover:bg-[#17130A] backdrop-blur-md border border-[#D4AF37]/60 text-[11px] font-bold text-[#FCE7A2] inline-flex items-center gap-1 shadow-[0_4px_14px_rgba(0,0,0,0.75)] transition cursor-pointer"
+            >
+              <span aria-hidden="true" className="text-[#D4AF37] leading-none">⛶</span>
+              <span>{isZoomed ? 'Zoom · Fit' : 'Fit / Zoom'}</span>
+            </button>
           </div>
 
           <div className="flex flex-col items-end gap-1.5">

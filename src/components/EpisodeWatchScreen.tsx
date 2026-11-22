@@ -200,6 +200,19 @@ function postDailymotionCommand(
   }
 }
 
+function postVimeoCommand(
+  iframe: HTMLIFrameElement | null,
+  method: string,
+  value?: unknown
+) {
+  try {
+    const payload = value === undefined ? { method } : { method, value };
+    iframe?.contentWindow?.postMessage(JSON.stringify(payload), '*');
+  } catch {
+    // Ignore cross-origin postMessage restrictions
+  }
+}
+
 const MAX_VIDEO_RETRIES = 3;
 
 const YOUTUBE_IFRAME_ALLOW =
@@ -384,6 +397,8 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(({
       postYouTubeCommand(iframeRef.current, paused ? 'pauseVideo' : 'playVideo');
     } else if (videoSource.kind === 'dailymotion') {
       postDailymotionCommand(iframeRef.current, paused ? 'pause' : 'play');
+    } else if (videoSource.kind === 'vimeo') {
+      postVimeoCommand(iframeRef.current, paused ? 'pause' : 'play');
     }
 
     if (videoRef.current) {
@@ -427,6 +442,9 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(({
       }
     } else if (videoSource.kind === 'dailymotion') {
       postDailymotionCommand(iframeRef.current, 'muted', [muted]);
+    } else if (videoSource.kind === 'vimeo') {
+      postVimeoCommand(iframeRef.current, 'setMuted', muted);
+      postVimeoCommand(iframeRef.current, 'setVolume', muted ? 0 : 1);
     }
     if (videoRef.current) {
       videoRef.current.muted = muted;
@@ -525,6 +543,9 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(({
         }
       } else if (sourceKindRef.current === 'dailymotion') {
         postDailymotionCommand(iframeRef.current, 'muted', [mutedRef.current]);
+      } else if (sourceKindRef.current === 'vimeo') {
+        postVimeoCommand(iframeRef.current, 'setMuted', mutedRef.current);
+        postVimeoCommand(iframeRef.current, 'setVolume', mutedRef.current ? 0 : 1);
       }
     } catch {
       // Ignore cross-origin postMessage restrictions
@@ -627,12 +648,12 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(({
     onVideoEndedRef.current?.();
   }, [clearRecoveryTimers]);
 
-  const iframeClassName = `absolute inset-0 w-full h-full border-0 block pointer-events-auto transition-transform duration-300 ease-out origin-center ${
-    zoomed ? 'object-cover scale-[1.95]' : 'object-contain scale-100'
-  }`;
+  const iframeClassName = zoomed
+    ? 'absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[max(100cqw,177.78cqh)] h-[max(100cqh,56.25cqw)] border-0 block pointer-events-auto bg-[#060608] transition-all duration-300 ease-out'
+    : 'absolute inset-0 w-full h-full border-0 block pointer-events-auto bg-[#060608] transition-all duration-300 ease-out';
 
-  const directVideoClassName = `absolute inset-0 w-full h-full bg-black transition-transform duration-300 ease-out origin-center ${
-    zoomed ? 'object-cover scale-[1.95]' : 'object-contain scale-100'
+  const directVideoClassName = `absolute inset-0 w-full h-full bg-[#060608] transition-all duration-300 ease-out ${
+    zoomed ? 'object-cover' : 'object-contain'
   }`;
 
   const recoveryOverlay = (isRecovering || recoveryFailed) && (
@@ -658,6 +679,7 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(({
   if (
     videoSource.kind === 'youtube' ||
     videoSource.kind === 'dailymotion' ||
+    videoSource.kind === 'vimeo' ||
     videoSource.kind === 'iframe'
   ) {
     return (
@@ -705,11 +727,11 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(({
   }
 
   return (
-    <div className="absolute inset-0 w-full h-full flex flex-col items-center justify-center p-6 text-center gap-3 bg-[#08080B]">
+    <div className="absolute inset-0 w-full h-full flex flex-col items-center justify-center p-6 text-center gap-3 bg-[#060608]">
       <Film className="w-10 h-10 text-[#D4AF37]" />
       <p className="text-sm text-[#C4BDB0] max-w-sm">
-        Paste a YouTube link, Dailymotion link (<span className="font-mono text-[#FCE7A2]">dai.ly/...</span>), or direct{' '}
-        <span className="font-mono text-[#FCE7A2]">.mp4 / .m3u8</span> / Bunny Stream URL in{' '}
+        Paste a YouTube, Dailymotion (<span className="font-mono text-[#FCE7A2]">dai.ly</span>), Vimeo, Internet Archive, or direct{' '}
+        <span className="font-mono text-[#FCE7A2]">.mp4 / .m3u8</span> URL in{' '}
         <span className="font-mono text-[#FCE7A2]">/admin → Series Watch Sheet</span>.
       </p>
     </div>
@@ -742,7 +764,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
   const [barPulse, setBarPulse] = useState(false);
   const [flyingBurst, setFlyingBurst] = useState<{ id: number; amount: number } | null>(null);
   const [isExpandedFull, setIsExpandedFull] = useState(false);
-  const [isZoomed, setIsZoomed] = useState(true);
+  const [isZoomed, setIsZoomed] = useState(false);
   const [videoReloadNonce, setVideoReloadNonce] = useState(0);
 
   const playerContainerRef = useRef<HTMLDivElement | null>(null);
@@ -781,7 +803,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
     rewardModalOpenRef.current = false;
     setRewardModalOpen(false);
     setRingProgress(0);
-    setIsZoomed(true);
+    setIsZoomed(false);
     setVideoReloadNonce(0);
   }, [episode.id]);
 
@@ -996,12 +1018,12 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
                   type="button"
                   onClick={() => setIsZoomed((prev) => !prev)}
                   aria-pressed={isZoomed}
-                  aria-label={isZoomed ? 'Zoomed full-screen — tap to switch to Fit' : 'Standard Fit — tap to Zoom'}
-                  title={isZoomed ? 'Zoomed (1.95x) — tap for Fit' : 'Fit — tap for Zoom'}
+                  aria-label={isZoomed ? 'Zoomed full-screen — tap for Cinema Fit' : 'Cinema Fit — tap for Zoom'}
+                  title={isZoomed ? 'Zoomed full-screen — tap for Cinema Fit' : 'Cinema Fit — tap for Zoom'}
                   className={`min-h-[34px] sm:min-h-[36px] px-2 sm:px-2.5 rounded-xl border text-[11px] sm:text-xs font-semibold inline-flex items-center gap-1 sm:gap-1.5 transition-colors whitespace-nowrap cursor-pointer ${
                     isZoomed
-                      ? 'border-[#D4AF37]/45 bg-[#17130A] text-[#FCE7A2]'
-                      : 'border-white/[0.14] text-[#A69F91] hover:text-[#F6F2E9]'
+                      ? 'border-[#D4AF37]/60 bg-[#17130A] text-[#FCE7A2]'
+                      : 'border-[#D4AF37]/30 bg-[#0D0D13] text-[#E8C96D] hover:border-[#D4AF37]/60'
                   }`}
                 >
                   {isZoomed ? (
@@ -1011,7 +1033,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
                     </>
                   ) : (
                     <>
-                      <Scan className="w-3.5 h-3.5" />
+                      <Scan className="w-3.5 h-3.5 text-[#D4AF37]" />
                       <span>Fit / Zoom</span>
                     </>
                   )}
@@ -1114,7 +1136,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
         </header>
 
         {/* Upper Video Container */}
-        <div className="flex-1 min-h-0 relative w-full bg-[#09090b] overflow-hidden">
+        <div className="flex-1 min-h-0 relative w-full bg-[#060608] overflow-hidden [container-type:size]">
           <WatchVideoStage
             episode={episode}
             zoomed={isZoomed}
@@ -1126,15 +1148,27 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
             onVideoEnded={handleVideoEnded}
           />
 
-          {/* Subtle mobile buffering recovery button near top player controls */}
+          {/* Subtle mobile buffering recovery button near top-left player corner */}
           <button
             type="button"
             onClick={() => setVideoReloadNonce((prev) => prev + 1)}
             aria-label="Buffering? Reload Video"
-            className="absolute top-2.5 left-2.5 z-30 px-2.5 py-1 rounded-full bg-black/55 hover:bg-black/80 border border-white/15 text-[10px] font-medium text-zinc-300 hover:text-amber-200 backdrop-blur-sm inline-flex items-center gap-1 transition cursor-pointer"
+            className="absolute top-2.5 left-2.5 z-30 px-2.5 py-1 rounded-full bg-black/65 hover:bg-black/85 border border-white/15 text-[10px] font-medium text-zinc-300 hover:text-amber-200 backdrop-blur-sm inline-flex items-center gap-1 transition cursor-pointer"
           >
             <RotateCcw className="w-2.5 h-2.5" />
             <span>Buffering? Reload Video</span>
+          </button>
+
+          {/* Compact dark-and-gold corner ⛶ Fit / Zoom screen toggle */}
+          <button
+            type="button"
+            onClick={() => setIsZoomed((prev) => !prev)}
+            aria-pressed={isZoomed}
+            aria-label={isZoomed ? 'Switch to Cinema Fit' : 'Switch to Zoomed full screen'}
+            className="absolute top-2.5 right-2.5 z-30 px-2.5 py-1 rounded-full bg-[#0D0A05]/90 hover:bg-[#17130A] border border-[#D4AF37]/60 text-[11px] font-bold text-[#FCE7A2] backdrop-blur-sm inline-flex items-center gap-1 shadow-[0_4px_14px_rgba(0,0,0,0.75)] transition cursor-pointer"
+          >
+            <span aria-hidden="true" className="text-[#D4AF37] leading-none">⛶</span>
+            <span>{isZoomed ? 'Zoom · Fit' : 'Fit / Zoom'}</span>
           </button>
 
           {/* Bottom gradient overlay hiding YouTube's bottom watermark/logo + displaying episode title */}

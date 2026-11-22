@@ -34,7 +34,7 @@ export const IsolatedYouTubeIframe = React.memo<IsolatedYouTubeIframeProps>(
         referrerPolicy={referrerPolicy}
         allow={allow}
         allowFullScreen={allowFullScreen}
-        className={className}
+        className={`${className} transform-gpu`}
       />
     );
   }
@@ -103,7 +103,7 @@ export const IsolatedHtml5Video = React.memo<IsolatedHtml5VideoProps>(
         onError={onError}
         onPause={onPause}
         onEnded={onEnded}
-        className={className}
+        className={`${className} transform-gpu`}
       />
     );
   }

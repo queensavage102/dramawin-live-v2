@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { BRAND_NAME } from '../constants';
-import { RealisticGoldCoin } from './RealisticGoldCoin';
 
 interface VipSplashScreenProps {
   onComplete: () => void;
@@ -8,42 +7,67 @@ interface VipSplashScreenProps {
 
 const SPLASH_DURATION_MS = 2500;
 
-interface FloatingCoinSpec {
+interface GoldDustSpec {
   id: number;
   leftPct: number;
   topPct: number;
   sizePx: number;
   delayMs: number;
   durationMs: number;
-  emblem: '$' | '★';
+  isStar?: boolean;
 }
 
-// Positioned strictly along outer edges (48px-64px) so no coin ever crosses the center text layer
-const FLOATING_COINS: FloatingCoinSpec[] = [
-  { id: 1, leftPct: 2, topPct: 80, sizePx: 64, delayMs: 0, durationMs: 3400, emblem: '$' },
-  { id: 2, leftPct: 6, topPct: 54, sizePx: 52, delayMs: 420, durationMs: 3600, emblem: '★' },
-  { id: 3, leftPct: 3, topPct: 26, sizePx: 56, delayMs: 800, durationMs: 3200, emblem: '$' },
-  { id: 4, leftPct: 10, topPct: 10, sizePx: 48, delayMs: 250, durationMs: 3500, emblem: '★' },
-  { id: 5, leftPct: 82, topPct: 12, sizePx: 48, delayMs: 620, durationMs: 3350, emblem: '$' },
-  { id: 6, leftPct: 86, topPct: 30, sizePx: 58, delayMs: 180, durationMs: 3250, emblem: '★' },
-  { id: 7, leftPct: 84, topPct: 58, sizePx: 54, delayMs: 520, durationMs: 3550, emblem: '$' },
-  { id: 8, leftPct: 86, topPct: 82, sizePx: 64, delayMs: 90, durationMs: 3300, emblem: '★' },
-  { id: 9, leftPct: 16, topPct: 88, sizePx: 50, delayMs: 340, durationMs: 3150, emblem: '★' },
-  { id: 10, leftPct: 72, topPct: 88, sizePx: 52, delayMs: 710, durationMs: 3250, emblem: '$' },
+// Subtle ambient floating gold dust & cinema sparkle specks (container at opacity: 0.3)
+const GOLD_DUST_PARTICLES: GoldDustSpec[] = [
+  { id: 1, leftPct: 14, topPct: 24, sizePx: 3, delayMs: 0, durationMs: 4200 },
+  { id: 2, leftPct: 26, topPct: 18, sizePx: 6, delayMs: 450, durationMs: 4600, isStar: true },
+  { id: 3, leftPct: 38, topPct: 32, sizePx: 2.5, delayMs: 900, durationMs: 3900 },
+  { id: 4, leftPct: 51, topPct: 15, sizePx: 3.5, delayMs: 250, durationMs: 4400 },
+  { id: 5, leftPct: 64, topPct: 28, sizePx: 6, delayMs: 700, durationMs: 4700, isStar: true },
+  { id: 6, leftPct: 78, topPct: 20, sizePx: 3, delayMs: 180, durationMs: 4100 },
+  { id: 7, leftPct: 86, topPct: 36, sizePx: 2.5, delayMs: 1100, durationMs: 4500 },
+  { id: 8, leftPct: 19, topPct: 48, sizePx: 2.5, delayMs: 600, durationMs: 4300 },
+  { id: 9, leftPct: 82, topPct: 52, sizePx: 3, delayMs: 320, durationMs: 4000 },
+  { id: 10, leftPct: 12, topPct: 72, sizePx: 6, delayMs: 820, durationMs: 4600, isStar: true },
+  { id: 11, leftPct: 29, topPct: 84, sizePx: 3, delayMs: 140, durationMs: 4100 },
+  { id: 12, leftPct: 46, topPct: 78, sizePx: 2.5, delayMs: 960, durationMs: 4300 },
+  { id: 13, leftPct: 68, topPct: 82, sizePx: 3.5, delayMs: 520, durationMs: 4500 },
+  { id: 14, leftPct: 85, topPct: 74, sizePx: 6, delayMs: 260, durationMs: 4400, isStar: true },
+  { id: 15, leftPct: 34, topPct: 60, sizePx: 2, delayMs: 760, durationMs: 3900 },
+  { id: 16, leftPct: 62, topPct: 62, sizePx: 2.5, delayMs: 410, durationMs: 4200 },
 ];
+
+const SPLASH_REWARDS_BOXES = [
+  {
+    title: '🎬 HD Dramas',
+    subtitle: 'Watch & Earn',
+  },
+  {
+    title: '🎡 Daily Spin',
+    subtitle: 'Win 1,000 Coins',
+  },
+  {
+    title: '🏆 Sunday Pool',
+    subtitle: 'Top 3 Win Big',
+  },
+] as const;
 
 const LuxuryMetallicCrown: React.FC = () => (
   <div className="relative flex items-center justify-center">
-    {/* Soft pulsing radial golden light behind the crown */}
+    {/* Soft radial golden cinema spotlight aura behind the crown */}
     <div
       aria-hidden="true"
-      className="vip-crown-halo pointer-events-none absolute -inset-12 rounded-full bg-[radial-gradient(circle,rgba(255,236,158,0.48)_0%,rgba(212,175,55,0.22)_42%,transparent_72%)] blur-xl"
+      className="pointer-events-none absolute -inset-24 rounded-full bg-[radial-gradient(circle,rgba(252,231,162,0.28)_0%,rgba(212,175,55,0.12)_38%,transparent_72%)] blur-2xl"
+    />
+    <div
+      aria-hidden="true"
+      className="vip-crown-halo pointer-events-none absolute -inset-12 rounded-full bg-[radial-gradient(circle,rgba(255,241,176,0.52)_0%,rgba(212,175,55,0.24)_42%,transparent_74%)] blur-xl"
     />
     <svg
       width={110}
       height={110}
       viewBox="0 0 120 120"
-      className="relative z-10 w-[110px] h-[110px] drop-shadow-[0_0_28px_rgba(252,231,162,0.85)]"
+      className="relative z-10 w-[102px] h-[102px] sm:w-[112px] sm:h-[112px] drop-shadow-[0_0_30px_rgba(252,231,162,0.88)]"
       aria-hidden="true"
     >
       <defs>
@@ -97,14 +121,8 @@ const LuxuryMetallicCrown: React.FC = () => (
       />
 
       {/* Specular highlight facets along the front crown ridges */}
-      <path
-        d="M60 26 L49 60 L60 76 L71 60 Z"
-        fill="rgba(255,252,226,0.28)"
-      />
-      <path
-        d="M15 43 L24 79 L36 62 Z"
-        fill="rgba(255,250,214,0.2)"
-      />
+      <path d="M60 26 L49 60 L60 76 L71 60 Z" fill="rgba(255,252,226,0.28)" />
+      <path d="M15 43 L24 79 L36 62 Z" fill="rgba(255,250,214,0.2)" />
 
       {/* Ornate metallic base collar & velvet shadow groove */}
       <rect
@@ -117,14 +135,7 @@ const LuxuryMetallicCrown: React.FC = () => (
         stroke="#FFF5BD"
         strokeWidth="1.4"
       />
-      <rect
-        x="21"
-        y="83"
-        width="78"
-        height="4.5"
-        rx="2.2"
-        fill="rgba(90,56,4,0.38)"
-      />
+      <rect x="21" y="83" width="78" height="4.5" rx="2.2" fill="rgba(90,56,4,0.38)" />
       <rect
         x="15"
         y="92"
@@ -200,47 +211,84 @@ export const VipSplashScreen: React.FC<VipSplashScreenProps> = ({ onComplete }) 
       role="status"
       aria-live="polite"
       aria-label={`Loading ${BRAND_NAME}`}
-      className={`fixed inset-0 z-[100] bg-[#070709] text-[#F6F2E9] overflow-hidden flex flex-col items-center justify-center px-6 transition-opacity duration-200 ${
+      className={`fixed inset-0 z-[100] bg-[#060608] text-[#F6F2E9] overflow-hidden flex flex-col items-center justify-center px-5 transition-opacity duration-200 ${
         fadingOut ? 'opacity-0 pointer-events-none' : 'opacity-100'
       }`}
     >
-      {/* Subtle radial gold spotlight */}
+      {/* Luxury VIP Cinema Theatrical Radial Golden Spotlight Aura */}
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_40%,rgba(212,175,55,0.24)_0%,rgba(212,175,55,0.06)_44%,transparent_74%)]"
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_50%_34%,rgba(243,211,122,0.22)_0%,rgba(212,175,55,0.09)_32%,rgba(120,88,18,0.03)_56%,transparent_78%)]"
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_50%,transparent_48%,rgba(0,0,0,0.78)_100%)]"
       />
 
-      {/* Rich 3D Photorealistic Gold Coins strictly on z-0 outer-edge background layer */}
+      {/* Subtle Floating Gold Dust / Sparkle Particles (opacity: 0.3) */}
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 overflow-hidden z-0 blur-[0.4px] opacity-80"
+        style={{ opacity: 0.3 }}
+        className="pointer-events-none absolute inset-0 overflow-hidden z-0"
       >
-        {FLOATING_COINS.map((coin) => (
+        {GOLD_DUST_PARTICLES.map((dust) => (
           <div
-            key={coin.id}
-            className="vip-floating-coin absolute"
+            key={dust.id}
+            className="vip-dust-particle absolute"
             style={{
-              left: `${coin.leftPct}%`,
-              top: `${coin.topPct}%`,
-              animationDelay: `${coin.delayMs}ms`,
-              animationDuration: `${coin.durationMs}ms`,
+              left: `${dust.leftPct}%`,
+              top: `${dust.topPct}%`,
+              animationDelay: `${dust.delayMs}ms`,
+              animationDuration: `${dust.durationMs}ms`,
             }}
           >
-            <RealisticGoldCoin sizePx={coin.sizePx} emblem={coin.emblem} />
+            {dust.isStar ? (
+              <svg
+                width={dust.sizePx * 2}
+                height={dust.sizePx * 2}
+                viewBox="0 0 16 16"
+                className="drop-shadow-[0_0_6px_rgba(252,231,162,0.9)]"
+              >
+                <path
+                  d="M8 0 L9.6 6.4 L16 8 L9.6 9.6 L8 16 L6.4 9.6 L0 8 L6.4 6.4 Z"
+                  fill="#FCE7A2"
+                />
+              </svg>
+            ) : (
+              <span
+                className="block rounded-full bg-[#FCE7A2] shadow-[0_0_8px_rgba(243,211,122,0.95)]"
+                style={{
+                  width: `${dust.sizePx}px`,
+                  height: `${dust.sizePx}px`,
+                }}
+              />
+            )}
           </div>
         ))}
       </div>
 
-      {/* Center Foreground Layer (z-20): 110px Glowing Crown + Unobstructed Title & Loading Bar */}
-      <div className="relative z-20 w-full max-w-md flex flex-col items-center text-center space-y-6">
+      {/* Center Foreground Layer (z-20): Crown + VIP Access Hairline Framing + Title + Loading Bar + Rewards Row */}
+      <div className="relative z-20 w-full max-w-md flex flex-col items-center text-center space-y-5 px-2">
         <LuxuryMetallicCrown />
 
         {/* Title & Welcoming Tagline */}
-        <div className="space-y-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.26em] text-[#D4AF37]">
-            VIP Access
-          </p>
-          <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight gold-gradient-text leading-tight drop-shadow-[0_2px_18px_rgba(0,0,0,0.9)]">
+        <div className="w-full space-y-3">
+          {/* Delicate Gold Horizontal Divider Lines Above & Below VIP ACCESS */}
+          <div className="flex flex-col items-center gap-1.5">
+            <div
+              aria-hidden="true"
+              className="h-px w-36 sm:w-44 bg-gradient-to-r from-transparent via-[#D4AF37]/80 to-transparent"
+            />
+            <p className="text-[11px] sm:text-xs font-semibold uppercase tracking-[0.32em] text-[#FCE7A2]">
+              VIP ACCESS
+            </p>
+            <div
+              aria-hidden="true"
+              className="h-px w-36 sm:w-44 bg-gradient-to-r from-transparent via-[#D4AF37]/80 to-transparent"
+            />
+          </div>
+
+          <h1 className="font-display text-2xl sm:text-4xl font-bold tracking-tight gold-gradient-text leading-tight drop-shadow-[0_2px_20px_rgba(0,0,0,0.95)]">
             {BRAND_NAME}
           </h1>
           <p className="text-xs sm:text-sm text-[#EDE6D6] font-medium leading-relaxed drop-shadow-[0_1px_10px_rgba(0,0,0,0.9)]">
@@ -249,7 +297,7 @@ export const VipSplashScreen: React.FC<VipSplashScreenProps> = ({ onComplete }) 
         </div>
 
         {/* 2.5s Smooth Animated Golden "Loading..." Bar */}
-        <div className="w-full max-w-xs sm:max-w-sm space-y-2 pt-2">
+        <div className="w-full max-w-xs sm:max-w-sm space-y-2 pt-1">
           <div className="flex items-center justify-between text-xs">
             <span className="font-semibold text-[#FCE7A2] tracking-wide">
               Loading...
@@ -264,7 +312,7 @@ export const VipSplashScreen: React.FC<VipSplashScreenProps> = ({ onComplete }) 
             aria-valuenow={Math.round(progress)}
             aria-valuemin={0}
             aria-valuemax={100}
-            aria-label="Loading DRAMA WIN TORNEMENT"
+            aria-label="Loading DRAMA WIN TOURNAMENT"
             className="h-2.5 w-full rounded-full bg-[#13131A] border border-[#D4AF37]/30 overflow-hidden shadow-inner"
           >
             <div
@@ -272,6 +320,23 @@ export const VipSplashScreen: React.FC<VipSplashScreenProps> = ({ onComplete }) 
               style={{ width: `${progress}%` }}
             />
           </div>
+        </div>
+
+        {/* 3 Clean Dark-and-Gold Rewards Boxes Directly Under Loading Bar */}
+        <div className="w-full grid grid-cols-3 gap-2 sm:gap-3 pt-1">
+          {SPLASH_REWARDS_BOXES.map((box) => (
+            <div
+              key={box.title}
+              className="rounded-xl bg-gradient-to-b from-[#16130C]/95 to-[#0B0B10]/95 border border-[#D4AF37]/40 px-2 py-2.5 sm:px-3 sm:py-3 shadow-[0_8px_22px_rgba(0,0,0,0.65)] flex flex-col items-center justify-center text-center gap-0.5"
+            >
+              <span className="text-[11px] sm:text-xs font-bold text-[#FCE7A2] leading-tight whitespace-nowrap">
+                {box.title}
+              </span>
+              <span className="text-[10px] sm:text-[11px] font-medium text-[#C8C0B0] leading-tight whitespace-nowrap">
+                {box.subtitle}
+              </span>
+            </div>
+          ))}
         </div>
       </div>
     </div>
