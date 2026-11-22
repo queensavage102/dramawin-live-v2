@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Sparkles } from 'lucide-react';
-import { resolveSponsorLink } from '../constants';
+import { MONETAG_LINK } from '../constants';
 
 const AD_COUNTDOWN_SECONDS = 20;
 
@@ -144,7 +144,7 @@ export const FeaturedPartnerOfferModal: React.FC<FeaturedPartnerOfferModalProps>
 
   if (!open) return null;
 
-  const activeMonetagUrl = resolveSponsorLink(sponsorUrl);
+  const activeMonetagUrl = MONETAG_LINK;
   const topBarMessage = isComplete
     ? readyHeadline || `Sponsor Ad • Ready! ${claimLabel} Unlocked`
     : hasVisitedSponsor

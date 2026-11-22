@@ -2557,7 +2557,7 @@ export const AdminBoardPage: React.FC<AdminBoardPageProps> = ({
                     required
                     value={sponsorUrlInput}
                     onChange={(e) => setSponsorUrlInput(e.target.value)}
-                    placeholder="https://your-monetag-link.com"
+                    placeholder="https://uplcm.com/4/12320047"
                     className="flex-1 min-h-[44px] px-3.5 rounded-xl bg-[#070709] border border-[#D4AF37]/25 text-sm text-[#F6F2E9] focus:outline-none focus:border-[#D4AF37]"
                   />
                   <button

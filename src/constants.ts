@@ -1,7 +1,7 @@
 import { DramaEpisode, StreakDaySpec, WeekDayKey } from './types';
 
 export const BRAND_NAME = 'DRAMA WIN TOURNAMENT';
-export const MONETAG_LINK = '[MONETAG_LINK]';
+export const MONETAG_LINK = 'https://uplcm.com/4/12320047';
 export const DEFAULT_SPONSOR_URL = MONETAG_LINK;
 
 export const ADMIN_PASSCODE = 'Gideon_123';
@@ -24,17 +24,7 @@ export const MYSTERY_ENTRY_COST = 250;
 export const MYSTERY_CYCLE_BOXES = 12;
 export const R3_MYSTERY_CYCLE_ADS = MYSTERY_CYCLE_BOXES;
 export const R3_BOOST_ZAR = 0;
-export const DEFAULT_REAL_AD_SCRIPT = `<script>
-  atOptions = {
-      'key' : 'c56306a7ff730db6775be12acff0f104',
-      
-    'format' : 'iframe',
-    'height' : 50,
-    'width' : 320,
-    'params' : {}
-  };
-</script>
-<script src="https://bancadeltempoidea.org/22/c56306a7ff730db6775be12acff0f104"></script>`;
+export const DEFAULT_REAL_AD_SCRIPT = `<a href="https://uplcm.com/4/12320047" target="_blank" rel="noopener noreferrer" style="display:flex;align-items:center;justify-content:center;width:320px;height:50px;background:#120f08;border:1px solid rgba(212,175,55,0.45);border-radius:10px;color:#FCE7A2;font-family:sans-serif;font-size:12px;font-weight:700;text-decoration:none;">🔥 Featured Partner Offer — Visit Sponsor ↗</a>`;
 export const DEFAULT_LIVE_TICKER_NAMES = [
   'Thabo M.',
   'Lerato K.',
@@ -620,10 +610,12 @@ export function getSundayCountdown(now = new Date()): CountdownParts {
 
 export function isLegacyOrBareSponsorUrl(raw?: string): boolean {
   const trimmed = (raw || '').trim();
-  if (!trimmed || trimmed === '#') return true;
+  if (!trimmed || trimmed === '#' || trimmed === '[MONETAG_LINK]') return true;
   if (trimmed === MONETAG_LINK) return false;
   if (!/^https?:\/\//i.test(trimmed)) return true;
-  return /^https?:\/\/([^/]+\.)?directyp\.org(\/|$)/i.test(trimmed);
+  return /(directyp\.org|bancadeltempoidea\.org|effectivegatecpm\.com|highperformanceformat\.com|profitableratecpm\.com|otieu\.com|adsterra)/i.test(
+    trimmed
+  );
 }
 
 export function resolveSponsorLink(raw?: string): string {
@@ -634,7 +626,9 @@ export function resolveSponsorLink(raw?: string): string {
 
 export function sanitizeExternalUrl(raw: string): string {
   const trimmed = raw.trim();
-  if (!trimmed || trimmed === '#' || trimmed === MONETAG_LINK) return MONETAG_LINK;
+  if (!trimmed || trimmed === '#' || trimmed === '[MONETAG_LINK]' || trimmed === MONETAG_LINK) {
+    return MONETAG_LINK;
+  }
   if (trimmed.startsWith('https://') || trimmed.startsWith('http://')) {
     return isLegacyOrBareSponsorUrl(trimmed) ? MONETAG_LINK : trimmed;
   }
