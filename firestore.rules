@@ -236,6 +236,17 @@ service cloud.firestore {
         && data.createdAt is timestamp;
     }
 
+    function isValidReferral(data) {
+      return data.keys().hasAll(['visitorUid', 'referrerUid', 'status', 'rewardCoins', 'createdAt'])
+        && data.keys().hasOnly(['visitorUid', 'referrerUid', 'status', 'rewardCoins', 'createdAt', 'claimedAt'])
+        && data.visitorUid is string && data.visitorUid.size() >= 1 && data.visitorUid.size() <= 128 && data.visitorUid.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.referrerUid is string && data.referrerUid.size() >= 1 && data.referrerUid.size() <= 128 && data.referrerUid.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.status in ['pending', 'claimed']
+        && data.rewardCoins is number && data.rewardCoins == 1000
+        && data.createdAt is timestamp
+        && (!('claimedAt' in data) || data.claimedAt is timestamp);
+    }
+
     // Public leaderboard (no PII)
     match /leaderboard/{playerId} {
       allow get: if isSignedIn() && isValidId(playerId) && (resource == null || existing().isPublic == true);
@@ -259,9 +270,9 @@ service cloud.firestore {
           (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['coins', 'weeklyCoins', 'qualified', 'streakCount', 'sundayBonusZar', 'username', 'updatedAt'])) ||
           (isOwner(playerId)
             && incoming().coins >= existing().coins - 250
-            && incoming().coins <= existing().coins + 1000
+            && incoming().coins <= existing().coins + 2000
             && incoming().weeklyCoins >= existing().weeklyCoins
-            && incoming().weeklyCoins <= existing().weeklyCoins + 1000
+            && incoming().weeklyCoins <= existing().weeklyCoins + 2000
             && incoming().diff(existing()).affectedKeys().hasOnly(['coins', 'weeklyCoins', 'qualified', 'streakCount', 'updatedAt'])) ||
           (isOwner(playerId)
             && incoming().coins == 0
@@ -321,7 +332,7 @@ service cloud.firestore {
           && exists(/databases/$(database)/documents/playerPrivate/$(playerId))
           && (
             isAdmin() ||
-            (isOwner(playerId) && incoming().uid == request.auth.uid && incoming().amount >= -250 && incoming().amount <= 1000)
+            (isOwner(playerId) && incoming().uid == request.auth.uid && incoming().amount >= -250 && incoming().amount <= 2000)
           );
         allow update, delete: if false;
       }
@@ -473,6 +484,43 @@ service cloud.firestore {
         && incoming().passcode == 'Gideon_123'
         && incoming().createdAt == request.time;
       allow update, delete: if false;
+    }
+
+    // Verified friend referral visits (visitor creates once; target referrer claims once)
+    match /referrals/{visitorId} {
+      allow get: if isSignedIn() && isValidId(visitorId) && (
+        visitorId == request.auth.uid ||
+        (resource != null && (existing().referrerUid == request.auth.uid || existing().visitorUid == request.auth.uid)) ||
+        isAdmin()
+      );
+      allow list: if isSignedIn() && (
+        existing().referrerUid == request.auth.uid ||
+        existing().visitorUid == request.auth.uid ||
+        isAdmin()
+      );
+      allow create: if isSignedIn()
+        && isValidId(visitorId)
+        && visitorId == request.auth.uid
+        && isValidReferral(incoming())
+        && incoming().visitorUid == request.auth.uid
+        && incoming().referrerUid != request.auth.uid
+        && incoming().status == 'pending'
+        && incoming().rewardCoins == 1000
+        && !('claimedAt' in incoming())
+        && incoming().createdAt == request.time;
+      allow update: if isSignedIn()
+        && isValidId(visitorId)
+        && isValidReferral(incoming())
+        && existing().status == 'pending'
+        && incoming().status == 'claimed'
+        && existing().referrerUid == request.auth.uid
+        && incoming().visitorUid == existing().visitorUid
+        && incoming().referrerUid == existing().referrerUid
+        && incoming().rewardCoins == existing().rewardCoins
+        && incoming().createdAt == existing().createdAt
+        && incoming().claimedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'claimedAt']);
+      allow delete: if isAdmin() && isValidId(visitorId);
     }
   }
 }

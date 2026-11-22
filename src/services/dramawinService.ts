@@ -879,6 +879,32 @@ export async function awardSpinWheelCoins(
   );
 }
 
+export async function awardBoostCoins(
+  player: LeaderboardPlayer,
+  privateState: PlayerPrivate,
+  rewardCoins: number,
+  qualificationThreshold: number,
+  title: string
+): Promise<void> {
+  const todayKey = getTodayDateKey();
+  const safeReward = Math.max(1, Math.min(2000, Math.round(rewardCoins)));
+  await awardPlayerCoins(
+    player,
+    privateState,
+    safeReward,
+    qualificationThreshold,
+    {
+      lastActivityDate: todayKey,
+    },
+    undefined,
+    safeReward,
+    {
+      category: 'boost',
+      title: title.trim().slice(0, 100),
+    }
+  );
+}
+
 function escapeHtml(raw: string): string {
   return raw
     .replace(/&/g, '&amp;')
@@ -2322,4 +2348,92 @@ export function subscribePrizeWins(
     }
   );
 }
+
+export async function recordVerifiedReferralVisit(
+  visitorUid: string,
+  referrerUid: string
+): Promise<boolean> {
+  const cleanVisitor = (visitorUid || '').trim();
+  const cleanReferrer = (referrerUid || '').trim();
+  const idRegex = /^[a-zA-Z0-9_\-]{1,128}$/;
+
+  if (
+    !idRegex.test(cleanVisitor) ||
+    !idRegex.test(cleanReferrer) ||
+    cleanVisitor === cleanReferrer
+  ) {
+    return false;
+  }
+
+  try {
+    const refDoc = doc(db, 'referrals', cleanVisitor);
+    const existingSnap = await getDoc(refDoc);
+    if (existingSnap.exists()) {
+      return false;
+    }
+
+    await setDoc(refDoc, {
+      visitorUid: cleanVisitor,
+      referrerUid: cleanReferrer,
+      status: 'pending',
+      rewardCoins: 1000,
+      createdAt: serverTimestamp(),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function subscribeReferralsForUser(
+  referrerUid: string,
+  onData: (payload: { totalJoined: number; pendingVisitorIds: string[] }) => void
+): Unsubscribe {
+  const cleanUid = (referrerUid || '').trim();
+  if (!cleanUid) {
+    onData({ totalJoined: 0, pendingVisitorIds: [] });
+    return () => {};
+  }
+
+  const q = query(
+    collection(db, 'referrals'),
+    where('referrerUid', '==', cleanUid),
+    limit(200)
+  );
+
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const pendingVisitorIds: string[] = [];
+      snapshot.docs.forEach((d) => {
+        const data = d.data() as { status?: string };
+        if (data?.status === 'pending') {
+          pendingVisitorIds.push(d.id);
+        }
+      });
+      onData({
+        totalJoined: snapshot.size,
+        pendingVisitorIds,
+      });
+    },
+    () => {
+      // Keep non-blocking on network or offline auth state
+    }
+  );
+}
+
+export async function markReferralClaimed(visitorId: string): Promise<boolean> {
+  const cleanId = (visitorId || '').trim();
+  if (!cleanId) return false;
+  try {
+    await updateDoc(doc(db, 'referrals', cleanId), {
+      status: 'claimed',
+      claimedAt: serverTimestamp(),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { User, onAuthStateChanged, signInAnonymously, signInWithPopup } from 'firebase/auth';
 import { AlertTriangle, Crown, Flame, X } from 'lucide-react';
 import { AdminBoardPage } from './components/AdminBoardPage';
+import { BoostTab } from './components/BoostTab';
 import { BottomNavBar } from './components/BottomNavBar';
 import { CheckInVaultTab } from './components/CheckInVaultTab';
 import { ConfettiExplosion } from './components/ConfettiExplosion';
@@ -23,7 +24,9 @@ import {
   DEFAULT_POOL_PRIZE_ZAR,
   DEFAULT_QUALIFICATION_THRESHOLD,
   MYSTERY_CYCLE_BOXES,
+  REFERRAL_REWARD_COINS,
   STREAK_DAYS,
+  buildPersonalInviteLink,
   getCurrentWeekKey,
   getMondayStartTimestampSAST,
   getTodayDateKey,
@@ -35,23 +38,26 @@ import { CatalogProvider, useCatalog } from './context/CatalogContext';
 import { auth, googleProvider } from './firebase';
 import {
   adminAdjustPlayerCoins,
+  awardBoostCoins,
   awardHeroBonusCoins,
   awardMysteryBoxCoins,
   awardSpinWheelCoins,
   awardWatchPotCoins,
-  awardWhatsappShareCoins,
   claimStreakDay,
   ensureAdminSeededData,
   evaluateSundayPoolRollover,
   fetchPlayerProfile,
   markEpisodeAsWatched,
+  markReferralClaimed,
   mergeWatchedEpisodeId,
   purgeLegacyAndStrayEpisodesFromFirestore,
+  recordVerifiedReferralVisit,
   subscribeAppConfig,
   subscribeLeaderboard,
   subscribeMysteryWinners,
   subscribePlayerPrivate,
   subscribePrizeWins,
+  subscribeReferralsForUser,
   subscribeTransactions,
   syncPlayerTrackingId,
   unlockAdminAccess,
@@ -73,6 +79,9 @@ import {
   WeekDayKey,
 } from './types';
 import {
+  BOOST_DAILY_GAME_COIN_CAP,
+  BOOST_FREE_GAME_PLAYS_PER_DAY,
+  BoostTrackerState,
   DailySpinState,
   MAX_EXTRA_SPINS_PER_DAY,
   addLocalPrizeWin,
@@ -80,7 +89,7 @@ import {
   claimLocalMysteryBox,
   getOrCreateGuestSession,
   getOrCreatePlayerTrackingId,
-  getWhatsappShareClaimDate,
+  loadBoostTrackerState,
   loadDailySpinState,
   loadLocalAppConfig,
   loadLocalLeaderboard,
@@ -88,8 +97,8 @@ import {
   loadLocalPrizeWins,
   loadLocalTransactions,
   loadMyListSeriesIds,
-  markWhatsappShareClaimedToday,
   mergeLeaderboardWithSeedPlayers,
+  saveBoostTrackerState,
   saveDailySpinState,
   saveLocalAppConfig,
   toggleMyListSeriesId,
@@ -106,6 +115,7 @@ import {
 
 const ADMIN_SESSION_KEY = 'dramawin_admin_unlocked';
 const CLOUD_OPENED_BOXES_PREFIX = 'dramawin_cloud_opened_boxes_';
+const REFERRED_BY_STORAGE_KEY = 'dramawin_referred_by_v1';
 
 function readCloudOpenedBoxes(uid: string, dateKey: string): number[] {
   try {
@@ -131,6 +141,30 @@ function writeCloudOpenedBoxes(uid: string, dateKey: string, boxes: number[]): v
 function isAdminPath(): boolean {
   if (typeof window === 'undefined') return false;
   return window.location.pathname.replace(/\/+$/, '') === '/admin';
+}
+
+function extractReferralIdFromLocation(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const url = new URL(window.location.href);
+    const paramRef = (url.searchParams.get('ref') || url.searchParams.get('invite') || '').trim();
+    if (/^[a-zA-Z0-9_\-]{3,128}$/.test(paramRef)) {
+      return paramRef;
+    }
+
+    const cleanPath = url.pathname.replace(/^\/+|\/+$/g, '');
+    if (
+      cleanPath &&
+      cleanPath !== 'admin' &&
+      !cleanPath.includes('.') &&
+      /^[a-zA-Z0-9_\-]{6,128}$/.test(cleanPath)
+    ) {
+      return cleanPath;
+    }
+  } catch {
+    // Ignore malformed URLs
+  }
+  return null;
 }
 
 function DramaWinApp() {
@@ -187,6 +221,7 @@ function DramaWinApp() {
 
   const [activeTab, setActiveTab] = useState<AppTab>('watch');
   const [giftVaultModalOpen, setGiftVaultModalOpen] = useState(false);
+  const [referralsJoinedCount, setReferralsJoinedCount] = useState(0);
   const [myListSeriesIds, setMyListSeriesIds] = useState<string[]>(() => loadMyListSeriesIds());
   const [toast, setToast] = useState<ToastNotice | null>(null);
   const [cloudOpenedBoxes, setCloudOpenedBoxes] = useState<number[]>([]);
@@ -215,6 +250,9 @@ function DramaWinApp() {
   const triedAnonAuthRef = useRef<boolean>(false);
   const cloudOpenedBoxesRef = useRef<number[]>(cloudOpenedBoxes);
   const toastTimerRef = useRef<number | null>(null);
+  const capturedReferrerRef = useRef<string | null>(extractReferralIdFromLocation());
+  const recordedIncomingRefSentRef = useRef<boolean>(false);
+  const claimingReferralIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     cloudOpenedBoxesRef.current = cloudOpenedBoxes;
@@ -996,69 +1034,38 @@ function DramaWinApp() {
     showToast(`+${bonusCoins} Coins Added to Wallet!`, bonusCoins, 'gold', undefined, 3000);
   }, [showToast]);
 
-  const [whatsappShareClaimDate, setWhatsappShareClaimDate] = useState<string>(() =>
-    getWhatsappShareClaimDate(guestPlayer.uid)
+  const handleNotifyInviteLinkCopied = useCallback(
+    (_url: string) => {
+      showToast(
+        `Personal invite link copied! +${REFERRAL_REWARD_COINS.toLocaleString()} Coins credit when a friend visits via your link.`,
+        undefined,
+        'gold',
+        undefined,
+        3500
+      );
+    },
+    [showToast]
   );
 
-  useEffect(() => {
-    setWhatsappShareClaimDate(getWhatsappShareClaimDate(currentPlayer.uid));
-  }, [currentPlayer.uid]);
-
-  const whatsappShareClaimedToday = whatsappShareClaimDate === getTodayDateKey();
-
-  const handleWhatsappShareReward = useCallback(async (): Promise<void> => {
-    const {
-      isCloudMode: cloudNow,
-      currentPlayer: playerNow,
-      privateProfile: privNow,
-      appConfig: cfgNow,
-      muted: mutedNow,
-    } = latestStateRef.current;
-
-    const todayKey = getTodayDateKey();
-    if (getWhatsappShareClaimDate(playerNow.uid) === todayKey) {
-      setWhatsappShareClaimDate(todayKey);
-      showToast(
-        'WhatsApp share bonus already claimed today! Thanks for sharing.',
-        undefined,
-        'neutral',
-        undefined,
-        2600
-      );
-      return;
-    }
-
-    markWhatsappShareClaimedToday(playerNow.uid, todayKey);
-    setWhatsappShareClaimDate(todayKey);
-
-    const shareBonusCoins = 500;
-    const threshold = cfgNow.qualificationThreshold || DEFAULT_QUALIFICATION_THRESHOLD;
-
-    if (cloudNow) {
-      await awardWhatsappShareCoins(playerNow, privNow, threshold);
-      playCoinChime(mutedNow);
-      showToast(`+${shareBonusCoins} Coins Added to Wallet!`, shareBonusCoins, 'gold', undefined, 3000);
-      return;
-    }
-
-    const res = applyLocalCoinMutation({
-      player: playerNow,
-      privateProfile: privNow,
-      walletDelta: shareBonusCoins,
-      qualificationThreshold: threshold,
-      recordStreakActivity: true,
-      txMeta: {
-        category: 'whatsapp-share',
-        title: 'Daily WhatsApp Share Bonus (+500 Coins)',
-      },
-    });
-    setGuestPlayer(res.player);
-    setGuestPrivate(res.privateProfile);
-    setLocalTransactions(res.transactions);
-    setLocalLeaderboard(loadLocalLeaderboard(res.player));
-    playCoinChime(mutedNow);
-    showToast(`+${shareBonusCoins} Coins Added to Wallet!`, shareBonusCoins, 'gold', undefined, 3000);
+  const handleNotifyWhatsappShared = useCallback(() => {
+    showToast(
+      `Opened WhatsApp! +${REFERRAL_REWARD_COINS.toLocaleString()} Coins credit automatically when a friend joins via your link.`,
+      undefined,
+      'neutral',
+      undefined,
+      3500
+    );
   }, [showToast]);
+
+  const handleOpenInviteSocial = useCallback(() => {
+    setActiveTab('me');
+    window.setTimeout(() => {
+      document.getElementById('invite-social-section')?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    }, 90);
+  }, []);
 
   const [spinState, setSpinState] = useState<DailySpinState>(() =>
     loadDailySpinState(guestPlayer.uid)
@@ -1069,6 +1076,387 @@ function DramaWinApp() {
   useEffect(() => {
     setSpinState(loadDailySpinState(currentPlayer.uid));
   }, [currentPlayer.uid]);
+
+  const [boostState, setBoostState] = useState<BoostTrackerState>(() =>
+    loadBoostTrackerState(guestPlayer.uid)
+  );
+
+  useEffect(() => {
+    setBoostState(loadBoostTrackerState(currentPlayer.uid));
+  }, [currentPlayer.uid]);
+
+  const grantBoostCoins = useCallback(
+    async (rewardCoins: number, title: string, customToastMessage?: string): Promise<void> => {
+      const {
+        isCloudMode: cloudNow,
+        currentPlayer: playerNow,
+        privateProfile: privNow,
+        appConfig: cfgNow,
+        muted: mutedNow,
+      } = latestStateRef.current;
+
+      const safeCoins = Math.max(1, Math.min(2000, Math.round(rewardCoins)));
+      const threshold = cfgNow.qualificationThreshold || DEFAULT_QUALIFICATION_THRESHOLD;
+
+      if (cloudNow) {
+        await awardBoostCoins(playerNow, privNow, safeCoins, threshold, title);
+      } else {
+        const res = applyLocalCoinMutation({
+          player: playerNow,
+          privateProfile: privNow,
+          walletDelta: safeCoins,
+          qualificationThreshold: threshold,
+          recordStreakActivity: true,
+          txMeta: {
+            category: 'boost',
+            title: title.slice(0, 100),
+          },
+        });
+        setGuestPlayer(res.player);
+        setGuestPrivate(res.privateProfile);
+        setLocalTransactions(res.transactions);
+        setLocalLeaderboard(loadLocalLeaderboard(res.player));
+      }
+
+      if (safeCoins >= 1000) {
+        setConfettiActive(true);
+        playVictoryFanfare(mutedNow);
+      } else {
+        playCoinChime(mutedNow);
+      }
+      showToast(
+        customToastMessage || `+${safeCoins.toLocaleString()} Coins Added to Wallet!`,
+        safeCoins,
+        'gold',
+        undefined,
+        3500
+      );
+    },
+    [showToast]
+  );
+
+  const handleClaimAdBoost = useCallback(
+    async (kind: 'speed' | 'mega', rewardCoins: number, title: string): Promise<void> => {
+      const uid = latestStateRef.current.currentPlayer.uid;
+      const todayKey = getTodayDateKey();
+      const latest = loadBoostTrackerState(uid, todayKey);
+      const now = Date.now();
+
+      if (kind === 'speed' && latest.speedBoostLastClaimAt > 0 && now - latest.speedBoostLastClaimAt < 60 * 60 * 1000) {
+        showToast('2x Watch Speed Boost is still on cooldown.', undefined, 'neutral', undefined, 2600);
+        return;
+      }
+      if (kind === 'mega' && latest.dailyMegaLastClaimAt > 0 && now - latest.dailyMegaLastClaimAt < 24 * 60 * 60 * 1000) {
+        showToast('Daily Mega Boost is already claimed for now.', undefined, 'neutral', undefined, 2600);
+        return;
+      }
+
+      await grantBoostCoins(rewardCoins, title);
+
+      const refreshed = loadBoostTrackerState(uid, todayKey);
+      const nextState: BoostTrackerState =
+        kind === 'speed'
+          ? { ...refreshed, speedBoostLastClaimAt: now }
+          : { ...refreshed, dailyMegaLastClaimAt: now };
+      setBoostState(saveBoostTrackerState(uid, nextState));
+    },
+    [grantBoostCoins, showToast]
+  );
+
+  const handleAdvanceMarathonAd = useCallback(() => {
+    const uid = latestStateRef.current.currentPlayer.uid;
+    const todayKey = getTodayDateKey();
+    const latest = loadBoostTrackerState(uid, todayKey);
+    const now = Date.now();
+
+    if (latest.marathonLastClaimAt > 0 && now - latest.marathonLastClaimAt < 24 * 60 * 60 * 1000) {
+      showToast('5-Ad Marathon Streak resets every 24 hours.', undefined, 'neutral', undefined, 2600);
+      return;
+    }
+
+    const nextCount = Math.min(5, latest.marathonAdsWatched + 1);
+    setBoostState(
+      saveBoostTrackerState(uid, {
+        ...latest,
+        marathonAdsWatched: nextCount,
+      })
+    );
+    playCoinChime(latestStateRef.current.muted);
+    showToast(
+      nextCount >= 5
+        ? '5 / 5 Sponsor Ads Verified! Tap Claim +2,000 Coins!'
+        : `Sponsor Ad Verified (${nextCount} / 5 Complete)`,
+      undefined,
+      'gold',
+      undefined,
+      3000
+    );
+  }, [showToast]);
+
+  const handleClaimMarathonReward = useCallback(async (): Promise<void> => {
+    const uid = latestStateRef.current.currentPlayer.uid;
+    const todayKey = getTodayDateKey();
+    const latest = loadBoostTrackerState(uid, todayKey);
+    const now = Date.now();
+
+    if (latest.marathonLastClaimAt > 0 && now - latest.marathonLastClaimAt < 24 * 60 * 60 * 1000) {
+      showToast('5-Ad Marathon Streak already claimed today.', undefined, 'neutral', undefined, 2600);
+      return;
+    }
+    if (latest.marathonAdsWatched < 5) {
+      showToast('Complete all 5 / 5 sponsor views first!', undefined, 'neutral', undefined, 2600);
+      return;
+    }
+
+    await grantBoostCoins(2000, '🎬 5-Ad Marathon Streak (+2,000 Coins)');
+
+    const refreshed = loadBoostTrackerState(uid, todayKey);
+    setBoostState(
+      saveBoostTrackerState(uid, {
+        ...refreshed,
+        marathonAdsWatched: 0,
+        marathonLastClaimAt: now,
+      })
+    );
+  }, [grantBoostCoins, showToast]);
+
+  const handleConsumeGamePlay = useCallback((): boolean => {
+    const uid = latestStateRef.current.currentPlayer.uid;
+    const todayKey = getTodayDateKey();
+    const latest = loadBoostTrackerState(uid, todayKey);
+    const totalPlays = BOOST_FREE_GAME_PLAYS_PER_DAY + latest.dailyGameExtraPlaysUnlocked;
+    if (latest.dailyGamePlaysUsed >= totalPlays) {
+      showToast('No plays remaining — visit sponsor to unlock an extra play!', undefined, 'neutral', undefined, 2800);
+      return false;
+    }
+
+    const updated = saveBoostTrackerState(uid, {
+      ...latest,
+      dailyGameDate: todayKey,
+      dailyGamePlaysUsed: latest.dailyGamePlaysUsed + 1,
+      dailyGameDoubleBonusNext: false,
+    });
+    setBoostState(updated);
+    return true;
+  }, [showToast]);
+
+  const handleUnlockSponsorGamePlay = useCallback(() => {
+    const uid = latestStateRef.current.currentPlayer.uid;
+    const todayKey = getTodayDateKey();
+    const latest = loadBoostTrackerState(uid, todayKey);
+    const updated = saveBoostTrackerState(uid, {
+      ...latest,
+      dailyGameDate: todayKey,
+      dailyGameExtraPlaysUnlocked: latest.dailyGameExtraPlaysUnlocked + 1,
+      dailyGameDoubleBonusNext: true,
+    });
+    setBoostState(updated);
+    playCoinChime(latestStateRef.current.muted);
+    showToast(
+      'Extra Mini-Game Play Unlocked with 2x Bonus!',
+      undefined,
+      'gold',
+      undefined,
+      3000
+    );
+  }, [showToast]);
+
+  const handleClaimMiniGameWin = useCallback(
+    async (game: 'trivia' | 'memory', baseCoins: number): Promise<number> => {
+      const uid = latestStateRef.current.currentPlayer.uid;
+      const todayKey = getTodayDateKey();
+      const latest = loadBoostTrackerState(uid, todayKey);
+      const remainingAllowance = Math.max(0, BOOST_DAILY_GAME_COIN_CAP - latest.dailyGameCoins);
+      const awarded = Math.min(Math.max(0, Math.round(baseCoins)), remainingAllowance);
+
+      if (awarded <= 0) {
+        showToast(
+          'Daily 1,000 game coin limit reached! Come back tomorrow.',
+          undefined,
+          'neutral',
+          undefined,
+          3000
+        );
+        return 0;
+      }
+
+      const label =
+        game === 'trivia'
+          ? `🎭 Drama & Riddle Trivia (+${awarded} Coins)`
+          : `🃏 Gold Memory Match (+${awarded} Coins)`;
+      await grantBoostCoins(awarded, label);
+
+      const refreshed = loadBoostTrackerState(uid, todayKey);
+      setBoostState(
+        saveBoostTrackerState(uid, {
+          ...refreshed,
+          dailyGameDate: todayKey,
+          dailyGameCoins: Math.min(BOOST_DAILY_GAME_COIN_CAP, refreshed.dailyGameCoins + awarded),
+        })
+      );
+      return awarded;
+    },
+    [grantBoostCoins, showToast]
+  );
+
+  const handleMarkTiktokVisited = useCallback(() => {
+    const uid = latestStateRef.current.currentPlayer.uid;
+    const latest = loadBoostTrackerState(uid, getTodayDateKey());
+    if (!latest.tiktokVisited) {
+      setBoostState(
+        saveBoostTrackerState(uid, {
+          ...latest,
+          tiktokVisited: true,
+        })
+      );
+    }
+  }, []);
+
+  const handleClaimTiktokBoost = useCallback(async (): Promise<void> => {
+    const uid = latestStateRef.current.currentPlayer.uid;
+    const todayKey = getTodayDateKey();
+    const latest = loadBoostTrackerState(uid, todayKey);
+    if (latest.tiktokClaimed) {
+      showToast('TikTok follow bonus already claimed!', undefined, 'neutral', undefined, 2600);
+      return;
+    }
+
+    await grantBoostCoins(500, '📲 Follow on TikTok (@faceless_creator_sa)');
+    const refreshed = loadBoostTrackerState(uid, todayKey);
+    setBoostState(
+      saveBoostTrackerState(uid, {
+        ...refreshed,
+        tiktokVisited: true,
+        tiktokClaimed: true,
+      })
+    );
+  }, [grantBoostCoins, showToast]);
+
+  const handleSeriesRequestReward = useCallback(async (): Promise<boolean> => {
+    const uid = latestStateRef.current.currentPlayer.uid;
+    const todayKey = getTodayDateKey();
+    const latest = loadBoostTrackerState(uid, todayKey);
+    if (latest.seriesRequestBonusClaimed) {
+      showToast(
+        'Request sent! Thanks for your suggestion.',
+        undefined,
+        'gold',
+        undefined,
+        3200
+      );
+      return false;
+    }
+
+    await grantBoostCoins(
+      250,
+      '🎬 Series / Movie Request Bonus (+250 Coins)',
+      'Request sent! +250 Coins added'
+    );
+    const refreshed = loadBoostTrackerState(uid, todayKey);
+    setBoostState(
+      saveBoostTrackerState(uid, {
+        ...refreshed,
+        seriesRequestBonusClaimed: true,
+      })
+    );
+    return true;
+  }, [grantBoostCoins, showToast]);
+
+  const referralUserId = firebaseUser?.uid || currentPlayer.uid;
+
+  const handleClaimPlayerGiftBox = useCallback(async (): Promise<void> => {
+    await grantBoostCoins(300, '🎁 Video Player Claim Gift Box (+300 Coins)');
+  }, [grantBoostCoins]);
+
+  // Clean referral query/path from browser address bar on entry
+  useEffect(() => {
+    if (typeof window === 'undefined' || isAdminRoute || !capturedReferrerRef.current) return;
+    try {
+      const url = new URL(window.location.href);
+      if (
+        url.searchParams.has('ref') ||
+        url.searchParams.has('invite') ||
+        (url.pathname && url.pathname !== '/')
+      ) {
+        window.history.replaceState({}, '', '/');
+      }
+    } catch {
+      // Ignore history API errors
+    }
+  }, [isAdminRoute]);
+
+  // Record incoming friend referral visit ONLY once per new visitor device/auth UID (never self-referral)
+  useEffect(() => {
+    if (isAdminRoute || !firebaseUser?.uid || recordedIncomingRefSentRef.current) return;
+    const refId = capturedReferrerRef.current;
+    if (!refId) return;
+
+    if (refId === firebaseUser.uid || refId === currentPlayer.uid || refId === playerTrackingId) {
+      recordedIncomingRefSentRef.current = true;
+      return;
+    }
+
+    try {
+      if (window.localStorage.getItem(REFERRED_BY_STORAGE_KEY)) {
+        recordedIncomingRefSentRef.current = true;
+        return;
+      }
+      window.localStorage.setItem(REFERRED_BY_STORAGE_KEY, refId);
+    } catch {
+      // Ignore storage errors
+    }
+
+    recordedIncomingRefSentRef.current = true;
+    void recordVerifiedReferralVisit(firebaseUser.uid, refId).then((recorded) => {
+      if (recorded) {
+        showToast(
+          'Welcome to DramaWin! Your friend’s referral invite was verified.',
+          undefined,
+          'gold',
+          undefined,
+          3500
+        );
+      }
+    });
+  }, [isAdminRoute, firebaseUser?.uid, currentPlayer.uid, playerTrackingId, showToast]);
+
+  // Subscribe to verified friend referrals for the current user and credit pending ones
+  useEffect(() => {
+    if (isAdminRoute || !firebaseUser?.uid) {
+      setReferralsJoinedCount(0);
+      return;
+    }
+
+    const unsub = subscribeReferralsForUser(
+      firebaseUser.uid,
+      ({ totalJoined, pendingVisitorIds }) => {
+        setReferralsJoinedCount(totalJoined);
+
+        pendingVisitorIds.forEach((visitorId) => {
+          if (claimingReferralIdsRef.current.has(visitorId)) return;
+          claimingReferralIdsRef.current.add(visitorId);
+
+          void (async () => {
+            try {
+              const marked = await markReferralClaimed(visitorId);
+              if (marked) {
+                await grantBoostCoins(
+                  REFERRAL_REWARD_COINS,
+                  '👥 Verified Friend Referral (+1,000 Coins)'
+                );
+              }
+            } finally {
+              claimingReferralIdsRef.current.delete(visitorId);
+            }
+          })();
+        });
+      }
+    );
+
+    return () => {
+      unsub();
+    };
+  }, [isAdminRoute, firebaseUser?.uid, grantBoostCoins]);
 
   // Always show Lucky Spin Wheel right after the Intro screen finishes (even if free spin was used)
   useEffect(() => {
@@ -1233,33 +1621,36 @@ function DramaWinApp() {
   );
 
   const handleShareEpisode = useCallback(
-    (episode: DramaEpisode) => {
-      const shareTitle = `${episode.series} — ${episode.title}`;
-      const shareUrl = typeof window !== 'undefined' ? window.location.href : '';
-      if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
-        void navigator
-          .share({
-            title: shareTitle,
-            text: `Watch ${shareTitle} on ${BRAND_NAME}!`,
-            url: shareUrl,
-          })
-          .catch(() => {
-            // User dismissed native share sheet
-          });
-        return;
-      }
-      if (typeof navigator !== 'undefined' && navigator.clipboard && shareUrl) {
+    (_episode: DramaEpisode) => {
+      const shareUrl = buildPersonalInviteLink(referralUserId);
+      const copyFallback = () => {
+        try {
+          const el = document.createElement('textarea');
+          el.value = shareUrl;
+          el.setAttribute('readonly', '');
+          el.className = 'sr-only';
+          document.body.appendChild(el);
+          el.select();
+          document.execCommand('copy');
+          document.body.removeChild(el);
+          showToast('Personal share link copied!', undefined, 'gold', undefined, 2600);
+        } catch {
+          showToast(`Share link: ${shareUrl}`, undefined, 'neutral', undefined, 2600);
+        }
+      };
+
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
         void navigator.clipboard
           .writeText(shareUrl)
           .then(() => {
-            showToast('Series link copied to share!', undefined, 'neutral', undefined, 2500);
+            showToast('Personal share link copied!', undefined, 'gold', undefined, 2600);
           })
-          .catch(() => {
-            showToast('Share link ready in browser address bar.', undefined, 'neutral', undefined, 2500);
-          });
+          .catch(copyFallback);
+      } else {
+        copyFallback();
       }
     },
-    [showToast]
+    [referralUserId, showToast]
   );
 
   const handleSundayZeroTick = useCallback(() => {
@@ -1696,6 +2087,7 @@ function DramaWinApp() {
             episodes={episodes}
             cloudSeries={cloudSeries}
             privateState={privateProfile}
+            referralUserId={referralUserId}
             sponsorAdUrl={appConfig.sponsorAdUrl}
             playerWeeklyCoins={currentPlayer.weeklyCoins}
             playerTotalCoins={currentPlayer.coins}
@@ -1704,6 +2096,8 @@ function DramaWinApp() {
             resumePlaybackSignal={resumePlaybackSignal}
             onToggleMute={handleToggleMute}
             onAwardCoinPot={handleAwardCoinPot}
+            onClaimGiftBoxCoins={handleClaimPlayerGiftBox}
+            onShareEpisode={handleShareEpisode}
             onStartSponsorReward={startSponsorRewardFlow}
             onClaimHeroBonus={handleClaimHeroBonus}
             onMarkEpisodeWatched={handleMarkEpisodeWatched}
@@ -1714,20 +2108,36 @@ function DramaWinApp() {
           <ForYouTab
             episodes={episodes}
             privateState={privateProfile}
+            referralUserId={referralUserId}
             sponsorAdUrl={appConfig.sponsorAdUrl}
-            myListSeriesIds={myListSeriesIds}
             playerWeeklyCoins={currentPlayer.weeklyCoins}
             playerTotalCoins={currentPlayer.coins}
             qualificationThreshold={qualificationThreshold}
             muted={muted}
             resumePlaybackSignal={resumePlaybackSignal}
             onToggleMute={handleToggleMute}
-            onToggleMyList={handleToggleMyList}
             onShareEpisode={handleShareEpisode}
             onAwardCoinPot={handleAwardCoinPot}
+            onClaimGiftBoxCoins={handleClaimPlayerGiftBox}
             onStartSponsorReward={startSponsorRewardFlow}
             onMarkEpisodeWatched={handleMarkEpisodeWatched}
             onSwitchToHome={() => setActiveTab('watch')}
+          />
+        )}
+
+        {activeTab === 'boost' && (
+          <BoostTab
+            coins={currentPlayer.coins}
+            weeklyCoins={currentPlayer.weeklyCoins}
+            qualificationThreshold={qualificationThreshold}
+            todayKey={getTodayDateKey()}
+            boostState={boostState}
+            onClaimAdBoost={handleClaimAdBoost}
+            onAdvanceMarathonAd={handleAdvanceMarathonAd}
+            onClaimMarathonReward={handleClaimMarathonReward}
+            onConsumeGamePlay={handleConsumeGamePlay}
+            onUnlockSponsorGamePlay={handleUnlockSponsorGamePlay}
+            onClaimMiniGameWin={handleClaimMiniGameWin}
           />
         )}
 
@@ -1747,13 +2157,12 @@ function DramaWinApp() {
             qualificationThreshold={qualificationThreshold}
             streakActivityDates={privateProfile.streakActivityDates || []}
             transactions={transactions}
-            whatsappShareClaimedToday={whatsappShareClaimedToday}
             onSundayZeroTick={handleSundayZeroTick}
             onCompleteCheckIn={handleCompleteDailyCheckIn}
             onStartSponsorReward={startSponsorRewardFlow}
             onOpenMysteryBox={handleOpenMysteryBox}
             onDismissVoucherModal={() => setMysteryVoucherModal(null)}
-            onWhatsappShareReward={handleWhatsappShareReward}
+            onOpenInviteSocial={handleOpenInviteSocial}
           />
         )}
 
@@ -1762,6 +2171,9 @@ function DramaWinApp() {
             player={currentPlayer}
             privateState={privateProfile}
             trackingId={playerTrackingId}
+            referralUserId={referralUserId}
+            referralsJoinedCount={referralsJoinedCount}
+            boostState={boostState}
             episodes={episodes}
             myListSeriesIds={myListSeriesIds}
             qualificationThreshold={qualificationThreshold}
@@ -1769,6 +2181,11 @@ function DramaWinApp() {
             onUpdatePlayerName={handleUpdatePlayerName}
             onToggleMyList={handleToggleMyList}
             onGoToHome={() => setActiveTab('watch')}
+            onNotifyInviteLinkCopied={handleNotifyInviteLinkCopied}
+            onNotifyWhatsappShared={handleNotifyWhatsappShared}
+            onMarkTiktokVisited={handleMarkTiktokVisited}
+            onClaimTiktokBoost={handleClaimTiktokBoost}
+            onSeriesRequestReward={handleSeriesRequestReward}
           />
         )}
 
@@ -1785,7 +2202,7 @@ function DramaWinApp() {
         </footer>
       </main>
 
-      {/* Floating DramaWin VIP Support AI Chat Widget */}
+      {/* Existing Floating Yellow Support Button & VIP Support Chat Modal (Gmail/Web3Forms forwarding intact) */}
       <SupportChatWidget
         username={currentPlayer.username}
         contact={privateProfile.contact}
@@ -1796,7 +2213,7 @@ function DramaWinApp() {
         firebaseEmail={firebaseUser?.email || null}
       />
 
-      {/* Fixed 4-Tab Bottom Navigation Bar */}
+      {/* Fixed 5-Tab Bottom Navigation Bar */}
       <BottomNavBar activeTab={activeTab} onSelectTab={setActiveTab} />
 
       {/* Exclusive Gift Box Vault Modal (Header Gift Box icon opens ONLY this, never Daily Sign-In) */}

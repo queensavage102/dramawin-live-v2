@@ -1,5 +1,5 @@
 import React from 'react';
-import { Flame, Gift, Home, User } from 'lucide-react';
+import { Flame, Gift, Home, User, Zap } from 'lucide-react';
 import { AppTab } from '../types';
 
 interface BottomNavBarProps {
@@ -14,6 +14,7 @@ const BOTTOM_TABS: {
 }[] = [
   { id: 'watch', label: 'Home', Icon: Home },
   { id: 'foryou', label: 'For You', Icon: Flame },
+  { id: 'boost', label: 'Boost', Icon: Zap },
   { id: 'vault', label: 'Rewards', Icon: Gift },
   { id: 'me', label: 'Me', Icon: User },
 ];
@@ -27,7 +28,7 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({
       aria-label="Primary bottom navigation"
       className="fixed bottom-0 left-0 right-0 z-40 bg-[#09090b]/92 backdrop-blur-xl border-t border-white/[0.08] shadow-[0_-8px_28px_rgba(0,0,0,0.65)]"
     >
-      <div className="max-w-5xl mx-auto h-16 px-2 grid grid-cols-4 items-center">
+      <div className="max-w-5xl mx-auto h-16 px-2 grid grid-cols-5 items-center">
         {BOTTOM_TABS.map(({ id, label, Icon }) => {
           const isActive = activeTab === id;
           return (

@@ -1,6 +1,6 @@
 import { Timestamp } from 'firebase/firestore';
 
-export type AppTab = 'watch' | 'foryou' | 'vault' | 'me';
+export type AppTab = 'watch' | 'foryou' | 'boost' | 'vault' | 'me';
 
 export type WeekDayKey = 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun';
 
@@ -129,6 +129,7 @@ export type TransactionCategory =
   | 'mystery-entry'
   | 'whatsapp-share'
   | 'spin-wheel'
+  | 'boost'
   | 'admin-adjustment';
 
 export interface CoinTransaction {

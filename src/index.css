@@ -215,6 +215,25 @@
   will-change: transform, opacity;
 }
 
+@keyframes memoryCardMatchPop {
+  0% {
+    transform: scale(0.92);
+    box-shadow: 0 0 0 rgba(16, 185, 129, 0);
+  }
+  45% {
+    transform: scale(1.08);
+    box-shadow: 0 0 28px rgba(52, 211, 153, 0.95);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 20px rgba(16, 185, 129, 0.72);
+  }
+}
+
+.memory-card-matched-pop {
+  animation: memoryCardMatchPop 0.55s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .mystery-box-shimmer,
   .mystery-box-halo,
@@ -224,7 +243,8 @@
   .coin-shoot-up,
   .vip-floating-coin,
   .vip-dust-particle,
-  .vip-crown-halo {
+  .vip-crown-halo,
+  .memory-card-matched-pop {
     animation: none;
   }
 }

@@ -3,6 +3,13 @@ import { DramaEpisode, StreakDaySpec, WeekDayKey } from './types';
 export const BRAND_NAME = 'DRAMA WIN TOURNAMENT';
 export const MONETAG_LINK = 'https://uplcm.com/4/12320047';
 export const DEFAULT_SPONSOR_URL = MONETAG_LINK;
+export const PUBLIC_APP_SHARE_ORIGIN = 'https://drama-win-tornement.vercel.app';
+export const REFERRAL_REWARD_COINS = 1000;
+
+export function buildPersonalInviteLink(userId: string): string {
+  const cleanId = encodeURIComponent((userId || '').trim());
+  return cleanId ? `${PUBLIC_APP_SHARE_ORIGIN}/?ref=${cleanId}` : PUBLIC_APP_SHARE_ORIGIN;
+}
 
 export const ADMIN_PASSCODE = 'Gideon_123';
 export const ADMIN_NOTIFICATION_EMAIL = 'gerinaicker04@gmail.com';
@@ -193,6 +200,8 @@ export function getCanonicalVideoKey(rawUrl?: string): string {
   const ia = extractInternetArchiveInfo(cleaned);
   if (ia?.directFileUrl) return `iafile:${ia.directFileUrl.toLowerCase()}`;
   if (ia?.identifier) return `ia:${ia.identifier.toLowerCase()}`;
+  const odysee = extractOdyseeInfo(cleaned);
+  if (odysee?.canonicalKey) return odysee.canonicalKey;
   return cleaned.toLowerCase();
 }
 
@@ -1286,6 +1295,77 @@ export function getBunnyEmbedUrl(rawUrl: string): string | null {
   return null;
 }
 
+export function extractOdyseeInfo(rawUrl: string): {
+  embedUrl: string | null;
+  directFileUrl: string | null;
+  canonicalKey: string;
+} | null {
+  const unwrapped = normalizeYouTubeInput(rawUrl);
+  if (!unwrapped) return null;
+
+  try {
+    const normalized =
+      /^https?:\/\//i.test(unwrapped)
+        ? unwrapped
+        : unwrapped.startsWith('//')
+          ? `https:${unwrapped}`
+          : `https://${unwrapped}`;
+    const parsed = new URL(normalized);
+    const host = parsed.hostname.replace(/^www\./i, '').toLowerCase();
+    if (host !== 'odysee.com' && !host.endsWith('.odysee.com') && host !== 'lbry.tv') {
+      return null;
+    }
+
+    const cleanPath = parsed.pathname.replace(/\/+$/, '');
+    if (!cleanPath || cleanPath === '/') {
+      return null;
+    }
+
+    if (/^\/\$\/download\//i.test(cleanPath)) {
+      return {
+        embedUrl: null,
+        directFileUrl: parsed.toString(),
+        canonicalKey: `odysee:${cleanPath.toLowerCase()}`,
+      };
+    }
+
+    if (/^\/\$\/embed\//i.test(cleanPath)) {
+      const embedParams = new URLSearchParams(parsed.search);
+      if (!embedParams.has('autoplay')) {
+        embedParams.set('autoplay', 'true');
+      }
+      return {
+        embedUrl: `https://odysee.com${cleanPath}?${embedParams.toString()}`,
+        directFileUrl: null,
+        canonicalKey: `odysee:${cleanPath.toLowerCase()}`,
+      };
+    }
+
+    // Normal Odysee watch URL e.g. /@Channel:a/Video-Title:b or /Video-Title:b
+    const encodedPath = cleanPath
+      .split('/')
+      .filter(Boolean)
+      .map((seg) => encodeURIComponent(decodeURIComponent(seg)))
+      .join('/');
+    if (!encodedPath) return null;
+
+    const embedParams = new URLSearchParams();
+    embedParams.set('autoplay', 'true');
+    const tParam = parsed.searchParams.get('t');
+    if (tParam) {
+      embedParams.set('t', tParam);
+    }
+
+    return {
+      embedUrl: `https://odysee.com/$/embed/${encodedPath}?${embedParams.toString()}`,
+      directFileUrl: null,
+      canonicalKey: `odysee:${cleanPath.toLowerCase()}`,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function isDirectVideoStreamUrl(rawUrl?: string): boolean {
   const clean = (rawUrl || '').trim();
   if (!clean) return false;
@@ -1318,6 +1398,7 @@ export type VideoSourceKind =
   | 'youtube'
   | 'dailymotion'
   | 'vimeo'
+  | 'odysee'
   | 'direct'
   | 'iframe'
   | 'empty';
@@ -1336,6 +1417,10 @@ export function describeVideoSourceLabel(rawInput?: string): string {
   if (extractYouTubeId(cleaned)) return 'YouTube Video';
   if (extractDailymotionVideoId(cleaned)) return 'Dailymotion';
   if (extractVimeoVideoId(cleaned)) return 'Vimeo';
+  const odysee = extractOdyseeInfo(cleaned);
+  if (odysee) {
+    return odysee.directFileUrl ? 'Odysee MP4' : 'Odysee';
+  }
   const ia = extractInternetArchiveInfo(cleaned);
   if (ia) {
     return ia.directFileUrl ? 'Internet Archive MP4' : 'Internet Archive';
@@ -1381,7 +1466,18 @@ export function resolveVideoSource(
     return { kind: 'vimeo', url: vimeoEmbed, rawUrl: cleaned };
   }
 
-  // 4) Internet Archive direct .mp4/.m3u8 file or embed page
+  // 4) Odysee (odysee.com/@channel/video -> https://odysee.com/$/embed/...)
+  const odysee = extractOdyseeInfo(cleaned);
+  if (odysee) {
+    if (odysee.directFileUrl) {
+      return { kind: 'direct', url: odysee.directFileUrl, rawUrl: cleaned };
+    }
+    if (odysee.embedUrl) {
+      return { kind: 'odysee', url: odysee.embedUrl, rawUrl: cleaned };
+    }
+  }
+
+  // 5) Internet Archive direct .mp4/.m3u8 file or embed page
   const iaInfo = extractInternetArchiveInfo(cleaned);
   if (iaInfo) {
     if (iaInfo.directFileUrl) {
@@ -1393,18 +1489,18 @@ export function resolveVideoSource(
     }
   }
 
-  // 5) Bunny Stream HTML embed page (iframe.mediadelivery.net/embed|play/... or video.bunnycdn.com/play/...)
+  // 6) Bunny Stream HTML embed page (iframe.mediadelivery.net/embed|play/... or video.bunnycdn.com/play/...)
   const bunnyEmbed = getBunnyEmbedUrl(cleaned);
   if (bunnyEmbed) {
     return { kind: 'iframe', url: bunnyEmbed, rawUrl: cleaned };
   }
 
-  // 6) Direct .mp4 / .m3u8 / Bunny Stream CDN / local idb/blob video URL -> native HTML5 <video>
+  // 7) Direct .mp4 / .m3u8 / Bunny Stream CDN / local idb/blob video URL -> native HTML5 <video>
   if (isDirectVideoStreamUrl(cleaned)) {
     return { kind: 'direct', url: cleaned, rawUrl: cleaned };
   }
 
-  // 7) Any other external embeddable URL
+  // 8) Any other external embeddable URL
   return { kind: 'iframe', url: cleaned, rawUrl: cleaned };
 }
 

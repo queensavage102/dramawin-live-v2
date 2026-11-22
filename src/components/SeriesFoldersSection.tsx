@@ -35,6 +35,7 @@ interface SeriesFoldersSectionProps {
   episodes: DramaEpisode[];
   cloudSeries?: DramaSeries[];
   privateState: PlayerPrivate;
+  referralUserId?: string;
   sponsorAdUrl?: string;
   playerWeeklyCoins: number;
   playerTotalCoins: number;
@@ -43,6 +44,8 @@ interface SeriesFoldersSectionProps {
   resumePlaybackSignal?: number;
   onToggleMute: () => void;
   onAwardCoinPot: (episode: DramaEpisode, amount: number) => Promise<void>;
+  onClaimGiftBoxCoins?: () => Promise<void>;
+  onShareEpisode?: (episode: DramaEpisode) => void;
   onStartSponsorReward?: (
     rewardAction?: () => Promise<void>,
     options?: { claimLabel?: string; readyHeadline?: string }
@@ -213,6 +216,7 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
   episodes,
   cloudSeries = [],
   privateState,
+  referralUserId,
   sponsorAdUrl,
   playerWeeklyCoins,
   playerTotalCoins,
@@ -221,6 +225,8 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
   resumePlaybackSignal,
   onToggleMute,
   onAwardCoinPot,
+  onClaimGiftBoxCoins,
+  onShareEpisode,
   onStartSponsorReward,
   onClaimHeroBonus,
   onMarkEpisodeWatched,
@@ -988,6 +994,8 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
           episode={
             episodes.find((ep) => ep.id === activePlayerEpisode.id) || activePlayerEpisode
           }
+          episodes={episodes}
+          referralUserId={referralUserId}
           sponsorAdUrl={sponsorAdUrl}
           playerWeeklyCoins={playerWeeklyCoins}
           playerTotalCoins={playerTotalCoins}
@@ -1003,6 +1011,14 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
               setSelectedSeriesId(getEpisodeSeriesId(nextEpisodeForActivePlayer));
             }
           }}
+          onSelectEpisode={(ep) => {
+            setActivePlayerEpisode(ep);
+            if (selectedSeriesId) {
+              setSelectedSeriesId(getEpisodeSeriesId(ep));
+            }
+          }}
+          onShareEpisode={onShareEpisode}
+          onClaimGiftBoxCoins={onClaimGiftBoxCoins}
           onToggleMute={onToggleMute}
           onAwardCoinPot={onAwardCoinPot}
           onStartSponsorReward={onStartSponsorReward}

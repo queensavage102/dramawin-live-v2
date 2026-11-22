@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { CalendarCheck2, Check, Coins, Crown } from 'lucide-react';
+import { CalendarCheck2, Check, Crown } from 'lucide-react';
 import {
   STREAK_DAYS,
   getCurrentWeekKey,
@@ -31,23 +31,26 @@ export const DailyCheckInBox: React.FC<DailyCheckInBoxProps> = ({
 
   const [collecting, setCollecting] = useState(false);
 
-  const handleCheckIn = async (day: { key: WeekDayKey; reward: number }) => {
-    if (claimedDays.includes(day.key) || day.key !== todayWeekday || collecting) {
-      return;
-    }
+  const todaySpec =
+    STREAK_DAYS.find((d) => d.key === todayWeekday) || STREAK_DAYS[0];
+  const isTodayClaimed = claimedDays.includes(todaySpec.key);
+
+  const handleClaimToday = async () => {
+    if (isTodayClaimed || collecting) return;
+
     if (onStartSponsorReward) {
       onStartSponsorReward(
         async () => {
           setCollecting(true);
           try {
-            await onCompleteCheckIn(day.key, day.reward);
+            await onCompleteCheckIn(todaySpec.key, todaySpec.reward);
           } finally {
             setCollecting(false);
           }
         },
         {
-          claimLabel: `Claim +${day.reward}`,
-          readyHeadline: `Sponsor Ad • Ready! +${day.reward} Coins Unlocked`,
+          claimLabel: `Claim +${todaySpec.reward}`,
+          readyHeadline: `Sponsor Ad • Ready! +${todaySpec.reward} Coins Unlocked`,
         }
       );
       return;
@@ -60,117 +63,129 @@ export const DailyCheckInBox: React.FC<DailyCheckInBoxProps> = ({
 
     setCollecting(true);
     try {
-      await onCompleteCheckIn(day.key, day.reward);
+      await onCompleteCheckIn(todaySpec.key, todaySpec.reward);
     } finally {
       setCollecting(false);
     }
   };
 
+  const renderTile = (day: { key: WeekDayKey; label: string; reward: number }) => {
+    const isClaimed = claimedDays.includes(day.key);
+    const isToday = day.key === todayWeekday;
+    const isSunday = day.key === 'Sun';
+
+    return (
+      <div
+        key={day.key}
+        className={`rounded-xl px-2 py-2.5 border flex flex-col items-center justify-center gap-1 text-center transition-all ${
+          isClaimed
+            ? 'bg-emerald-950/30 border-emerald-500/45'
+            : isToday
+              ? 'bg-gradient-to-b from-[#2A200A] to-[#131008] border-[#FCE7A2] shadow-[0_0_16px_rgba(212,175,55,0.22)]'
+              : 'bg-[#0B0B10] border-white/[0.08] opacity-75'
+        }`}
+      >
+        <div className="flex items-center justify-center gap-1 text-[11px] font-bold uppercase tracking-wide">
+          <span
+            className={
+              isClaimed
+                ? 'text-emerald-300'
+                : isToday
+                  ? 'text-[#FCE7A2]'
+                  : 'text-[#C4BDB0]'
+            }
+          >
+            {day.key}
+          </span>
+          {isClaimed ? (
+            <Check className="w-3 h-3 text-emerald-400 stroke-[3]" />
+          ) : isSunday ? (
+            <Crown className="w-3 h-3 text-[#D4AF37]" />
+          ) : null}
+        </div>
+
+        <div
+          className={`font-mono-num text-xs font-extrabold ${
+            isClaimed
+              ? 'text-emerald-300'
+              : isToday
+                ? 'text-[#FCE7A2]'
+                : 'text-[#E8C96D]'
+          }`}
+        >
+          +{day.reward}
+        </div>
+
+        <div className="text-[10px] leading-none font-semibold">
+          {isClaimed ? (
+            <span className="text-emerald-400">Done</span>
+          ) : isToday ? (
+            <span className="text-[#FCE7A2]">Today</span>
+          ) : (
+            <span className="text-[#7A746A]">{isSunday ? 'Bonus' : 'Locked'}</span>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const topRowDays = STREAK_DAYS.slice(0, 4);
+  const bottomRowDays = STREAK_DAYS.slice(4, 7);
+
   return (
     <section
       id="daily-checkin-box"
       aria-label="Monday to Sunday Daily Check-In"
-      className="obsidian-card rounded-2xl p-4 sm:p-6 space-y-4 border border-[#D4AF37]/40 shadow-[0_8px_32px_rgba(212,175,55,0.12)] scroll-mt-24"
+      className="obsidian-card rounded-2xl p-4 sm:p-5 space-y-3 border border-[#D4AF37]/40 shadow-[0_8px_28px_rgba(212,175,55,0.1)] scroll-mt-24"
     >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="space-y-0.5">
-          <div className="flex items-center gap-2">
-            <CalendarCheck2 className="w-4 h-4 text-[#D4AF37]" />
-            <h2 className="text-base sm:text-lg font-display font-bold text-[#F6F2E9]">
-              Mon–Sun Daily Check-In Bonus
-            </h2>
-          </div>
-          <p className="text-xs text-[#A69F91]">
-            Tap <strong className="text-[#FCE7A2]">Claim</strong> on today’s card to visit sponsor &amp; collect 100–300 bonus coins.
-          </p>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <CalendarCheck2 className="w-4 h-4 text-[#D4AF37] shrink-0" />
+          <h2 className="text-sm sm:text-base font-display font-bold text-[#F6F2E9] truncate">
+            Mon–Sun Daily Check-In Bonus
+          </h2>
         </div>
 
-        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#15120A] border border-[#D4AF37]/35 font-mono-num text-xs font-bold text-[#FCE7A2]">
-          <span>{claimedDays.length} / 7 Checked In</span>
+        <span className="font-mono-num text-xs font-bold text-[#FCE7A2] whitespace-nowrap shrink-0">
+          {claimedDays.length} / 7 Days
+        </span>
+      </div>
+
+      {/* Compact 4-tile top row (Mon–Thu) + 3-tile bottom row (Fri–Sun) */}
+      <div className="space-y-2">
+        <div className="grid grid-cols-4 gap-2">
+          {topRowDays.map(renderTile)}
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          {bottomRowDays.map(renderTile)}
         </div>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2.5">
-        {STREAK_DAYS.map((day) => {
-          const isClaimed = claimedDays.includes(day.key);
-          const isToday = day.key === todayWeekday;
-          const isSunday = day.key === 'Sun';
-
-          return (
-            <div
-              key={day.key}
-              className={`rounded-xl p-3 border flex flex-col justify-between gap-2.5 transition-all ${
-                isSunday ? 'col-span-2 sm:col-span-1' : ''
-              } ${
-                isClaimed
-                  ? 'bg-emerald-950/30 border-emerald-500/50 shadow-[0_0_16px_rgba(34,197,94,0.12)]'
-                  : isToday
-                    ? 'bg-gradient-to-b from-[#2A200A] to-[#131008] border-[#FCE7A2] shadow-[0_0_24px_rgba(212,175,55,0.24)]'
-                    : 'bg-[#0B0B10] border-white/[0.08] opacity-80'
-              }`}
-            >
-              <div className="flex items-center justify-between gap-1.5">
-                <div className="flex items-center gap-1 min-w-0">
-                  <span
-                    className={`text-xs font-bold uppercase tracking-wide ${
-                      isClaimed
-                        ? 'text-emerald-300'
-                        : isToday
-                          ? 'text-[#FCE7A2]'
-                          : 'text-[#C4BDB0]'
-                    }`}
-                  >
-                    {day.key}
-                  </span>
-                  {isSunday && !isClaimed && (
-                    <Crown className="w-3.5 h-3.5 text-[#D4AF37] shrink-0" />
-                  )}
-                </div>
-
-                {isClaimed ? (
-                  <span
-                    aria-label={`${day.label} checked in`}
-                    className="w-5 h-5 rounded-full bg-emerald-500 text-[#052010] flex items-center justify-center shrink-0 shadow-sm shadow-emerald-500/40"
-                  >
-                    <Check className="w-3.5 h-3.5 stroke-[3]" />
-                  </span>
-                ) : isToday ? (
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-[#181307] gold-gradient-bg px-1.5 py-0.5 rounded">
-                    Today
-                  </span>
-                ) : null}
-              </div>
-
-              <div className="space-y-2">
-                <div className="font-mono-num text-sm font-extrabold text-[#FCE7A2] flex items-center gap-1">
-                  <Coins className="w-3.5 h-3.5 text-[#D4AF37] shrink-0" />
-                  <span>+{day.reward}</span>
-                </div>
-
-                {isClaimed ? (
-                  <div className="min-h-[34px] rounded-lg bg-emerald-500/15 border border-emerald-500/35 text-emerald-300 text-[11px] font-bold flex items-center justify-center gap-1">
-                    <Check className="w-3.5 h-3.5" />
-                    <span>Collected</span>
-                  </div>
-                ) : isToday ? (
-                  <button
-                    type="button"
-                    disabled={collecting}
-                    onClick={() => void handleCheckIn(day)}
-                    className="w-full min-h-[38px] px-2.5 rounded-lg gold-gradient-bg text-[#181307] text-xs font-extrabold tracking-wide hover:brightness-105 active:scale-[0.97] transition-all shadow-md shadow-[#D4AF37]/25 cursor-pointer disabled:opacity-60"
-                  >
-                    {collecting ? 'Claiming...' : 'Claim'}
-                  </button>
-                ) : (
-                  <div className="min-h-[34px] rounded-lg bg-[#14141B] border border-white/[0.06] text-[#7A746A] text-[11px] font-medium flex items-center justify-center">
-                    {isSunday ? 'Sunday Bonus' : 'Locked'}
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      {/* Single "Claim Today" button underneath */}
+      {isTodayClaimed ? (
+        <button
+          type="button"
+          disabled
+          className="w-full min-h-[44px] px-4 rounded-xl bg-emerald-950/40 border border-emerald-500/40 text-emerald-300 text-xs sm:text-sm font-bold inline-flex items-center justify-center gap-2 cursor-not-allowed"
+        >
+          <Check className="w-4 h-4 shrink-0" />
+          <span>Today’s Check-In Claimed (+{todaySpec.reward} Coins)</span>
+        </button>
+      ) : (
+        <button
+          type="button"
+          disabled={collecting}
+          onClick={() => void handleClaimToday()}
+          className="w-full min-h-[44px] px-4 rounded-xl gold-gradient-bg text-[#181307] text-xs sm:text-sm font-extrabold inline-flex items-center justify-center gap-2 shadow-[0_6px_20px_rgba(212,175,55,0.28)] hover:brightness-105 active:scale-[0.98] transition-all cursor-pointer disabled:opacity-60"
+        >
+          <CalendarCheck2 className="w-4 h-4 shrink-0" />
+          <span>
+            {collecting
+              ? 'Claiming...'
+              : `Claim Today (+${todaySpec.reward} Coins)`}
+          </span>
+        </button>
+      )}
     </section>
   );
 };

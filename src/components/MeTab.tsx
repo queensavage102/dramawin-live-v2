@@ -4,21 +4,41 @@ import {
   Check,
   Coins,
   Copy,
+  ExternalLink,
   FileText,
+  Film,
   Fingerprint,
   Flame,
+  Loader2,
+  MessageCircle,
+  Send,
+  Share2,
   ShieldCheck,
   Trophy,
   UserPlus,
+  Users,
   X,
 } from 'lucide-react';
-import { BRAND_NAME, getEpisodeSeriesId } from '../constants';
+import {
+  BRAND_NAME,
+  REFERRAL_REWARD_COINS,
+  buildPersonalInviteLink,
+  getEpisodeSeriesId,
+} from '../constants';
 import { DramaEpisode, LeaderboardPlayer, PlayerPrivate } from '../types';
+import { BoostTrackerState } from '../utils/localState';
+
+const TIKTOK_PROFILE_URL = 'https://tiktok.com/@faceless_creator_sa';
+const SERIES_REQUEST_WEB3FORMS_ENDPOINT = 'https://api.web3forms.com/submit';
+const SERIES_REQUEST_ACCESS_KEY = '1cf6a6bd-bbe1-44ae-94ca-5ee93136033e';
 
 interface MeTabProps {
   player: LeaderboardPlayer;
   privateState: PlayerPrivate;
   trackingId: string;
+  referralUserId: string;
+  referralsJoinedCount: number;
+  boostState: BoostTrackerState;
   episodes: DramaEpisode[];
   myListSeriesIds: string[];
   qualificationThreshold: number;
@@ -26,6 +46,11 @@ interface MeTabProps {
   onUpdatePlayerName: (newName: string) => Promise<void>;
   onToggleMyList: (seriesId: string, seriesName: string) => void;
   onGoToHome: () => void;
+  onNotifyInviteLinkCopied: (url: string) => void;
+  onNotifyWhatsappShared: () => void;
+  onMarkTiktokVisited: () => void;
+  onClaimTiktokBoost: () => Promise<void>;
+  onSeriesRequestReward: () => Promise<boolean>;
 }
 
 type LegalModalType = 'privacy' | 'terms' | null;
@@ -36,6 +61,9 @@ export const MeTab: React.FC<MeTabProps> = ({
   player,
   privateState,
   trackingId,
+  referralUserId,
+  referralsJoinedCount,
+  boostState,
   episodes,
   myListSeriesIds,
   qualificationThreshold,
@@ -43,38 +71,78 @@ export const MeTab: React.FC<MeTabProps> = ({
   onUpdatePlayerName,
   onToggleMyList,
   onGoToHome,
+  onNotifyInviteLinkCopied,
+  onNotifyWhatsappShared,
+  onMarkTiktokVisited,
+  onClaimTiktokBoost,
+  onSeriesRequestReward,
 }) => {
   const [nameInput, setNameInput] = useState(player.username);
   const [savingName, setSavingName] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
   const [nameSavedFlash, setNameSavedFlash] = useState(false);
   const [copiedId, setCopiedId] = useState(false);
+  const [copiedInvite, setCopiedInvite] = useState(false);
+  const [claimingTiktok, setClaimingTiktok] = useState(false);
+  const [requestTitle, setRequestTitle] = useState('');
+  const [submittingRequest, setSubmittingRequest] = useState(false);
+  const [requestError, setRequestError] = useState<string | null>(null);
+  const [requestStatusMsg, setRequestStatusMsg] = useState<string | null>(null);
   const [legalModal, setLegalModal] = useState<LegalModalType>(null);
 
   useEffect(() => {
     setNameInput(player.username);
   }, [player.username]);
 
+  const personalInviteLink = buildPersonalInviteLink(referralUserId);
+  const whatsappShareHref = `https://wa.me/?text=${encodeURIComponent(
+    `🔥 Watch free short dramas & win virtual Coins on DramaWin! Join using my invite link: ${personalInviteLink}`
+  )}`;
+
+  const copyTextToClipboard = async (value: string) => {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return;
+    }
+    const el = document.createElement('textarea');
+    el.value = value;
+    el.setAttribute('readonly', '');
+    el.className = 'sr-only';
+    document.body.appendChild(el);
+    el.select();
+    document.execCommand('copy');
+    document.body.removeChild(el);
+  };
+
   const handleCopyTrackingId = async () => {
     if (!trackingId) return;
     try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(trackingId);
-      } else {
-        const el = document.createElement('textarea');
-        el.value = trackingId;
-        el.setAttribute('readonly', '');
-        el.style.position = 'absolute';
-        el.style.left = '-9999px';
-        document.body.appendChild(el);
-        el.select();
-        document.execCommand('copy');
-        document.body.removeChild(el);
-      }
+      await copyTextToClipboard(trackingId);
       setCopiedId(true);
       window.setTimeout(() => setCopiedId(false), 2200);
     } catch {
       // Fallback ignored if clipboard blocked
+    }
+  };
+
+  const handleCopyInviteLink = async () => {
+    try {
+      await copyTextToClipboard(personalInviteLink);
+      setCopiedInvite(true);
+      window.setTimeout(() => setCopiedInvite(false), 2200);
+      onNotifyInviteLinkCopied(personalInviteLink);
+    } catch {
+      // Fallback ignored if clipboard blocked
+    }
+  };
+
+  const handleClaimTiktok = async () => {
+    if (boostState.tiktokClaimed || claimingTiktok) return;
+    setClaimingTiktok(true);
+    try {
+      await onClaimTiktokBoost();
+    } finally {
+      setClaimingTiktok(false);
     }
   };
 
@@ -98,6 +166,60 @@ export const MeTab: React.FC<MeTabProps> = ({
     }
   };
 
+  const handleSubmitSeriesRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRequestError(null);
+    setRequestStatusMsg(null);
+    const cleanedTitle = requestTitle.trim();
+    if (cleanedTitle.length < 2) {
+      setRequestError('Please type a drama, anime, or series title.');
+      return;
+    }
+
+    setSubmittingRequest(true);
+    try {
+      const response = await fetch(SERIES_REQUEST_WEB3FORMS_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          access_key: SERIES_REQUEST_ACCESS_KEY,
+          subject: 'New DramaWin Series Request',
+          from_name: 'DramaWin App',
+          message: [
+            `Requested Series / Movie Title: ${cleanedTitle}`,
+            `Player Tracking ID: ${trackingId}`,
+            `Player Name: ${player.username || 'Player'}`,
+          ].join('\n'),
+        }),
+      });
+
+      const payload = (await response.json().catch(() => null)) as {
+        success?: boolean;
+        message?: string;
+      } | null;
+
+      if (!response.ok || (payload && payload.success === false)) {
+        throw new Error(payload?.message || `HTTP ${response.status}`);
+      }
+
+      setRequestTitle('');
+      const awarded = await onSeriesRequestReward();
+      setRequestStatusMsg(
+        awarded
+          ? 'Request sent! +250 Coins added to your wallet.'
+          : 'Request sent! Thanks for another suggestion.'
+      );
+      window.setTimeout(() => setRequestStatusMsg(null), 4000);
+    } catch {
+      setRequestError('Could not send your request right now. Please try again.');
+    } finally {
+      setSubmittingRequest(false);
+    }
+  };
+
   // Strict (currentCoins / 500000) * 100 starting cleanly at 0%
   const safeTarget = Math.max(TARGET_TOURNAMENT_COINS, qualificationThreshold || TARGET_TOURNAMENT_COINS);
   const exactPct = Math.min(100, Math.max(0, (player.weeklyCoins / safeTarget) * 100));
@@ -111,7 +233,196 @@ export const MeTab: React.FC<MeTabProps> = ({
           : `${exactPct.toFixed(1)}%`;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
+      {/* Unified Invite & Social Section (Share on WhatsApp, Copy Personal Link, Follow TikTok) */}
+      <section
+        id="invite-social-section"
+        aria-labelledby="invite-social-heading"
+        className="obsidian-card rounded-2xl p-4 sm:p-5 border border-[#D4AF37]/45 bg-gradient-to-br from-[#161209] via-[#100F14] to-[#0A0A0E] shadow-[0_10px_32px_-16px_rgba(212,175,55,0.38)] space-y-3.5 scroll-mt-24"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-9 h-9 rounded-xl gold-gradient-bg text-[#181307] flex items-center justify-center shrink-0">
+              <Users className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <h2
+                id="invite-social-heading"
+                className="text-base sm:text-lg font-display font-bold text-[#F6F2E9]"
+              >
+                Invite &amp; Social
+              </h2>
+              <p className="text-[11px] sm:text-xs text-[#A69F91]">
+                Earn <strong className="text-[#FCE7A2]">+{REFERRAL_REWARD_COINS.toLocaleString()} Coins</strong> only when a new friend visits your personal link
+              </p>
+            </div>
+          </div>
+
+          <span className="font-mono-num text-xs font-bold text-[#FCE7A2] whitespace-nowrap">
+            Friends Joined: {referralsJoinedCount}
+          </span>
+        </div>
+
+        {/* Personal Referral Link Display */}
+        <div className="rounded-xl bg-[#070709] border border-[#D4AF37]/30 px-3 py-2 flex items-center justify-between gap-2">
+          <code className="font-mono-num text-[11px] sm:text-xs text-[#FCE7A2] truncate select-all">
+            {personalInviteLink}
+          </code>
+          <span className="text-[10px] font-semibold text-[#8D867A] whitespace-nowrap shrink-0">
+            Personal Link
+          </span>
+        </div>
+
+        {/* Share on WhatsApp + Copy Personal Link (No instant coins on click) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          <a
+            href={whatsappShareHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={onNotifyWhatsappShared}
+            className="min-h-[44px] px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-green-600 hover:brightness-110 text-white text-xs sm:text-sm font-extrabold inline-flex items-center justify-center gap-2 shadow-md shadow-emerald-600/20 active:scale-[0.98] transition-all cursor-pointer whitespace-nowrap"
+          >
+            <MessageCircle className="w-4 h-4 shrink-0" />
+            <span>Share on WhatsApp</span>
+          </a>
+
+          <button
+            type="button"
+            onClick={() => void handleCopyInviteLink()}
+            className="min-h-[44px] px-4 rounded-xl gold-gradient-bg text-[#181307] text-xs sm:text-sm font-extrabold inline-flex items-center justify-center gap-2 shadow-md shadow-[#D4AF37]/25 hover:brightness-105 active:scale-[0.98] transition-all cursor-pointer whitespace-nowrap"
+          >
+            {copiedInvite ? (
+              <>
+                <Check className="w-4 h-4 shrink-0" />
+                <span>Personal Link Copied!</span>
+              </>
+            ) : (
+              <>
+                <Copy className="w-4 h-4 shrink-0" />
+                <span>Copy Personal Link</span>
+              </>
+            )}
+          </button>
+        </div>
+
+        {/* Follow @faceless_creator_sa on TikTok Row */}
+        <div className="pt-2.5 border-t border-white/[0.08] flex flex-wrap items-center justify-between gap-2.5">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-amber-500/15 border border-[#D4AF37]/35 flex items-center justify-center text-[#FCE7A2] shrink-0">
+              <Share2 className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs sm:text-sm font-bold text-[#F6F2E9] truncate">
+                Follow @faceless_creator_sa on TikTok
+              </div>
+              <div className="text-[11px] text-[#8D867A] font-mono-num">
+                +500 Coins · One-time social bonus
+              </div>
+            </div>
+          </div>
+
+          {boostState.tiktokClaimed ? (
+            <span className="min-h-[38px] px-3.5 rounded-full bg-emerald-950/40 border border-emerald-500/40 text-emerald-300 text-xs font-bold inline-flex items-center gap-1.5 shrink-0">
+              <Check className="w-3.5 h-3.5" />
+              <span>Claimed (+500)</span>
+            </span>
+          ) : boostState.tiktokVisited ? (
+            <button
+              type="button"
+              disabled={claimingTiktok}
+              onClick={() => void handleClaimTiktok()}
+              className="min-h-[38px] px-4 rounded-full gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center gap-1.5 shrink-0 hover:brightness-105 cursor-pointer disabled:opacity-60"
+            >
+              <Coins className="w-3.5 h-3.5" />
+              <span>{claimingTiktok ? 'Claiming...' : 'Claim +500 Coins'}</span>
+            </button>
+          ) : (
+            <a
+              href={TIKTOK_PROFILE_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={onMarkTiktokVisited}
+              className="min-h-[38px] px-4 rounded-full gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center gap-1.5 shrink-0 hover:brightness-105 cursor-pointer"
+            >
+              <span>Follow TikTok</span>
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+          )}
+        </div>
+      </section>
+
+      {/* Compact "🎬 Request a Series / Movie" Suggestion Box */}
+      <section
+        aria-labelledby="request-series-heading"
+        className="obsidian-card rounded-2xl p-4 sm:p-5 border border-[#D4AF37]/40 bg-gradient-to-br from-[#141008] via-[#100F14] to-[#0A0A0E] space-y-3"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-xl bg-amber-500/15 border border-[#D4AF37]/45 text-[#FCE7A2] flex items-center justify-center shrink-0">
+              <Film className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <h2
+                id="request-series-heading"
+                className="text-sm sm:text-base font-display font-bold text-[#F6F2E9] leading-tight"
+              >
+                🎬 Request a Series / Movie
+              </h2>
+              <p className="text-[11px] text-[#A69F91]">
+                Tell us what show to add next
+              </p>
+            </div>
+          </div>
+
+          {boostState.seriesRequestBonusClaimed ? (
+            <span className="inline-flex items-center gap-1 text-[11px] font-mono-num font-bold text-emerald-300 bg-emerald-950/40 border border-emerald-500/40 px-2.5 py-0.5 rounded-full whitespace-nowrap">
+              <Check className="w-3 h-3" />
+              <span>+250 Claimed</span>
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-[11px] font-mono-num font-extrabold text-[#181307] gold-gradient-bg px-2.5 py-0.5 rounded-full whitespace-nowrap">
+              +250 Coins · 1st Request
+            </span>
+          )}
+        </div>
+
+        <form onSubmit={(e) => void handleSubmitSeriesRequest(e)} className="flex flex-col sm:flex-row gap-2">
+          <input
+            type="text"
+            value={requestTitle}
+            onChange={(e) => setRequestTitle(e.target.value)}
+            maxLength={120}
+            placeholder="Type a drama, anime, or series title you want us to add..."
+            aria-label="Series or movie title request"
+            className="flex-1 min-h-[42px] px-3.5 py-2 rounded-xl bg-[#070709] border border-[#D4AF37]/30 focus:border-[#D4AF37] text-xs sm:text-sm text-[#F6F2E9] placeholder:text-[#7A746A] focus:outline-none"
+          />
+          <button
+            type="submit"
+            disabled={submittingRequest}
+            className="min-h-[42px] px-4 rounded-xl gold-gradient-bg text-[#181307] text-xs sm:text-sm font-extrabold inline-flex items-center justify-center gap-1.5 shadow-sm shadow-[#D4AF37]/25 hover:brightness-105 active:scale-[0.98] transition-all cursor-pointer disabled:opacity-60 whitespace-nowrap shrink-0"
+          >
+            {submittingRequest ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <span>Sending...</span>
+              </>
+            ) : (
+              <>
+                <Send className="w-3.5 h-3.5" />
+                <span>Submit Request</span>
+              </>
+            )}
+          </button>
+        </form>
+
+        {requestError && (
+          <p className="text-[11px] text-rose-400 font-medium">{requestError}</p>
+        )}
+        {requestStatusMsg && (
+          <p className="text-[11px] text-emerald-300 font-medium">{requestStatusMsg}</p>
+        )}
+      </section>
+
       {/* Player Tracking ID Card (Offerwall & Support Tracking) */}
       <section className="obsidian-card rounded-2xl p-5 sm:p-6 border border-[#D4AF37]/45 bg-gradient-to-br from-[#14110A] via-[#0D0D12] to-[#0A0A0E] shadow-[0_12px_36px_-18px_rgba(212,175,55,0.4)] space-y-3.5">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -380,7 +691,7 @@ export const MeTab: React.FC<MeTabProps> = ({
                       : `${BRAND_NAME} — Terms of Service`}
                   </h3>
                   <p className="text-[11px] text-[#A69F91]">
-                    Effective Date: January 2025 · Virtual Entertainment Platform
+                    Effective Date: November 2026 · Virtual Entertainment Platform
                   </p>
                 </div>
               </div>

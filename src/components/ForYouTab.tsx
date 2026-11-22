@@ -1,39 +1,35 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Bookmark,
-  Check,
-  ChevronDown,
-  ChevronUp,
   Coins,
   Film,
-  Layers,
+  Maximize2,
+  Minimize2,
   Play,
   RotateCcw,
-  Share2,
-  Sparkles,
+  Scan,
+  SkipForward,
+  Trophy,
   Volume2,
   VolumeX,
   X,
+  ZoomIn,
 } from 'lucide-react';
 import {
   COIN_POT_BASE_REWARD,
   COIN_POT_CYCLE_SECONDS,
   DEFAULT_SPONSOR_URL,
-  DEFAULT_VIDEO_START_SECONDS,
-  getEpisodeSeriesId,
-  inferEpisodeCategory,
-  normalizeEpisodeStartSeconds,
   resolveVideoSource,
   sanitizeMediaUrl,
 } from '../constants';
 import { DramaEpisode, PlayerPrivate } from '../types';
 import { useResolvedMediaUrl } from '../utils/mediaStore';
+import { BottomAdBanner } from './BottomAdBanner';
 import { DoubleRewardModal } from './DoubleRewardModal';
-import { EpisodeWatchScreen } from './EpisodeWatchScreen';
 import { IsolatedHtml5Video, IsolatedYouTubeIframe } from './IsolatedYouTubeIframe';
+import { RealisticGoldCoin } from './RealisticGoldCoin';
 
 const FORYOU_YOUTUBE_ALLOW =
-  'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+  'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen';
 const FORYOU_IFRAME_FIT_CLASS =
   'pointer-events-none absolute inset-0 w-full h-full border-0 block bg-[#060608] transition-all duration-300 ease-out';
 const FORYOU_IFRAME_ZOOM_CLASS =
@@ -46,17 +42,17 @@ const FORYOU_VIDEO_ZOOM_CLASS =
 interface ForYouTabProps {
   episodes: DramaEpisode[];
   privateState: PlayerPrivate;
+  referralUserId: string;
   sponsorAdUrl?: string;
-  myListSeriesIds: string[];
   playerWeeklyCoins: number;
   playerTotalCoins: number;
   qualificationThreshold: number;
   muted: boolean;
   resumePlaybackSignal?: number;
   onToggleMute: () => void;
-  onToggleMyList: (seriesId: string, seriesName: string) => void;
   onShareEpisode: (episode: DramaEpisode) => void;
   onAwardCoinPot: (episode: DramaEpisode, amount: number) => Promise<void>;
+  onClaimGiftBoxCoins?: () => Promise<void>;
   onStartSponsorReward?: (rewardAction?: () => Promise<void>) => void;
   onMarkEpisodeWatched?: (episode: DramaEpisode) => Promise<void>;
   onSwitchToHome: () => void;
@@ -107,17 +103,11 @@ function postVimeoCommand(
 
 export const ForYouTab: React.FC<ForYouTabProps> = ({
   episodes,
-  privateState,
   sponsorAdUrl,
-  myListSeriesIds,
   playerWeeklyCoins,
-  playerTotalCoins,
   qualificationThreshold,
   muted,
-  resumePlaybackSignal,
   onToggleMute,
-  onToggleMyList,
-  onShareEpisode,
   onAwardCoinPot,
   onStartSponsorReward,
   onMarkEpisodeWatched,
@@ -125,15 +115,18 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
 }) => {
   const [activeIndex, setActiveIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(true);
-  const [isZoomed, setIsZoomed] = useState(false);
+  const [isZoomed, setIsZoomed] = useState(true);
+  const [isExpandedFull, setIsExpandedFull] = useState(false);
   const [ringProgress, setRingProgress] = useState(0);
   const [rewardModalOpen, setRewardModalOpen] = useState(false);
-  const [drawerSeriesId, setDrawerSeriesId] = useState<string | null>(null);
-  const [fullScreenEpisode, setFullScreenEpisode] = useState<DramaEpisode | null>(null);
+  const [flyingBurst, setFlyingBurst] = useState<{ id: number; amount: number } | null>(null);
+
   const [retryCount, setRetryCount] = useState(0);
   const [isRecovering, setIsRecovering] = useState(false);
   const [recoveryFailed, setRecoveryFailed] = useState(false);
+  const [isStalledOver5s, setIsStalledOver5s] = useState(false);
 
+  const playerContainerRef = useRef<HTMLElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const touchStartYRef = useRef<number | null>(null);
@@ -142,8 +135,54 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
   const rewardModalOpenRef = useRef(false);
   const onAwardRef = useRef(onAwardCoinPot);
   const stallTimerRef = useRef<number | null>(null);
+  const stallPillTimerRef = useRef<number | null>(null);
   const retryDelayTimerRef = useRef<number | null>(null);
   const savedTimeRef = useRef<number>(0);
+  const lastProgressTimeRef = useRef<number>(-1);
+
+  useEffect(() => {
+    onAwardRef.current = onAwardCoinPot;
+  }, [onAwardCoinPot]);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      if (!document.fullscreenElement) {
+        setIsExpandedFull(false);
+        try {
+          const orientation = screen.orientation as ScreenOrientation & {
+            unlock?: () => void;
+          };
+          orientation?.unlock?.();
+        } catch {
+          // Ignore unsupported orientation unlock
+        }
+      }
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    };
+  }, []);
+
+  const clearStallPill = useCallback(() => {
+    if (stallPillTimerRef.current !== null) {
+      window.clearTimeout(stallPillTimerRef.current);
+      stallPillTimerRef.current = null;
+    }
+    setIsStalledOver5s(false);
+  }, []);
+
+  const scheduleStallPill = useCallback(() => {
+    if (!isPlayingRef.current || rewardModalOpenRef.current) return;
+    if (stallPillTimerRef.current !== null) return;
+    stallPillTimerRef.current = window.setTimeout(() => {
+      stallPillTimerRef.current = null;
+      if (isPlayingRef.current && !rewardModalOpenRef.current) {
+        setIsStalledOver5s(true);
+      }
+    }, 5200);
+  }, []);
 
   const clearRecoveryTimers = useCallback(() => {
     if (stallTimerRef.current !== null) {
@@ -156,44 +195,45 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
     }
   }, []);
 
-  const triggerAutoRecover = useCallback((isDirect: boolean) => {
-    if (!isPlayingRef.current || rewardModalOpenRef.current) return;
-    if (stallTimerRef.current !== null) {
-      window.clearTimeout(stallTimerRef.current);
-      stallTimerRef.current = null;
-    }
-    if (retryDelayTimerRef.current !== null) return;
-
-    if (isDirect && videoRef.current && Number.isFinite(videoRef.current.currentTime)) {
-      savedTimeRef.current = videoRef.current.currentTime;
-    }
-
-    setRetryCount((prev) => {
-      if (prev >= 3) {
-        setIsRecovering(false);
-        setRecoveryFailed(true);
-        return prev;
+  const triggerAutoRecover = useCallback(
+    (isDirect: boolean) => {
+      if (!isPlayingRef.current || rewardModalOpenRef.current) return;
+      if (stallTimerRef.current !== null) {
+        window.clearTimeout(stallTimerRef.current);
+        stallTimerRef.current = null;
       }
-      setIsRecovering(true);
-      setRecoveryFailed(false);
-      retryDelayTimerRef.current = window.setTimeout(() => {
-        retryDelayTimerRef.current = null;
-        if (isDirect && videoRef.current) {
-          try {
-            videoRef.current.load();
-            void videoRef.current.play().catch(() => {});
-          } catch {
-            // Remount handles fallback
-          }
-        }
-      }, 900);
-      return prev + 1;
-    });
-  }, []);
+      if (retryDelayTimerRef.current !== null) return;
 
-  useEffect(() => {
-    onAwardRef.current = onAwardCoinPot;
-  }, [onAwardCoinPot]);
+      if (isDirect && videoRef.current && Number.isFinite(videoRef.current.currentTime)) {
+        savedTimeRef.current = videoRef.current.currentTime;
+      }
+
+      setRetryCount((prev) => {
+        if (prev >= 3) {
+          setIsRecovering(false);
+          setRecoveryFailed(true);
+          setIsStalledOver5s(true);
+          return prev;
+        }
+        setIsRecovering(true);
+        setRecoveryFailed(false);
+        scheduleStallPill();
+        retryDelayTimerRef.current = window.setTimeout(() => {
+          retryDelayTimerRef.current = null;
+          if (isDirect && videoRef.current) {
+            try {
+              videoRef.current.load();
+              void videoRef.current.play().catch(() => {});
+            } catch {
+              // Remount handles fallback
+            }
+          }
+        }, 900);
+        return prev + 1;
+      });
+    },
+    [scheduleStallPill]
+  );
 
   useEffect(() => {
     if (activeIndex >= episodes.length && episodes.length > 0) {
@@ -202,22 +242,25 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
   }, [activeIndex, episodes.length]);
 
   const currentEpisode = episodes[activeIndex] || null;
-  const currentSeriesId = currentEpisode ? getEpisodeSeriesId(currentEpisode) : '';
-  const isSavedInMyList = currentSeriesId ? myListSeriesIds.includes(currentSeriesId) : false;
 
   const rawVideoUrl = currentEpisode
     ? sanitizeMediaUrl((currentEpisode.videoUrl || currentEpisode.youtubeUrl || '').trim())
     : '';
-  const startSeconds = currentEpisode
-    ? normalizeEpisodeStartSeconds(currentEpisode.startTime)
-    : DEFAULT_VIDEO_START_SECONDS;
+  const customStartSeconds =
+    currentEpisode && typeof currentEpisode.startTime === 'number' && Number.isFinite(currentEpisode.startTime)
+      ? Math.max(0, Math.floor(currentEpisode.startTime))
+      : 0;
 
   const videoSource = useMemo(
     () =>
       rawVideoUrl
-        ? resolveVideoSource(rawVideoUrl, { startSeconds, muted: false, autoplay: true })
+        ? resolveVideoSource(rawVideoUrl, {
+            startSeconds: customStartSeconds,
+            muted: false,
+            autoplay: true,
+          })
         : { kind: 'empty' as const, url: '', rawUrl: '' },
-    [rawVideoUrl, startSeconds]
+    [rawVideoUrl, customStartSeconds]
   );
 
   const resolvedMediaUrl = useResolvedMediaUrl(
@@ -226,7 +269,9 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
 
   useEffect(() => {
     clearRecoveryTimers();
+    clearStallPill();
     savedTimeRef.current = 0;
+    lastProgressTimeRef.current = -1;
     setRetryCount(0);
     setIsRecovering(false);
     setRecoveryFailed(false);
@@ -236,8 +281,39 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
     rewardModalOpenRef.current = false;
     elapsedMsRef.current = 0;
     setRingProgress(0);
-    return () => clearRecoveryTimers();
-  }, [currentEpisode?.id, clearRecoveryTimers]);
+    setIsZoomed(true);
+    return () => {
+      clearRecoveryTimers();
+      clearStallPill();
+    };
+  }, [currentEpisode?.id, clearRecoveryTimers, clearStallPill]);
+
+  useEffect(() => {
+    if (!isPlaying || rewardModalOpen || videoSource.kind === 'empty') {
+      clearStallPill();
+      return;
+    }
+    scheduleStallPill();
+    return () => {
+      if (stallPillTimerRef.current !== null) {
+        window.clearTimeout(stallPillTimerRef.current);
+        stallPillTimerRef.current = null;
+      }
+    };
+  }, [
+    currentEpisode?.id,
+    videoSource.kind,
+    resolvedMediaUrl,
+    isPlaying,
+    rewardModalOpen,
+    scheduleStallPill,
+    clearStallPill,
+  ]);
+
+  const currentEpisodeRef = useRef(currentEpisode);
+  useEffect(() => {
+    currentEpisodeRef.current = currentEpisode;
+  }, [currentEpisode]);
 
   const prevIsPlayingRef = useRef(true);
   const mutedRef = useRef(muted);
@@ -253,6 +329,7 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
 
   const handleIframeLoad = useCallback(() => {
     setIsRecovering(false);
+    clearStallPill();
     try {
       if (sourceKindRef.current === 'youtube') {
         iframeRef.current?.contentWindow?.postMessage(
@@ -283,7 +360,7 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
     } catch {
       // Ignore cross-origin postMessage restrictions
     }
-  }, []);
+  }, [clearStallPill]);
 
   const handleVideoLoadedMetadata = useCallback((e: React.SyntheticEvent<HTMLVideoElement>) => {
     e.currentTarget.muted = mutedRef.current;
@@ -300,16 +377,18 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
 
   const handleVideoCanPlay = useCallback(() => {
     clearRecoveryTimers();
+    clearStallPill();
     setIsRecovering(false);
     setRecoveryFailed(false);
-  }, [clearRecoveryTimers]);
+  }, [clearRecoveryTimers, clearStallPill]);
 
   const handleVideoPlaying = useCallback(() => {
     clearRecoveryTimers();
+    clearStallPill();
     setIsRecovering(false);
     setRecoveryFailed(false);
     setIsPlaying(true);
-  }, [clearRecoveryTimers]);
+  }, [clearRecoveryTimers, clearStallPill]);
 
   const handleVideoPlay = useCallback(
     (e: React.SyntheticEvent<HTMLVideoElement>) => {
@@ -330,39 +409,49 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
         }
       }
       clearRecoveryTimers();
+      clearStallPill();
       setIsRecovering(false);
       setRecoveryFailed(false);
       setIsPlaying(true);
     },
-    [clearRecoveryTimers]
+    [clearRecoveryTimers, clearStallPill]
   );
 
   const handleVideoTimeUpdate = useCallback(
     (e: React.SyntheticEvent<HTMLVideoElement>) => {
-      if (e.currentTarget.currentTime > 0) {
-        savedTimeRef.current = e.currentTarget.currentTime;
+      const nowTime = e.currentTarget.currentTime;
+      if (nowTime > 0) {
+        savedTimeRef.current = nowTime;
       }
-      if (stallTimerRef.current !== null) {
-        clearRecoveryTimers();
-        setIsRecovering(false);
+      if (nowTime > 0 && Math.abs(nowTime - lastProgressTimeRef.current) > 0.05) {
+        lastProgressTimeRef.current = nowTime;
+        clearStallPill();
+        if (stallTimerRef.current !== null) {
+          clearRecoveryTimers();
+          setIsRecovering(false);
+        }
       }
     },
-    [clearRecoveryTimers]
+    [clearRecoveryTimers, clearStallPill]
   );
 
   const handleVideoWaitingOrStalled = useCallback(() => {
-    if (isPlayingRef.current && stallTimerRef.current === null) {
-      stallTimerRef.current = window.setTimeout(() => {
-        stallTimerRef.current = null;
-        triggerAutoRecover(true);
-      }, 4500);
+    if (isPlayingRef.current) {
+      scheduleStallPill();
+      if (stallTimerRef.current === null) {
+        stallTimerRef.current = window.setTimeout(() => {
+          stallTimerRef.current = null;
+          triggerAutoRecover(true);
+        }, 4500);
+      }
     }
-  }, [triggerAutoRecover]);
+  }, [triggerAutoRecover, scheduleStallPill]);
 
   const handleVideoError = useCallback(() => {
     setIsPlaying(false);
+    scheduleStallPill();
     triggerAutoRecover(true);
-  }, [triggerAutoRecover]);
+  }, [triggerAutoRecover, scheduleStallPill]);
 
   const handleVideoPause = useCallback(
     (e: React.SyntheticEvent<HTMLVideoElement>) => {
@@ -370,9 +459,10 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
         savedTimeRef.current = e.currentTarget.currentTime;
       }
       clearRecoveryTimers();
+      clearStallPill();
       setIsPlaying(false);
     },
-    [clearRecoveryTimers]
+    [clearRecoveryTimers, clearStallPill]
   );
 
   useEffect(() => {
@@ -433,9 +523,10 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
         }
         videoRef.current.pause();
         clearRecoveryTimers();
+        clearStallPill();
       }
     }
-  }, [isPlaying, videoSource.kind, resolvedMediaUrl, retryCount, clearRecoveryTimers]);
+  }, [isPlaying, videoSource.kind, resolvedMediaUrl, retryCount, clearRecoveryTimers, clearStallPill]);
 
   useEffect(() => {
     if (videoSource.kind === 'youtube') {
@@ -478,6 +569,7 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
       if (!payload) return;
 
       if (payload.event === 'onError') {
+        scheduleStallPill();
         triggerAutoRecover(false);
         return;
       }
@@ -502,33 +594,48 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
             ? (payload.info as { playerState: number }).playerState
             : null;
 
-      if (playerState === 1 && !rewardModalOpenRef.current && !fullScreenEpisode) {
+      if (playerState === 1 && !rewardModalOpenRef.current) {
         clearRecoveryTimers();
+        clearStallPill();
         setIsRecovering(false);
         setRecoveryFailed(false);
         setIsPlaying(true);
         isPlayingRef.current = true;
       } else if (playerState === 2) {
         clearRecoveryTimers();
+        clearStallPill();
         setIsPlaying(false);
         isPlayingRef.current = false;
       } else if (playerState === 3) {
-        if (isPlayingRef.current && stallTimerRef.current === null) {
-          stallTimerRef.current = window.setTimeout(() => {
-            stallTimerRef.current = null;
-            postYouTubeCommand(iframeRef.current, 'playVideo');
-            triggerAutoRecover(false);
-          }, 7500);
+        if (isPlayingRef.current) {
+          scheduleStallPill();
+          if (stallTimerRef.current === null) {
+            stallTimerRef.current = window.setTimeout(() => {
+              stallTimerRef.current = null;
+              postYouTubeCommand(iframeRef.current, 'playVideo');
+              triggerAutoRecover(false);
+            }, 7500);
+          }
         }
       } else if (playerState === 0 && currentEpisode) {
         clearRecoveryTimers();
+        clearStallPill();
         void onMarkEpisodeWatched?.(currentEpisode);
       }
     };
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [videoSource.kind, resolvedMediaUrl, currentEpisode, onMarkEpisodeWatched, fullScreenEpisode, triggerAutoRecover, clearRecoveryTimers]);
+  }, [
+    videoSource.kind,
+    resolvedMediaUrl,
+    currentEpisode,
+    onMarkEpisodeWatched,
+    triggerAutoRecover,
+    clearRecoveryTimers,
+    clearStallPill,
+    scheduleStallPill,
+  ]);
 
   // Smooth circular Coin Progress Ring timer
   useEffect(() => {
@@ -544,9 +651,7 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
       if (
         document.visibilityState !== 'visible' ||
         !isPlayingRef.current ||
-        rewardModalOpenRef.current ||
-        Boolean(fullScreenEpisode) ||
-        Boolean(drawerSeriesId)
+        rewardModalOpenRef.current
       ) {
         return;
       }
@@ -564,11 +669,38 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
     }, 100);
 
     return () => window.clearInterval(interval);
-  }, [currentEpisode?.id, fullScreenEpisode, drawerSeriesId]);
+  }, [currentEpisode?.id]);
 
   const handleTogglePlayPause = useCallback(() => {
     setIsPlaying((prev) => !prev);
   }, []);
+
+  const handleToggleFullscreen = async () => {
+    const nextState = !isExpandedFull;
+    setIsExpandedFull(nextState);
+    try {
+      const orientation = screen.orientation as ScreenOrientation & {
+        lock?: (orientation: string) => Promise<void>;
+        unlock?: () => void;
+      };
+
+      if (nextState) {
+        if (playerContainerRef.current?.requestFullscreen) {
+          await playerContainerRef.current.requestFullscreen();
+        }
+        if (orientation?.lock) {
+          await orientation.lock('landscape').catch(() => {});
+        }
+      } else {
+        orientation?.unlock?.();
+        if (document.fullscreenElement) {
+          await document.exitFullscreen();
+        }
+      }
+    } catch {
+      // CSS full-screen fallback remains active
+    }
+  };
 
   const handlePrev = useCallback(() => {
     if (episodes.length <= 1) return;
@@ -583,6 +715,11 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
   const handleAwardDoubleCoinsOnly = async (amount: number) => {
     if (!currentEpisode) return;
     await onAwardRef.current(currentEpisode, amount);
+    const burstId = Date.now();
+    setFlyingBurst({ id: burstId, amount });
+    window.setTimeout(() => {
+      setFlyingBurst((curr) => (curr?.id === burstId ? null : curr));
+    }, 1250);
   };
 
   const handleContinueAfterAd = () => {
@@ -598,51 +735,18 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
     if (!currentEpisode) return;
     try {
       await onAwardRef.current(currentEpisode, amount);
+      const burstId = Date.now();
+      setFlyingBurst({ id: burstId, amount });
+      window.setTimeout(() => {
+        setFlyingBurst((curr) => (curr?.id === burstId ? null : curr));
+      }, 1250);
     } finally {
       handleContinueAfterAd();
     }
   };
 
-  const drawerEpisodes = useMemo(() => {
-    if (!drawerSeriesId) return [];
-    const seen = new Set<string>();
-    return episodes
-      .filter((ep) => {
-        if (!ep?.id || seen.has(ep.id)) return false;
-        if (getEpisodeSeriesId(ep) !== drawerSeriesId) return false;
-        seen.add(ep.id);
-        return true;
-      })
-      .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
-  }, [drawerSeriesId, episodes]);
-
-  const nextFullScreenEpisode = useMemo(() => {
-    if (!fullScreenEpisode) return null;
-    const sId = getEpisodeSeriesId(fullScreenEpisode);
-    const sameSeries = episodes
-      .filter((ep) => ep?.id && getEpisodeSeriesId(ep) === sId)
-      .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
-    const idxInSeries = sameSeries.findIndex((ep) => ep.id === fullScreenEpisode.id);
-    if (idxInSeries >= 0 && idxInSeries + 1 < sameSeries.length) {
-      return sameSeries[idxInSeries + 1];
-    }
-    if (episodes.length <= 1) return null;
-    const idxAll = episodes.findIndex((ep) => ep.id === fullScreenEpisode.id);
-    const candidate = idxAll >= 0 ? episodes[(idxAll + 1) % episodes.length] : episodes[0];
-    return candidate && candidate.id !== fullScreenEpisode.id ? candidate : null;
-  }, [fullScreenEpisode, episodes]);
-
-  const watchedIdSet = useMemo(() => {
-    const set = new Set<string>();
-    (privateState.watchedEpisodeIds || []).forEach((entry) => {
-      const idx = entry.indexOf('::');
-      set.add(idx >= 0 ? entry.slice(0, idx) : entry);
-    });
-    return set;
-  }, [privateState.watchedEpisodeIds]);
-
-  const ringSize = 62;
-  const strokeWidth = 4;
+  const ringSize = 54;
+  const strokeWidth = 3.5;
   const radius = (ringSize - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
   const dashOffset = circumference * (1 - ringProgress / 100);
@@ -670,16 +774,15 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
     );
   }
 
-  const category = inferEpisodeCategory(
-    currentEpisode.series,
-    currentEpisode.title,
-    currentEpisode.category
-  );
+  const safeThreshold = Math.max(500000, qualificationThreshold || 500000);
+  const weeklyPct = Math.min(100, Math.max(0, (playerWeeklyCoins / safeThreshold) * 100));
+  const isQualified = playerWeeklyCoins >= safeThreshold;
 
   return (
     <>
       <section
-        aria-label="For You Vertical Drama Player"
+        ref={playerContainerRef}
+        aria-label="For You Drama Player"
         onTouchStart={(e) => {
           touchStartYRef.current = e.touches[0]?.clientY ?? null;
         }}
@@ -692,13 +795,17 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
           if (diff > 55) handleNext();
           else if (diff < -55) handlePrev();
         }}
-        className="fixed inset-0 z-[35] h-screen h-[100dvh] w-full overflow-hidden bg-[#060608] select-none"
+        className={`fixed inset-0 h-screen h-[100dvh] w-full overflow-hidden bg-[#060608] select-none flex flex-col ${
+          isExpandedFull ? 'z-[75]' : 'z-[35]'
+        }`}
       >
-        {/* Video Frame Layer — Cinema Fit (object-contain) default with sleek dark canvas; pointer-events-none blocks accidental external taps */}
-        <div className="absolute inset-0 w-full h-full bg-[#060608] overflow-hidden [container-type:size]">
+        {/* 1. True Full-Screen Edge-to-Edge Video Stage with Floating Translucent DramaWin HUD */}
+        <div className="relative flex-1 min-h-0 w-full bg-[#060608] overflow-hidden [container-type:size]">
+          {/* Video Frame Layer */}
           {videoSource.kind === 'youtube' ||
           videoSource.kind === 'dailymotion' ||
           videoSource.kind === 'vimeo' ||
+          videoSource.kind === 'odysee' ||
           videoSource.kind === 'iframe' ? (
             <IsolatedYouTubeIframe
               iframeRef={iframeRef}
@@ -708,6 +815,7 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
               onLoad={handleIframeLoad}
               referrerPolicy="strict-origin-when-cross-origin"
               allow={FORYOU_YOUTUBE_ALLOW}
+              allowFullScreen
               className={isZoomed ? FORYOU_IFRAME_ZOOM_CLASS : FORYOU_IFRAME_FIT_CLASS}
             />
           ) : videoSource.kind === 'direct' && resolvedMediaUrl ? (
@@ -716,7 +824,7 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
               videoKey={`fy-vid-${currentEpisode.id}-${resolvedMediaUrl}-r${retryCount}`}
               src={resolvedMediaUrl}
               autoPlay
-              loop
+              loop={false}
               muted={muted}
               onLoadedMetadata={handleVideoLoadedMetadata}
               onCanPlay={handleVideoCanPlay}
@@ -727,6 +835,9 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
               onStalled={handleVideoWaitingOrStalled}
               onError={handleVideoError}
               onPause={handleVideoPause}
+              onEnded={() => {
+                if (currentEpisode) void onMarkEpisodeWatched?.(currentEpisode);
+              }}
               className={isZoomed ? FORYOU_VIDEO_ZOOM_CLASS : FORYOU_VIDEO_FIT_CLASS}
             />
           ) : (
@@ -762,315 +873,257 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
               )}
             </div>
           )}
-        </div>
 
-        {/* Transparent Interactive Tap Shield (Play/Pause without touching YouTube) */}
-        <button
-          type="button"
-          onClick={handleTogglePlayPause}
-          aria-label={isPlaying ? 'Pause episode' : 'Play episode'}
-          className="absolute inset-0 z-10 w-full h-full bg-transparent cursor-pointer flex items-center justify-center focus:outline-none"
-        >
-          {!isPlaying && (
-            <span className="w-16 h-16 rounded-full bg-black/70 backdrop-blur-md border border-amber-400/50 text-amber-300 flex items-center justify-center shadow-[0_0_28px_rgba(0,0,0,0.8)]">
-              <Play className="w-7 h-7 fill-current ml-1" />
-            </span>
-          )}
-        </button>
-
-        {/* Solid Top & Subtle Bottom Legibility Gradients (hides YouTube title overlay) */}
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-[#09090b] via-[#09090b]/95 to-transparent z-10"
-        />
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-x-0 bottom-0 h-56 bg-gradient-to-t from-black/95 via-black/65 to-transparent z-10"
-        />
-
-        {/* Top Bar Inside Player: Feed Tag + Corner Fit/Zoom Toggle + Prev/Next + Sound Toggle */}
-        <div className="absolute top-0 inset-x-0 z-20 bg-gradient-to-b from-[#09090b] via-[#09090b]/95 to-transparent px-3 pt-[max(0.75rem,env(safe-area-inset-top))] pb-6 flex items-start justify-between gap-2">
-          <div className="flex flex-col items-start gap-1.5">
-            <div className="inline-flex items-center gap-1.5 rounded-full bg-black/55 backdrop-blur-md border border-white/15 px-3 py-1 text-[11px] font-semibold text-white">
-              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-              <span>For You</span>
-              <span className="text-zinc-400 font-mono-num">
-                {activeIndex + 1}/{episodes.length}
+          {/* Center Play/Pause Tap Shield */}
+          <button
+            type="button"
+            onClick={handleTogglePlayPause}
+            aria-label={isPlaying ? 'Pause episode' : 'Play episode'}
+            className="absolute inset-0 z-10 w-full h-full bg-transparent cursor-pointer flex items-center justify-center focus:outline-none"
+          >
+            {!isPlaying && (
+              <span className="w-16 h-16 rounded-full bg-black/70 backdrop-blur-md border border-amber-400/50 text-amber-300 flex items-center justify-center shadow-[0_0_28px_rgba(0,0,0,0.8)]">
+                <Play className="w-7 h-7 fill-current ml-1" />
               </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setIsZoomed((prev) => !prev)}
-              aria-pressed={isZoomed}
-              aria-label={isZoomed ? 'Switch to Cinema Fit' : 'Switch to Zoomed full screen'}
-              className="px-2.5 py-1 rounded-full bg-[#0D0A05]/90 hover:bg-[#17130A] backdrop-blur-md border border-[#D4AF37]/60 text-[11px] font-bold text-[#FCE7A2] inline-flex items-center gap-1 shadow-[0_4px_14px_rgba(0,0,0,0.75)] transition cursor-pointer"
-            >
-              <span aria-hidden="true" className="text-[#D4AF37] leading-none">⛶</span>
-              <span>{isZoomed ? 'Zoom · Fit' : 'Fit / Zoom'}</span>
-            </button>
-          </div>
+            )}
+          </button>
 
-          <div className="flex flex-col items-end gap-1.5">
-            <div className="flex items-center gap-1.5">
-              {episodes.length > 1 && (
-                <>
-                  <button
-                    type="button"
-                    onClick={handlePrev}
-                    aria-label="Previous episode"
-                    className="min-w-[38px] min-h-[38px] rounded-full bg-black/55 backdrop-blur-md border border-white/15 text-white flex items-center justify-center hover:border-amber-400/50 cursor-pointer"
-                  >
-                    <ChevronUp className="w-4 h-4" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleNext}
-                    aria-label="Next episode"
-                    className="min-w-[38px] min-h-[38px] rounded-full bg-black/55 backdrop-blur-md border border-white/15 text-white flex items-center justify-center hover:border-amber-400/50 cursor-pointer"
-                  >
-                    <ChevronDown className="w-4 h-4" />
-                  </button>
-                </>
-              )}
-
+          {/* 2. Floating Translucent DramaWin Header, Controls, Tournament Bar, Reload & Gold Coin Pot (+300) */}
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-30 bg-gradient-to-b from-black/88 via-black/58 to-transparent px-3 sm:px-5 pt-[max(0.5rem,env(safe-area-inset-top))] pb-6 space-y-2">
+            {/* Row 1: Series & Episode Title + Close ✕ */}
+            <div className="pointer-events-auto flex items-center justify-between gap-2">
+              <h1 className="text-sm sm:text-base font-display font-extrabold uppercase tracking-wide text-[#FFF8E7] drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)] truncate">
+                {currentEpisode.series} · {currentEpisode.episodeLabel}
+              </h1>
               <button
                 type="button"
-                onClick={onToggleMute}
-                aria-label={muted ? 'Unmute video' : 'Mute video'}
-                className="min-w-[38px] min-h-[38px] rounded-full bg-black/55 backdrop-blur-md border border-white/15 text-white flex items-center justify-center hover:border-amber-400/50 cursor-pointer"
+                onClick={() => {
+                  if (document.fullscreenElement) {
+                    void document.exitFullscreen().catch(() => {});
+                  }
+                  onSwitchToHome();
+                }}
+                aria-label="Close For You player"
+                className="min-h-[38px] min-w-[38px] rounded-full bg-black/60 backdrop-blur-md border border-[#D4AF37]/50 flex items-center justify-center text-[#FCE7A2] hover:border-[#FBBF24] cursor-pointer shrink-0 transition"
               >
-                {muted ? (
-                  <VolumeX className="w-4 h-4 text-zinc-400" />
-                ) : (
-                  <Volume2 className="w-4 h-4 text-amber-300" />
-                )}
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            <button
-              type="button"
-              onClick={() => {
-                clearRecoveryTimers();
-                setRecoveryFailed(false);
-                setIsRecovering(false);
-                setRetryCount((prev) => prev + 1);
-              }}
-              aria-label="Buffering? Reload Video"
-              className="px-2.5 py-1 rounded-full bg-black/55 hover:bg-black/80 backdrop-blur-md border border-white/15 text-[10px] font-medium text-zinc-300 hover:text-amber-200 inline-flex items-center gap-1 transition cursor-pointer"
-            >
-              <RotateCcw className="w-2.5 h-2.5" />
-              <span>Buffering? Reload Video</span>
-            </button>
-          </div>
-        </div>
+            {/* Row 2: Speaker, Fit / Zoom, Fullscreen, and Next Episode ⏭ */}
+            <div className="pointer-events-auto flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                <button
+                  type="button"
+                  onClick={onToggleMute}
+                  aria-pressed={!muted}
+                  aria-label={muted ? 'Unmute video' : 'Mute video'}
+                  className={`min-h-[38px] min-w-[38px] px-2.5 rounded-full backdrop-blur-md border flex items-center justify-center cursor-pointer transition ${
+                    muted
+                      ? 'bg-black/60 border-white/20 text-zinc-300 hover:text-white'
+                      : 'bg-black/65 border-[#D4AF37]/60 text-[#FCE7A2]'
+                  }`}
+                >
+                  {muted ? (
+                    <VolumeX className="w-4 h-4" />
+                  ) : (
+                    <Volume2 className="w-4 h-4 text-[#D4AF37]" />
+                  )}
+                </button>
 
-        {/* Right Edge Action Column: Floating Circular Coin Progress Ring + My List + Share + Series */}
-        <div className="absolute right-3 bottom-24 z-20 flex flex-col items-center gap-3.5">
-          {/* Circular Coin Progress Ring */}
-          <div className="flex flex-col items-center gap-1">
-            <div className="relative w-[62px] h-[62px] rounded-full bg-black/75 backdrop-blur-md border border-amber-400/40 shadow-[0_0_24px_rgba(251,191,36,0.45)] flex items-center justify-center">
-              <svg
-                width={ringSize}
-                height={ringSize}
-                viewBox={`0 0 ${ringSize} ${ringSize}`}
-                className="-rotate-90 absolute inset-0"
-                aria-hidden="true"
-              >
-                <defs>
-                  <linearGradient id="fy-ring-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-                    <stop offset="0%" stopColor="#FEF08A" />
-                    <stop offset="50%" stopColor="#FBBF24" />
-                    <stop offset="100%" stopColor="#E879F9" />
-                  </linearGradient>
-                </defs>
-                <circle
-                  cx={ringSize / 2}
-                  cy={ringSize / 2}
-                  r={radius}
-                  fill="none"
-                  stroke="rgba(255,255,255,0.16)"
-                  strokeWidth={strokeWidth}
-                />
-                <circle
-                  cx={ringSize / 2}
-                  cy={ringSize / 2}
-                  r={radius}
-                  fill="none"
-                  stroke="url(#fy-ring-grad)"
-                  strokeWidth={strokeWidth}
-                  strokeLinecap="round"
-                  strokeDasharray={circumference}
-                  strokeDashoffset={dashOffset}
-                  className="transition-[stroke-dashoffset] duration-150 ease-linear"
-                />
-              </svg>
-              <div className="flex flex-col items-center justify-center">
-                <Coins className="w-5 h-5 text-amber-300" />
-                <span className="font-mono-num text-[9px] font-extrabold text-amber-200 leading-none mt-0.5">
-                  +{COIN_POT_BASE_REWARD}
+                <button
+                  type="button"
+                  onClick={() => setIsZoomed((prev) => !prev)}
+                  aria-pressed={isZoomed}
+                  aria-label={
+                    isZoomed
+                      ? 'Fullscreen Cover active — switch to Original Fit'
+                      : 'Original Fit active — switch to Fullscreen Cover'
+                  }
+                  title={isZoomed ? 'Tap for Original Fit' : 'Tap for Fullscreen Cover'}
+                  className={`min-h-[38px] px-3 rounded-full backdrop-blur-md border text-xs font-bold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition cursor-pointer ${
+                    isZoomed
+                      ? 'border-[#D4AF37]/65 bg-black/65 text-[#FCE7A2] hover:border-[#FBBF24]'
+                      : 'border-[#FBBF24] bg-[#241A07]/85 text-[#FFF3B0] shadow-[0_0_12px_rgba(251,191,36,0.28)]'
+                  }`}
+                >
+                  {isZoomed ? (
+                    <Scan className="w-3.5 h-3.5 text-[#D4AF37]" />
+                  ) : (
+                    <ZoomIn className="w-3.5 h-3.5 text-[#FBBF24]" />
+                  )}
+                  <span>{isZoomed ? 'Fit / Zoom' : 'Original Fit'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => void handleToggleFullscreen()}
+                  aria-label={isExpandedFull ? 'Exit full screen' : 'Full screen'}
+                  className="min-h-[38px] min-w-[38px] rounded-full bg-black/60 backdrop-blur-md border border-[#D4AF37]/45 text-[#FCE7A2] hover:border-[#FBBF24] flex items-center justify-center cursor-pointer transition"
+                >
+                  {isExpandedFull ? (
+                    <Minimize2 className="w-4 h-4" />
+                  ) : (
+                    <Maximize2 className="w-4 h-4" />
+                  )}
+                </button>
+              </div>
+
+              {episodes.length > 1 ? (
+                <button
+                  type="button"
+                  onClick={handleNext}
+                  className="min-h-[38px] px-3.5 rounded-full gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer hover:brightness-105 shadow-[0_0_16px_rgba(251,191,36,0.4)]"
+                >
+                  <span>Next Episode</span>
+                  <SkipForward className="w-3.5 h-3.5 fill-current" />
+                </button>
+              ) : (
+                <span className="font-mono-num text-[11px] font-semibold text-[#FCE7A2] bg-black/55 backdrop-blur-md px-2.5 py-1 rounded-full border border-[#D4AF37]/30 whitespace-nowrap">
+                  {activeIndex + 1} / {episodes.length}
+                </span>
+              )}
+            </div>
+
+            {/* Row 3: Compact Sunday Tournament Progress + Reload Pill (Left) & Glowing Gold Coin Pot +300 (Top-Right) */}
+            <div className="flex items-start justify-between gap-2.5">
+              <div className="pointer-events-auto flex-1 min-w-0 space-y-1.5">
+                <div className="w-full rounded-xl bg-black/60 backdrop-blur-md border border-[#D4AF37]/55 px-2.5 py-1.5 shadow-[0_4px_18px_rgba(0,0,0,0.45)]">
+                  <div className="flex items-center justify-between gap-1.5 text-[10px] sm:text-xs">
+                    <span className="inline-flex items-center gap-1 font-bold text-[#FCE7A2] truncate">
+                      <Trophy className="w-3 h-3 text-[#FBBF24] shrink-0" />
+                      <span className="truncate">Sunday Tournament</span>
+                    </span>
+                    <span className="font-mono-num font-bold text-[#FFF8E7] whitespace-nowrap shrink-0">
+                      {playerWeeklyCoins.toLocaleString()} / {safeThreshold.toLocaleString()}{' '}
+                      <span className={isQualified ? 'text-emerald-300' : 'text-[#FBBF24]'}>
+                        ({isQualified ? 'Qualified' : `${weeklyPct.toFixed(2)}%`})
+                      </span>
+                    </span>
+                  </div>
+
+                  <div
+                    role="progressbar"
+                    aria-valuenow={playerWeeklyCoins}
+                    aria-valuemin={0}
+                    aria-valuemax={safeThreshold}
+                    aria-label="Sunday Tournament Progress"
+                    className="mt-1 h-1.5 w-full rounded-full bg-black/80 border border-[#D4AF37]/30 overflow-hidden"
+                  >
+                    <div
+                      className={`h-full rounded-full transition-all duration-300 ${
+                        isQualified
+                          ? 'bg-gradient-to-r from-emerald-400 via-teal-300 to-emerald-500'
+                          : 'gold-gradient-bg shadow-[0_0_10px_rgba(251,191,36,0.5)]'
+                      }`}
+                      style={{ width: `${weeklyPct}%` }}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="font-mono-num text-[10px] font-semibold text-[#FCE7A2]/90 drop-shadow whitespace-nowrap">
+                    {activeIndex + 1}/{episodes.length}
+                  </span>
+
+                  {isStalledOver5s && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        clearRecoveryTimers();
+                        clearStallPill();
+                        scheduleStallPill();
+                        setRecoveryFailed(false);
+                        setIsRecovering(false);
+                        setRetryCount((prev) => prev + 1);
+                      }}
+                      className="min-h-[28px] px-2.5 rounded-full bg-black/75 hover:bg-black/90 backdrop-blur-md border border-[#D4AF37]/55 text-[11px] font-bold text-[#FCE7A2] inline-flex items-center gap-1 whitespace-nowrap cursor-pointer shadow-[0_0_12px_rgba(212,175,55,0.28)] transition"
+                    >
+                      <RotateCcw className="w-3 h-3 text-[#D4AF37] shrink-0" />
+                      <span>Reload</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Glowing Gold Coin Pot (+300) Circular Progress Ring */}
+              <div className="shrink-0 flex flex-col items-center gap-0.5">
+                <div className="relative w-[54px] h-[54px] rounded-full bg-black/70 backdrop-blur-md border border-[#D4AF37]/75 shadow-[0_0_20px_rgba(251,191,36,0.48)] flex items-center justify-center">
+                  <svg
+                    width={ringSize}
+                    height={ringSize}
+                    viewBox={`0 0 ${ringSize} ${ringSize}`}
+                    className="-rotate-90 absolute inset-0"
+                    aria-hidden="true"
+                  >
+                    <defs>
+                      <linearGradient id="fy-ring-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stopColor="#FFF7CC" />
+                        <stop offset="50%" stopColor="#D4AF37" />
+                        <stop offset="100%" stopColor="#A88220" />
+                      </linearGradient>
+                    </defs>
+                    <circle
+                      cx={ringSize / 2}
+                      cy={ringSize / 2}
+                      r={radius}
+                      fill="none"
+                      stroke="rgba(255,255,255,0.16)"
+                      strokeWidth={strokeWidth}
+                    />
+                    <circle
+                      cx={ringSize / 2}
+                      cy={ringSize / 2}
+                      r={radius}
+                      fill="none"
+                      stroke="url(#fy-ring-grad)"
+                      strokeWidth={strokeWidth}
+                      strokeLinecap="round"
+                      strokeDasharray={circumference}
+                      strokeDashoffset={dashOffset}
+                      className="transition-[stroke-dashoffset] duration-150 ease-linear"
+                    />
+                  </svg>
+                  <div className="flex flex-col items-center justify-center">
+                    <Coins className="w-4 h-4 text-amber-300" />
+                    <span className="font-mono-num text-[9px] font-extrabold text-amber-200 leading-none mt-0.5">
+                      +{COIN_POT_BASE_REWARD}
+                    </span>
+                  </div>
+                </div>
+                <span className="font-mono-num text-[10px] font-extrabold text-[#FCE7A2] bg-black/70 px-1.5 rounded">
+                  {isPlaying ? `${Math.round(ringProgress)}%` : 'Paused'}
                 </span>
               </div>
             </div>
-            <span className="px-2 py-0.5 rounded-full bg-black/75 text-[9px] font-bold text-amber-200 border border-white/10">
-              {isPlaying ? `${Math.round(ringProgress)}%` : 'Paused'}
-            </span>
           </div>
 
-          {/* My List */}
-          <button
-            type="button"
-            onClick={() => onToggleMyList(currentSeriesId, currentEpisode.series)}
-            className="min-w-[44px] min-h-[44px] flex flex-col items-center gap-1 text-white cursor-pointer group"
-          >
-            <span
-              className={`w-11 h-11 rounded-full backdrop-blur-md border flex items-center justify-center transition-all ${
-                isSavedInMyList
-                  ? 'bg-amber-400 text-zinc-950 border-amber-200 shadow-[0_0_16px_rgba(251,191,36,0.65)]'
-                  : 'bg-black/55 border-white/15 text-white group-hover:border-amber-400/50'
-              }`}
+          {/* Flying Coin Burst Feedback */}
+          {flyingBurst && (
+            <div
+              key={flyingBurst.id}
+              className="coin-shoot-up pointer-events-none absolute right-6 top-36 z-40 flex flex-col items-center gap-1"
             >
-              <Bookmark className={`w-5 h-5 ${isSavedInMyList ? 'fill-current' : ''}`} />
-            </span>
-            <span className="text-[10px] font-semibold text-zinc-200 drop-shadow">
-              {isSavedInMyList ? 'Saved' : 'My List'}
-            </span>
-          </button>
-
-          {/* Share */}
-          <button
-            type="button"
-            onClick={() => onShareEpisode(currentEpisode)}
-            className="min-w-[44px] min-h-[44px] flex flex-col items-center gap-1 text-white cursor-pointer group"
-          >
-            <span className="w-11 h-11 rounded-full bg-black/55 backdrop-blur-md border border-white/15 flex items-center justify-center group-hover:border-amber-400/50 transition-all">
-              <Share2 className="w-5 h-5" />
-            </span>
-            <span className="text-[10px] font-semibold text-zinc-200 drop-shadow">Share</span>
-          </button>
-
-          {/* Series */}
-          <button
-            type="button"
-            onClick={() => {
-              setIsPlaying(false);
-              setDrawerSeriesId(currentSeriesId);
-            }}
-            className="min-w-[44px] min-h-[44px] flex flex-col items-center gap-1 text-white cursor-pointer group"
-          >
-            <span className="w-11 h-11 rounded-full bg-black/55 backdrop-blur-md border border-white/15 flex items-center justify-center group-hover:border-amber-400/50 transition-all">
-              <Layers className="w-5 h-5 text-fuchsia-300" />
-            </span>
-            <span className="text-[10px] font-semibold text-zinc-200 drop-shadow">Series</span>
-          </button>
-        </div>
-
-        {/* Bottom Episode Info & Watch Full Series Pill CTA */}
-        <div className="absolute left-3.5 right-20 bottom-20 z-20 space-y-2.5">
-          <div className="space-y-1">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="px-2 py-0.5 rounded-full bg-amber-400/20 border border-amber-400/40 text-[10px] font-bold text-amber-300">
-                {category}
-              </span>
-              <span className="px-2 py-0.5 rounded-full bg-white/10 text-[10px] font-mono-num font-semibold text-zinc-200">
-                {currentEpisode.episodeLabel}
+              <RealisticGoldCoin sizePx={44} emblem="$" />
+              <span className="px-2.5 py-0.5 rounded-full gold-gradient-bg text-[#181307] font-mono-num text-xs font-extrabold shadow-lg">
+                +{flyingBurst.amount}
               </span>
             </div>
-            <h2 className="text-base font-display font-bold text-white leading-tight line-clamp-1 drop-shadow">
-              {currentEpisode.series}
-            </h2>
-            <p className="text-xs text-zinc-300 line-clamp-2 leading-snug drop-shadow">
-              {currentEpisode.title} — {currentEpisode.synopsis}
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => {
-              setIsPlaying(false);
-              setDrawerSeriesId(currentSeriesId);
-            }}
-            className="min-h-[44px] px-4 rounded-full bg-gradient-to-r from-amber-400 via-yellow-400 to-fuchsia-500 text-zinc-950 font-extrabold text-xs inline-flex items-center gap-2 shadow-[0_4px_20px_rgba(251,191,36,0.45)] hover:brightness-110 active:scale-[0.98] transition-all cursor-pointer"
-          >
-            <Play className="w-3.5 h-3.5 fill-current" />
-            <span>Watch Full Series</span>
-          </button>
+          )}
         </div>
-      </section>
 
-      {/* Series Episodes Drawer from For You */}
-      {drawerSeriesId && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Series Episodes"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) {
-              setDrawerSeriesId(null);
-            }
-          }}
-          className="fixed inset-0 z-[70] bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-6 pb-16 sm:pb-6"
+        {/* 3. Pinned Bottom 320x50px Adsterra Banner & 18+ Disclaimer Right Above Bottom Nav Bar */}
+        <footer
+          className={`shrink-0 relative z-20 bg-[#09090b] border-t border-[#D4AF37]/30 px-3 pt-1.5 pb-1.5 flex flex-col items-center justify-center ${
+            isExpandedFull ? 'mb-0' : 'mb-16'
+          }`}
         >
-          <div className="w-full max-w-lg max-h-[75dvh] bg-[#0d0d12] border border-white/[0.12] rounded-t-3xl sm:rounded-3xl flex flex-col overflow-hidden shadow-2xl">
-            <div className="px-5 py-4 border-b border-white/[0.08] flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-[11px] font-mono-num text-amber-300">
-                  {drawerEpisodes.length} {drawerEpisodes.length === 1 ? 'Episode' : 'Episodes'}
-                </p>
-                <h3 className="text-base font-display font-bold text-white truncate">
-                  {drawerEpisodes[0]?.series || currentEpisode.series}
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setDrawerSeriesId(null)}
-                aria-label="Close episodes list"
-                className="min-w-[40px] min-h-[40px] rounded-xl bg-white/[0.06] flex items-center justify-center text-zinc-300 hover:text-white cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
-              {drawerEpisodes.map((ep) => {
-                const isCurrent = ep.id === currentEpisode.id;
-                const isWatched = watchedIdSet.has(ep.id);
-                return (
-                  <button
-                    key={ep.id}
-                    type="button"
-                    onClick={() => {
-                      setDrawerSeriesId(null);
-                      setFullScreenEpisode(ep);
-                    }}
-                    className={`w-full text-left p-3.5 rounded-2xl border flex items-center justify-between gap-3 transition-all cursor-pointer ${
-                      isCurrent
-                        ? 'bg-amber-400/12 border-amber-400/50'
-                        : 'bg-white/[0.03] border-white/[0.08] hover:border-amber-400/35'
-                    }`}
-                  >
-                    <div className="min-w-0 space-y-0.5">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono-num text-xs font-bold text-amber-300">
-                          {ep.episodeLabel}
-                        </span>
-                        {isWatched && (
-                          <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-emerald-300">
-                            <Check className="w-3 h-3" /> Watched
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-sm font-semibold text-white truncate">{ep.title}</p>
-                    </div>
-                    <span className="w-9 h-9 rounded-full bg-amber-400 text-zinc-950 flex items-center justify-center shrink-0">
-                      <Play className="w-4 h-4 fill-current ml-0.5" />
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
+          <BottomAdBanner />
+          <p className="text-[9px] sm:text-[10px] text-zinc-400 text-center mt-1 leading-tight px-2">
+            18+ Only • Winners know when to stop • National Responsible Gambling: 0800 006 008
+          </p>
+        </footer>
+      </section>
 
       {/* Congratulations! Double-Reward Modal */}
       <DoubleRewardModal
@@ -1084,32 +1137,6 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
         onCancelAd={handleContinueAfterAd}
         onClaimBase={() => handleClaimReward(COIN_POT_BASE_REWARD)}
       />
-
-      {/* Fullscreen Watch Screen launched from "Watch Full Series" */}
-      {fullScreenEpisode && (
-        <EpisodeWatchScreen
-          key={fullScreenEpisode.id}
-          episode={fullScreenEpisode}
-          sponsorAdUrl={sponsorAdUrl}
-          playerWeeklyCoins={playerWeeklyCoins}
-          playerTotalCoins={playerTotalCoins}
-          qualificationThreshold={qualificationThreshold}
-          muted={muted}
-          resumePlaybackSignal={resumePlaybackSignal}
-          hasNextEpisode={Boolean(nextFullScreenEpisode)}
-          nextEpisodeLabel={nextFullScreenEpisode?.episodeLabel}
-          onNextEpisode={() => {
-            if (nextFullScreenEpisode) {
-              setFullScreenEpisode(nextFullScreenEpisode);
-            }
-          }}
-          onToggleMute={onToggleMute}
-          onAwardCoinPot={onAwardCoinPot}
-          onStartSponsorReward={onStartSponsorReward}
-          onMarkEpisodeWatched={onMarkEpisodeWatched}
-          onClose={() => setFullScreenEpisode(null)}
-        />
-      )}
     </>
   );
 };

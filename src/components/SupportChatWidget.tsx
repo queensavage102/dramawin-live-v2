@@ -26,6 +26,9 @@ interface SupportChatWidgetProps {
   qualificationThreshold?: number;
   poolPrizeZar: number;
   firebaseEmail?: string | null;
+  open?: boolean;
+  onClose?: () => void;
+  hideFloatingButton?: boolean;
 }
 
 const QUICK_PROMPTS = [
@@ -150,8 +153,19 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
   qualificationThreshold = DEFAULT_QUALIFICATION_THRESHOLD,
   poolPrizeZar,
   firebaseEmail = null,
+  open: controlledOpen,
+  onClose,
+  hideFloatingButton = false,
 }) => {
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const isOpen = controlledOpen !== undefined ? controlledOpen : internalOpen;
+  const setOpen = (next: boolean) => {
+    if (controlledOpen !== undefined) {
+      if (!next) onClose?.();
+    } else {
+      setInternalOpen(next);
+    }
+  };
 
   const getInitialMessage = (): ChatMessageItem => {
     const firstName = username && username !== 'Player' ? username.split(' ').at(0) : 'there';
@@ -199,10 +213,10 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
   }, [contact, firebaseEmail]);
 
   useEffect(() => {
-    if (open && scrollRef.current) {
+    if (isOpen && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [open, messages, isTyping]);
+  }, [isOpen, messages, isTyping]);
 
   const submitCopyToWeb3Forms = async (userMessage: string) => {
     const replyEmail =
@@ -296,8 +310,8 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
 
   return (
     <>
-      {open ? (
-        <div className="fixed inset-x-2 bottom-20 top-14 sm:inset-auto sm:bottom-20 sm:right-6 sm:w-[390px] sm:h-[540px] z-50 flex flex-col">
+      {isOpen ? (
+        <div className="fixed inset-x-2 bottom-20 top-14 sm:inset-auto sm:bottom-20 sm:right-6 sm:w-[390px] sm:h-[540px] z-[80] flex flex-col">
           <section
             role="dialog"
             aria-label="DramaWin VIP Support"
@@ -429,7 +443,7 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
             </form>
           </section>
         </div>
-      ) : (
+      ) : hideFloatingButton ? null : (
         <button
           type="button"
           onClick={() => setOpen(true)}

@@ -416,6 +416,30 @@
         "balanceAfter",
         "createdAt"
       ]
+    },
+    "Referral": {
+      "title": "Referral",
+      "description": "Verified friend referral visit record linking a visiting friend's UID to their referrer's UID.",
+      "type": "object",
+      "properties": {
+        "visitorUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "referrerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "status": { "type": "string", "enum": ["pending", "claimed"] },
+        "rewardCoins": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "claimedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["visitorUid", "referrerUid", "status", "rewardCoins", "createdAt"]
     }
   },
   "firestore": {
@@ -462,6 +486,10 @@
     "/admins/{uid}": {
       "schema": { "$ref": "#/entities/AdminRecord" },
       "description": "Admin Studio access grants."
+    },
+    "/referrals/{visitorId}": {
+      "schema": { "$ref": "#/entities/Referral" },
+      "description": "Verified friend referral visits keyed by visiting friend's Firebase UID."
     }
   }
 }

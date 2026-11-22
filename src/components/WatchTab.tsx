@@ -7,6 +7,7 @@ interface WatchTabProps {
   episodes: DramaEpisode[];
   cloudSeries?: DramaSeries[];
   privateState: PlayerPrivate;
+  referralUserId?: string;
   sponsorAdUrl?: string;
   playerWeeklyCoins: number;
   playerTotalCoins: number;
@@ -15,6 +16,8 @@ interface WatchTabProps {
   resumePlaybackSignal?: number;
   onToggleMute: () => void;
   onAwardCoinPot: (episode: DramaEpisode, amount: number) => Promise<void>;
+  onClaimGiftBoxCoins?: () => Promise<void>;
+  onShareEpisode?: (episode: DramaEpisode) => void;
   onStartSponsorReward?: (
     rewardAction?: () => Promise<void>,
     options?: { claimLabel?: string; readyHeadline?: string }
@@ -28,6 +31,7 @@ export const WatchTab: React.FC<WatchTabProps> = ({
   episodes,
   cloudSeries,
   privateState,
+  referralUserId,
   sponsorAdUrl,
   playerWeeklyCoins,
   playerTotalCoins,
@@ -36,6 +40,8 @@ export const WatchTab: React.FC<WatchTabProps> = ({
   resumePlaybackSignal,
   onToggleMute,
   onAwardCoinPot,
+  onClaimGiftBoxCoins,
+  onShareEpisode,
   onStartSponsorReward,
   onClaimHeroBonus,
   onMarkEpisodeWatched,
@@ -46,6 +52,7 @@ export const WatchTab: React.FC<WatchTabProps> = ({
       episodes={episodes}
       cloudSeries={cloudSeries}
       privateState={privateState}
+      referralUserId={referralUserId}
       sponsorAdUrl={sponsorAdUrl}
       playerWeeklyCoins={playerWeeklyCoins}
       playerTotalCoins={playerTotalCoins}
@@ -54,6 +61,8 @@ export const WatchTab: React.FC<WatchTabProps> = ({
       resumePlaybackSignal={resumePlaybackSignal}
       onToggleMute={onToggleMute}
       onAwardCoinPot={onAwardCoinPot}
+      onClaimGiftBoxCoins={onClaimGiftBoxCoins}
+      onShareEpisode={onShareEpisode}
       onStartSponsorReward={onStartSponsorReward}
       onClaimHeroBonus={onClaimHeroBonus}
       onMarkEpisodeWatched={onMarkEpisodeWatched}

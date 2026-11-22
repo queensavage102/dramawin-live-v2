@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { CheckCircle2, Gift, Share2, Trophy } from 'lucide-react';
+import { ChevronRight, Gift, Trophy, Users } from 'lucide-react';
 import { getTodayDateKey } from '../constants';
 import {
   CoinTransaction,
@@ -11,10 +11,6 @@ import {
 import { DailyCheckInBox } from './DailyCheckInBox';
 import { LeaderboardTab } from './LeaderboardTab';
 import { MysteryRevealState, MysteryVaultCard } from './MysteryVaultCard';
-
-const WHATSAPP_INVITE_MESSAGE =
-  '🔥 Watch free short dramas & win virtual Coins on DramaWin! Join me & earn Coins here: https://vercel.app';
-const WHATSAPP_SHARE_URL = `https://wa.me/?text=${encodeURIComponent(WHATSAPP_INVITE_MESSAGE)}`;
 
 interface CheckInVaultTabProps {
   privateState: PlayerPrivate;
@@ -39,7 +35,6 @@ interface CheckInVaultTabProps {
   qualificationThreshold: number;
   streakActivityDates?: string[];
   transactions?: CoinTransaction[];
-  whatsappShareClaimedToday?: boolean;
   onSundayZeroTick?: () => void;
   onCompleteCheckIn: (dayKey: WeekDayKey, rewardCoins: number) => Promise<void>;
   onStartSponsorReward?: (
@@ -48,7 +43,7 @@ interface CheckInVaultTabProps {
   ) => void;
   onOpenMysteryBox: (boxNumber: number) => void;
   onDismissVoucherModal: () => void;
-  onWhatsappShareReward?: () => Promise<void> | void;
+  onOpenInviteSocial?: () => void;
 }
 
 export const CheckInVaultTab: React.FC<CheckInVaultTabProps> = ({
@@ -67,20 +62,38 @@ export const CheckInVaultTab: React.FC<CheckInVaultTabProps> = ({
   qualificationThreshold,
   streakActivityDates = [],
   transactions = [],
-  whatsappShareClaimedToday = false,
   onSundayZeroTick,
   onCompleteCheckIn,
   onStartSponsorReward,
   onOpenMysteryBox,
   onDismissVoucherModal,
-  onWhatsappShareReward,
+  onOpenInviteSocial,
 }) => {
   const [subView, setSubView] = useState<'gifts' | 'leaderboard'>('gifts');
   const todayKey = getTodayDateKey();
 
   return (
-    <div className="space-y-5">
-      {/* Sleek Sub-Navigation inside Rewards Tab */}
+    <div className="space-y-4">
+      {/* Compact Top Entry to Unified Invite & Social Section */}
+      {onOpenInviteSocial && (
+        <button
+          type="button"
+          onClick={onOpenInviteSocial}
+          className="w-full min-h-[44px] px-3.5 py-2 rounded-xl bg-[#14110A] hover:bg-[#1C170D] border border-[#D4AF37]/35 flex items-center justify-between gap-2 text-left transition-colors cursor-pointer"
+        >
+          <span className="flex items-center gap-2.5 min-w-0">
+            <span className="w-7 h-7 rounded-lg bg-amber-500/15 border border-[#D4AF37]/35 text-[#FCE7A2] flex items-center justify-center shrink-0">
+              <Users className="w-3.5 h-3.5" />
+            </span>
+            <span className="text-xs font-bold text-[#F6F2E9] truncate">
+              Invite &amp; Social · Share personal link (+1,000 / friend) &amp; TikTok
+            </span>
+          </span>
+          <ChevronRight className="w-4 h-4 text-[#D4AF37] shrink-0" />
+        </button>
+      )}
+
+      {/* Sub-Navigation inside Rewards Tab */}
       <div
         role="tablist"
         aria-label="Rewards sections"
@@ -91,7 +104,7 @@ export const CheckInVaultTab: React.FC<CheckInVaultTabProps> = ({
           role="tab"
           aria-selected={subView === 'gifts'}
           onClick={() => setSubView('gifts')}
-          className={`min-h-[44px] rounded-xl text-xs sm:text-sm font-bold inline-flex items-center justify-center gap-2 transition-all cursor-pointer ${
+          className={`min-h-[42px] rounded-xl text-xs sm:text-sm font-bold inline-flex items-center justify-center gap-2 transition-all cursor-pointer ${
             subView === 'gifts'
               ? 'bg-gradient-to-r from-amber-400 to-fuchsia-500 text-zinc-950 shadow'
               : 'text-zinc-400 hover:text-white'
@@ -106,7 +119,7 @@ export const CheckInVaultTab: React.FC<CheckInVaultTabProps> = ({
           role="tab"
           aria-selected={subView === 'leaderboard'}
           onClick={() => setSubView('leaderboard')}
-          className={`min-h-[44px] rounded-xl text-xs sm:text-sm font-bold inline-flex items-center justify-center gap-2 transition-all cursor-pointer ${
+          className={`min-h-[42px] rounded-xl text-xs sm:text-sm font-bold inline-flex items-center justify-center gap-2 transition-all cursor-pointer ${
             subView === 'leaderboard'
               ? 'bg-gradient-to-r from-amber-400 to-fuchsia-500 text-zinc-950 shadow'
               : 'text-zinc-400 hover:text-white'
@@ -118,50 +131,7 @@ export const CheckInVaultTab: React.FC<CheckInVaultTabProps> = ({
       </div>
 
       {subView === 'gifts' ? (
-        <div className="space-y-6">
-          {/* Daily WhatsApp Share Bonus Card */}
-          <div className="rounded-2xl bg-[#111116] border border-emerald-500/30 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 shadow-[0_8px_28px_rgba(16,185,129,0.08)]">
-            <div className="space-y-1 min-w-0">
-              <div className="inline-flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-wider text-emerald-400">
-                <Share2 className="w-3.5 h-3.5" />
-                <span>Daily Invite Bonus</span>
-              </div>
-              <h3 className="text-base sm:text-lg font-display font-bold text-white">
-                Invite Friends on WhatsApp
-              </h3>
-              <p className="text-xs text-zinc-400 leading-relaxed">
-                Share DramaWin Tournament with friends on WhatsApp and claim{' '}
-                <strong className="text-emerald-300 font-semibold">+500 Coins</strong> once per day.
-              </p>
-            </div>
-
-            <a
-              href={WHATSAPP_SHARE_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={() => {
-                void onWhatsappShareReward?.();
-              }}
-              className={`min-h-[46px] px-4 sm:px-5 rounded-xl text-xs sm:text-sm font-extrabold inline-flex items-center justify-center gap-2 shrink-0 transition-all cursor-pointer shadow-lg ${
-                whatsappShareClaimedToday
-                  ? 'bg-emerald-950/80 border border-emerald-500/50 text-emerald-200 hover:bg-emerald-900/80'
-                  : 'bg-gradient-to-r from-emerald-500 to-green-600 hover:brightness-110 text-white shadow-emerald-600/25'
-              }`}
-            >
-              {whatsappShareClaimedToday ? (
-                <>
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <span>Claimed Today (+500 ✓) · Share Again</span>
-                </>
-              ) : (
-                <>
-                  <Share2 className="w-4 h-4 shrink-0" />
-                  <span>Share on WhatsApp (+500 Coins)</span>
-                </>
-              )}
-            </a>
-          </div>
-
+        <div className="space-y-4">
           <DailyCheckInBox
             privateState={privateState}
             sponsorAdUrl={sponsorAdUrl}

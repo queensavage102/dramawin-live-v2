@@ -1015,4 +1015,101 @@ export function saveDailySpinState(uid: string, state: DailySpinState): DailySpi
   return normalized;
 }
 
+export const BOOST_DAILY_GAME_COIN_CAP = 1000;
+export const BOOST_FREE_GAME_PLAYS_PER_DAY = 2;
+const BOOST_STORAGE_PREFIX = 'dramawin_boost_state_v2_';
+
+export interface BoostTrackerState {
+  speedBoostLastClaimAt: number;
+  dailyMegaLastClaimAt: number;
+  marathonAdsWatched: number;
+  marathonLastClaimAt: number;
+  dailyGameDate: string;
+  dailyGameCoins: number;
+  dailyGamePlaysUsed: number;
+  dailyGameExtraPlaysUnlocked: number;
+  dailyGameDoubleBonusNext: boolean;
+  tiktokVisited: boolean;
+  tiktokClaimed: boolean;
+  seriesRequestBonusClaimed: boolean;
+  inviteClaimDate: string;
+}
+
+export function loadBoostTrackerState(
+  uid: string,
+  todayKey = getTodayDateKey()
+): BoostTrackerState {
+  const fallback: BoostTrackerState = {
+    speedBoostLastClaimAt: 0,
+    dailyMegaLastClaimAt: 0,
+    marathonAdsWatched: 0,
+    marathonLastClaimAt: 0,
+    dailyGameDate: todayKey,
+    dailyGameCoins: 0,
+    dailyGamePlaysUsed: 0,
+    dailyGameExtraPlaysUnlocked: 0,
+    dailyGameDoubleBonusNext: false,
+    tiktokVisited: false,
+    tiktokClaimed: false,
+    seriesRequestBonusClaimed: false,
+    inviteClaimDate: '',
+  };
+  if (!uid || typeof window === 'undefined') return fallback;
+
+  const parsed = safeReadJson<Partial<BoostTrackerState> | null>(
+    `${BOOST_STORAGE_PREFIX}${uid}`,
+    null
+  );
+  if (!parsed) return fallback;
+
+  const isSameDay = parsed.dailyGameDate === todayKey;
+  return {
+    speedBoostLastClaimAt: Math.max(0, Number(parsed.speedBoostLastClaimAt) || 0),
+    dailyMegaLastClaimAt: Math.max(0, Number(parsed.dailyMegaLastClaimAt) || 0),
+    marathonAdsWatched: Math.min(5, Math.max(0, Math.floor(Number(parsed.marathonAdsWatched) || 0))),
+    marathonLastClaimAt: Math.max(0, Number(parsed.marathonLastClaimAt) || 0),
+    dailyGameDate: todayKey,
+    dailyGameCoins: isSameDay
+      ? Math.min(BOOST_DAILY_GAME_COIN_CAP, Math.max(0, Math.floor(Number(parsed.dailyGameCoins) || 0)))
+      : 0,
+    dailyGamePlaysUsed: isSameDay ? Math.max(0, Math.floor(Number(parsed.dailyGamePlaysUsed) || 0)) : 0,
+    dailyGameExtraPlaysUnlocked: isSameDay
+      ? Math.max(0, Math.floor(Number(parsed.dailyGameExtraPlaysUnlocked) || 0))
+      : 0,
+    dailyGameDoubleBonusNext: isSameDay ? Boolean(parsed.dailyGameDoubleBonusNext) : false,
+    tiktokVisited: Boolean(parsed.tiktokVisited),
+    tiktokClaimed: Boolean(parsed.tiktokClaimed),
+    seriesRequestBonusClaimed: Boolean(parsed.seriesRequestBonusClaimed),
+    inviteClaimDate: typeof parsed.inviteClaimDate === 'string' ? parsed.inviteClaimDate : '',
+  };
+}
+
+export function saveBoostTrackerState(
+  uid: string,
+  state: BoostTrackerState
+): BoostTrackerState {
+  const todayKey = getTodayDateKey();
+  const normalized: BoostTrackerState = {
+    speedBoostLastClaimAt: Math.max(0, Number(state.speedBoostLastClaimAt) || 0),
+    dailyMegaLastClaimAt: Math.max(0, Number(state.dailyMegaLastClaimAt) || 0),
+    marathonAdsWatched: Math.min(5, Math.max(0, Math.floor(state.marathonAdsWatched || 0))),
+    marathonLastClaimAt: Math.max(0, Number(state.marathonLastClaimAt) || 0),
+    dailyGameDate: state.dailyGameDate || todayKey,
+    dailyGameCoins: Math.min(
+      BOOST_DAILY_GAME_COIN_CAP,
+      Math.max(0, Math.floor(state.dailyGameCoins || 0))
+    ),
+    dailyGamePlaysUsed: Math.max(0, Math.floor(state.dailyGamePlaysUsed || 0)),
+    dailyGameExtraPlaysUnlocked: Math.max(0, Math.floor(state.dailyGameExtraPlaysUnlocked || 0)),
+    dailyGameDoubleBonusNext: Boolean(state.dailyGameDoubleBonusNext),
+    tiktokVisited: Boolean(state.tiktokVisited),
+    tiktokClaimed: Boolean(state.tiktokClaimed),
+    seriesRequestBonusClaimed: Boolean(state.seriesRequestBonusClaimed),
+    inviteClaimDate: typeof state.inviteClaimDate === 'string' ? state.inviteClaimDate : '',
+  };
+  if (uid && typeof window !== 'undefined') {
+    safeWriteJson(`${BOOST_STORAGE_PREFIX}${uid}`, normalized);
+  }
+  return normalized;
+}
 
