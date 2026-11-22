@@ -1034,6 +1034,14 @@ export function getYouTubeEmbedUrl(
   finalUrl = appendParam(finalUrl, 'modestbranding', '1');
   finalUrl = appendParam(finalUrl, 'enablejsapi', '1');
   finalUrl = appendParam(finalUrl, 'mute', muted ? '1' : '0');
+  finalUrl = appendParam(finalUrl, 'playsinline', '1');
+  finalUrl = appendParam(finalUrl, 'rel', '0');
+  finalUrl = appendParam(finalUrl, 'modestbranding', '1');
+  finalUrl = appendParam(finalUrl, 'enablejsapi', '1');
+  finalUrl = appendParam(finalUrl, 'mute', muted ? '1' : '0');
+  finalUrl = appendParam(finalUrl, 'cc_load_policy', '0');
+  finalUrl = appendParam(finalUrl, 'iv_load_policy', '3');
+
 
   if (typeof window !== 'undefined' && window.location?.origin) {
     finalUrl = appendParam(finalUrl, 'origin', encodeURIComponent(window.location.origin));
