@@ -220,6 +220,22 @@ function DramaWinApp() {
     cloudOpenedBoxesRef.current = cloudOpenedBoxes;
   }, [cloudOpenedBoxes]);
 
+  useEffect(() => {
+    if (!mysteryReveal) return;
+    if (mysteryReveal.kind === 'oops' || (mysteryReveal.coins ?? 0) === 0) {
+      const timer = window.setTimeout(() => {
+        setMysteryReveal((curr) =>
+          curr &&
+          curr.boxNumber === mysteryReveal.boxNumber &&
+          curr.dateKey === mysteryReveal.dateKey
+            ? null
+            : curr
+        );
+      }, 3000);
+      return () => window.clearTimeout(timer);
+    }
+  }, [mysteryReveal]);
+
   const startSponsorRewardFlow = useCallback(
     (
       rewardAction?: () => Promise<void>,
@@ -680,7 +696,7 @@ function DramaWinApp() {
             undefined,
             'reminder',
             undefined,
-            3500
+            3000
           );
         }
         return;
@@ -727,7 +743,7 @@ function DramaWinApp() {
             undefined,
             'reminder',
             undefined,
-            3500
+            3000
           );
         }
       } catch (err) {
@@ -1070,10 +1086,6 @@ function DramaWinApp() {
     }
     setSpinModalOpen(true);
   }, [isAdminRoute, splashDone, currentPlayer.uid]);
-
-  const spinAvailableCount =
-    (spinState.freeSpinUsed ? 0 : 1) +
-    Math.max(0, spinState.extraSpinsUnlocked - spinState.extraSpinsUsed);
 
   const handleSpinWheelWin = useCallback(
     async (slice: SpinSliceSpec, usedExtraSpin: boolean): Promise<void> => {
@@ -1736,15 +1748,12 @@ function DramaWinApp() {
             streakActivityDates={privateProfile.streakActivityDates || []}
             transactions={transactions}
             whatsappShareClaimedToday={whatsappShareClaimedToday}
-            spinAvailableCount={spinAvailableCount}
-            spinExtraUnlocked={spinState.extraSpinsUnlocked}
             onSundayZeroTick={handleSundayZeroTick}
             onCompleteCheckIn={handleCompleteDailyCheckIn}
             onStartSponsorReward={startSponsorRewardFlow}
             onOpenMysteryBox={handleOpenMysteryBox}
             onDismissVoucherModal={() => setMysteryVoucherModal(null)}
             onWhatsappShareReward={handleWhatsappShareReward}
-            onOpenSpinWheel={() => setSpinModalOpen(true)}
           />
         )}
 
