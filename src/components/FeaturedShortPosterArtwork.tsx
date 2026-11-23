@@ -369,19 +369,19 @@ export const FeaturedShortPosterArtwork: React.FC<FeaturedShortPosterArtworkProp
         </>
       )}
 
-      {/* High-Resolution Moody Dark-Cinematic Portrait Photography (100% Full Brightness & Contrast) */}
+      {/* Crisp Natural Studio Portrait Photography */}
       {item.coverImage && !imgFailed && (
         <img
           src={item.coverImage}
           alt={item.title}
           onError={() => setImgFailed(true)}
-          className="w-full h-full object-cover object-[center_22%] opacity-100 brightness-100 contrast-100 transition-transform duration-700 ease-out group-hover:scale-[1.05]"
+          className="w-full h-full object-cover object-[center_22%] opacity-100 brightness-100 contrast-105 saturate-115 transition-transform duration-700 ease-out group-hover:scale-[1.05]"
         />
       )}
 
-      {/* Bottom-only vignette (from transparent at 60% height to dark black at bottom) */}
+      {/* Dark gradient strictly confined to bottom behind title text */}
       {showCenterTitle && (
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[45%] bg-gradient-to-t from-black via-black/75 to-transparent" />
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[28%] bg-gradient-to-t from-black/85 via-black/30 to-transparent" />
       )}
 
       {/* Subtle Poster Frame Hairline */}

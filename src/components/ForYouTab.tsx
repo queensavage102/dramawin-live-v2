@@ -912,18 +912,22 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
                 showCenterTitle={false}
                 variant="stage"
               />
-              <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black via-black/45 to-black/55" />
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[35%] bg-gradient-to-t from-black/85 via-black/30 to-transparent" />
 
-              <div className="relative z-20 h-full w-full flex flex-col items-center justify-center px-5 pb-12 pt-16 text-center max-w-md mx-auto gap-4">
-                <div className="inline-flex items-center gap-2 text-[11px] font-mono-num uppercase tracking-[0.18em] text-[#FCE7A2]">
-                  <span>{currentEpisode.featuredDrama.genre}</span>
-                  <span aria-hidden="true">·</span>
-                  <span>{currentEpisode.featuredDrama.episodesCount} Eps</span>
-                  <span aria-hidden="true">·</span>
-                  <span>Featured Short</span>
+              <div className="relative z-20 h-full w-full flex flex-col items-center justify-end px-5 pb-8 pt-16 text-center max-w-md mx-auto gap-3.5">
+                <div className="inline-flex flex-wrap items-center justify-center gap-2 text-[11px] font-mono-num uppercase tracking-[0.14em]">
+                  <span className="px-2.5 py-0.5 rounded-full bg-black/75 text-white border border-white/20 backdrop-blur-md font-bold">
+                    {currentEpisode.featuredDrama.genre}
+                  </span>
+                  <span className="px-2.5 py-0.5 rounded-full bg-black/75 text-white border border-white/20 backdrop-blur-md font-semibold">
+                    {currentEpisode.featuredDrama.episodesCount} Eps
+                  </span>
+                  <span className="px-2.5 py-0.5 rounded-full bg-black/75 text-[#FCE7A2] border border-[#D4AF37]/35 backdrop-blur-md font-semibold">
+                    Featured Short
+                  </span>
                 </div>
 
-                <h2 className="text-3xl sm:text-4xl font-display font-black uppercase tracking-tight leading-[1.05] bg-gradient-to-b from-[#FFFDF7] via-[#FDE68A] to-[#D4AF37] bg-clip-text text-transparent drop-shadow-[0_4px_16px_rgba(0,0,0,0.95)] text-balance">
+                <h2 className="text-3xl sm:text-4xl font-display font-black uppercase tracking-tight leading-[1.05] text-white drop-shadow-[0_4px_16px_rgba(0,0,0,0.95)] text-balance">
                   {currentEpisode.featuredDrama.title}
                 </h2>
 

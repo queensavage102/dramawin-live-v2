@@ -239,23 +239,21 @@ const FeaturedShortPosterCard: React.FC<{
         <EpisodeCover
           src={matchedPosterUrl}
           alt={item.title}
-          className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
+          className="absolute inset-0 w-full h-full object-cover brightness-100 contrast-105 saturate-115 transition-transform duration-500 group-hover:scale-[1.04]"
         />
       ) : (
         <FeaturedShortPosterArtwork item={item} showCenterTitle={false} variant="card" />
       )}
 
-      {/* Bottom 40% Dark Vignette Only (transparent from 0–60% height) */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[40%] bg-gradient-to-t from-black via-black/75 to-transparent" />
+      {/* Dark gradient strictly confined to bottom ~25–30% behind title text */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[30%] bg-gradient-to-t from-black/85 via-black/30 to-transparent" />
 
       {/* Top Metadata Strip: Genre & Episodes */}
       <div className="relative z-10 p-2.5 flex items-center justify-between gap-1.5">
-        <span
-          className={`px-2 py-0.5 rounded-md border text-[10px] font-bold uppercase tracking-wider backdrop-blur-md ${item.badgeTone}`}
-        >
+        <span className="px-2 py-0.5 rounded-md border border-white/20 bg-black/75 text-white text-[10px] font-bold uppercase tracking-wider backdrop-blur-md shadow-sm">
           {item.genre}
         </span>
-        <span className="px-2 py-0.5 rounded-md bg-black/75 backdrop-blur-md border border-white/15 font-mono-num text-[10px] font-semibold text-white/95">
+        <span className="px-2 py-0.5 rounded-md bg-black/75 backdrop-blur-md border border-white/20 font-mono-num text-[10px] font-semibold text-white shadow-sm">
           {item.episodesCount} Eps
         </span>
       </div>
@@ -777,19 +775,19 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
                     src={activeHero.series.posterUrl}
                     fallbackSrc={activeHero.series.fallbackYtThumb}
                     alt={activeHero.series.seriesName}
-                    className="w-full h-full object-cover object-[center_22%] opacity-100 brightness-100 contrast-100 transition-transform duration-500 group-hover:scale-[1.03]"
+                    className="w-full h-full object-cover object-[center_22%] opacity-100 brightness-100 contrast-105 saturate-115 transition-transform duration-500 group-hover:scale-[1.03]"
                   />
-                  {/* Bottom 40% Dark Vignette Only (transparent from 0–60% height) */}
-                  <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[40%] bg-gradient-to-t from-black via-black/75 to-transparent" />
+                  {/* Dark gradient strictly confined to bottom behind title text */}
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[32%] bg-gradient-to-t from-black/85 via-black/30 to-transparent" />
 
                   {/* Bottom-Left Overlay: Genre Pills & Series Title (2-line wrap) */}
                   <div className="absolute bottom-3.5 left-3.5 right-3.5 sm:bottom-5 sm:left-6 sm:right-6 flex flex-col items-start gap-2.5 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
                     <div className="min-w-0 max-w-2xl space-y-1.5">
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="px-2.5 py-0.5 rounded-full bg-fuchsia-500/25 backdrop-blur-md border border-fuchsia-400/40 text-[10px] font-bold text-fuchsia-200 uppercase tracking-wider">
+                        <span className="px-2.5 py-0.5 rounded-full bg-black/75 backdrop-blur-md border border-white/20 text-[10px] font-bold text-white uppercase tracking-wider shadow-sm">
                           {activeHero.series.category}
                         </span>
-                        <span className="px-2.5 py-0.5 rounded-full bg-black/55 backdrop-blur-md border border-white/15 text-[10px] font-mono-num font-semibold text-zinc-200">
+                        <span className="px-2.5 py-0.5 rounded-full bg-black/75 backdrop-blur-md border border-white/20 text-[10px] font-mono-num font-semibold text-white shadow-sm">
                           {activeHero.series.episodes.length}{' '}
                           {activeHero.series.episodes.length === 1 ? 'Episode' : 'Episodes'}
                         </span>
@@ -797,7 +795,7 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
                       <h1 className="text-lg sm:text-3xl font-display font-bold text-white line-clamp-2 leading-tight text-balance drop-shadow-[0_2px_10px_rgba(0,0,0,0.95)]">
                         {activeHero.series.seriesName}
                       </h1>
-                      <p className="text-xs text-zinc-300 line-clamp-1 max-w-xl hidden sm:block">
+                      <p className="text-xs text-zinc-200 line-clamp-1 max-w-xl hidden sm:block">
                         {activeHero.series.synopsis}
                       </p>
                     </div>
@@ -816,19 +814,17 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
                     showCenterTitle={false}
                     variant="stage"
                   />
-                  {/* Bottom 40% Dark Vignette Only (transparent from 0–60% height) */}
-                  <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[40%] bg-gradient-to-t from-black via-black/75 to-transparent" />
+                  {/* Dark gradient strictly confined to bottom behind title text */}
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[32%] bg-gradient-to-t from-black/85 via-black/30 to-transparent" />
 
                   {/* Bottom Overlay: Genre & Episode Badges, 2-Line Full Title, Tagline, and Gold Affiliate CTA */}
                   <div className="absolute bottom-3.5 left-3.5 right-3.5 sm:bottom-5 sm:left-6 sm:right-6 flex flex-col items-start gap-2.5 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
                     <div className="min-w-0 max-w-2xl space-y-1.5">
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <span
-                          className={`px-2.5 py-0.5 rounded-full backdrop-blur-md border text-[10px] font-bold uppercase tracking-wider ${activeHero.drama.badgeTone}`}
-                        >
+                        <span className="px-2.5 py-0.5 rounded-full bg-black/75 text-white backdrop-blur-md border border-white/20 text-[10px] font-bold uppercase tracking-wider shadow-sm">
                           {activeHero.drama.genre}
                         </span>
-                        <span className="px-2.5 py-0.5 rounded-full bg-black/60 backdrop-blur-md border border-white/15 text-[10px] font-mono-num font-semibold text-zinc-100">
+                        <span className="px-2.5 py-0.5 rounded-full bg-black/75 backdrop-blur-md border border-white/20 text-[10px] font-mono-num font-semibold text-white shadow-sm">
                           {activeHero.drama.episodesCount} Eps
                         </span>
                       </div>

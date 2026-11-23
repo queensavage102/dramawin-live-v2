@@ -35,7 +35,10 @@ export const BottomAdBanner: React.FC = () => {
   }, []);
 
   return (
-    <div className="w-full flex items-center justify-center overflow-hidden bg-[#09090b]">
+    <div className="w-full flex flex-col items-center justify-center overflow-hidden bg-[#09090b]">
+      <p className="text-[10px] uppercase tracking-wider text-zinc-500 text-center mb-1">
+        Advertisement
+      </p>
       <div
         ref={adContainerRef}
         className="w-[320px] h-[50px] mx-auto flex items-center justify-center overflow-hidden bg-[#09090b]"

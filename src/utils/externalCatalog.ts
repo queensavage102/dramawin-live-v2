@@ -1,11 +1,11 @@
-import alphaVirginCover from '../assets/images/alpha_virgin_cover_1795432140819.jpg';
-import americanTenantCover from '../assets/images/american_tenant_cover_1795432137093.jpg';
-import chainedSatanCover from '../assets/images/chained_satan_cover_1795432136882.jpg';
-import dragonEarCover from '../assets/images/dragon_ear_cover_1795432137470.jpg';
-import forbiddenVampireCover from '../assets/images/forbidden_vampire_cover_1795432138182.jpg';
-import fourHusbandsCover from '../assets/images/four_husbands_cover_1795432136468.jpg';
-import taintedDesireCover from '../assets/images/tainted_desire_cover_1795432137375.jpg';
-import wrongCrownCover from '../assets/images/wrong_crown_cover_1795432137992.jpg';
+import alphaVirginCover from '../assets/images/bright_alpha_portrait_1795433106053.jpg';
+import americanTenantCover from '../assets/images/bright_tenant_portrait_1795433105304.jpg';
+import chainedSatanCover from '../assets/images/bright_chained_portrait_1795433105976.jpg';
+import dragonEarCover from '../assets/images/bright_dragon_portrait_1795433105466.jpg';
+import forbiddenVampireCover from '../assets/images/bright_vampire_portrait_1795433105516.jpg';
+import fourHusbandsCover from '../assets/images/bright_husbands_portrait_1795433105317.jpg';
+import taintedDesireCover from '../assets/images/bright_desire_portrait_1795433105566.jpg';
+import wrongCrownCover from '../assets/images/bright_crown_portrait_1795433105867.jpg';
 
 export interface FeaturedShortDrama {
   id: string;
@@ -44,90 +44,90 @@ export const TOP_SHORTS_FEATURED: FeaturedShortDrama[] = [
   {
     id: 'top-short-tainted-desire',
     title: 'Tainted Desire',
-    episodesCount: 30,
+    episodesCount: 60,
     genre: 'Drama',
-    trackingUrl: 'https://reelsgo.tv',
+    trackingUrl: 'https://r.reelsgo.tv/ziyan8iUaWdN',
     tagline: 'Forbidden Passion · Shattered Vows',
     coverImage: taintedDesireCover,
     accentGradient: 'from-[#4A0B1F] via-[#1E0813] to-[#08070B]',
-    badgeTone: 'text-rose-200 border-rose-400/40 bg-rose-500/20',
+    badgeTone: 'bg-black/75 text-white border-white/20',
   },
   {
     id: 'top-short-american-tenant',
     title: 'The American Tenant',
-    episodesCount: 60,
+    episodesCount: 30,
     genre: 'Drama',
     trackingUrl: 'https://r.reelsgo.tv/8a86PlrJpBK9',
     tagline: 'Secret Heir · Penthouse Secrets',
     coverImage: americanTenantCover,
     accentGradient: 'from-[#162844] via-[#0F1626] to-[#08080C]',
-    badgeTone: 'text-amber-200 border-amber-400/45 bg-amber-500/20',
+    badgeTone: 'bg-black/75 text-white border-white/20',
   },
   {
     id: 'top-short-dragon-ear',
     title: 'She Stole My Dragon Ear',
     episodesCount: 60,
     genre: 'Fantasy',
-    trackingUrl: 'https://reelsgo.tv',
+    trackingUrl: 'https://r.reelsgo.tv/h8ImhfiLXAFW',
     tagline: 'Ancient Bloodline · Mystic Claim',
     coverImage: dragonEarCover,
     accentGradient: 'from-[#2A1447] via-[#150D27] to-[#08080D]',
-    badgeTone: 'text-fuchsia-200 border-fuchsia-400/40 bg-fuchsia-500/20',
+    badgeTone: 'bg-black/75 text-white border-white/20',
   },
   {
     id: 'top-short-forbidden-vampire',
     title: 'Feeding My Forbidden Vampire',
     episodesCount: 60,
     genre: 'Fantasy',
-    trackingUrl: 'https://reelsgo.tv',
+    trackingUrl: 'https://r.reelsgo.tv/E3YA7Ox9ToTB',
     tagline: 'Crimson Pact · Eternal Hunger',
     coverImage: forbiddenVampireCover,
     accentGradient: 'from-[#4D0C18] via-[#20080E] to-[#08070B]',
-    badgeTone: 'text-red-200 border-red-400/40 bg-red-500/20',
+    badgeTone: 'bg-black/75 text-white border-white/20',
   },
   {
     id: 'top-short-wrong-crown',
     title: 'Feeding The Wrong Crown',
     episodesCount: 60,
     genre: 'Drama',
-    trackingUrl: 'https://reelsgo.tv',
+    trackingUrl: 'https://r.reelsgo.tv/Cf6mhcByXvOO',
     tagline: 'Stolen Throne · Royal Betrayal',
     coverImage: wrongCrownCover,
     accentGradient: 'from-[#473108] via-[#1F1607] to-[#08080B]',
-    badgeTone: 'text-amber-200 border-amber-400/45 bg-amber-500/20',
+    badgeTone: 'bg-black/75 text-white border-white/20',
   },
   {
     id: 'top-short-chained-satan',
     title: 'Chained Satan',
     episodesCount: 60,
     genre: 'Fantasy',
-    trackingUrl: 'https://reelsgo.tv',
+    trackingUrl: 'https://r.reelsgo.tv/Ic543yfSWQf3',
     tagline: 'Infernal Seal · Dark Awakening',
     coverImage: chainedSatanCover,
     accentGradient: 'from-[#3D1214] via-[#1B0A0D] to-[#08070B]',
-    badgeTone: 'text-purple-200 border-purple-400/40 bg-purple-500/20',
+    badgeTone: 'bg-black/75 text-white border-white/20',
   },
   {
     id: 'top-short-alpha-virgin',
     title: 'The Alpha Virgin',
     episodesCount: 60,
     genre: 'Romance',
-    trackingUrl: 'https://reelsgo.tv',
+    trackingUrl: 'https://r.reelsgo.tv/hpg0EFL_BxxR',
     tagline: 'Moonlit Bond · Untamed Fate',
     coverImage: alphaVirginCover,
     accentGradient: 'from-[#3E1330] via-[#1C0B1B] to-[#08070C]',
-    badgeTone: 'text-pink-200 border-pink-400/40 bg-pink-500/20',
+    badgeTone: 'bg-black/75 text-white border-white/20',
   },
   {
     id: 'top-short-four-wild-husbands',
     title: 'Taming My Four Wild Husbands',
     episodesCount: 60,
     genre: 'Romance',
-    trackingUrl: 'https://reelsgo.tv',
+    trackingUrl: 'https://r.reelsgo.tv/CRpgMiUefAUc',
     tagline: 'Four Rivals · One Bride',
     coverImage: fourHusbandsCover,
     accentGradient: 'from-[#3F1C10] via-[#1E0F0B] to-[#08070B]',
-    badgeTone: 'text-rose-200 border-rose-400/40 bg-rose-500/20',
+    badgeTone: 'bg-black/75 text-white border-white/20',
   },
 ];
 
