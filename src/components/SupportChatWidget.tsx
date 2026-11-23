@@ -450,7 +450,7 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
           className="fixed bottom-20 right-3 sm:right-6 z-50 flex items-center gap-1.5 px-3.5 py-2.5 rounded-full bg-amber-400 hover:bg-amber-300 text-black font-bold text-xs shadow-lg transition cursor-pointer"
         >
           <Sparkles className="w-4 h-4" />
-          <span>Support</span>
+          <span>AI Assistant</span>
         </button>
       )}
     </>

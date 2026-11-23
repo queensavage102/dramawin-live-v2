@@ -1,6 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ArrowLeft,
+  ChevronDown,
+  ChevronUp,
   Coins,
+  ExternalLink,
   Film,
   Maximize2,
   Minimize2,
@@ -11,7 +15,6 @@ import {
   Trophy,
   Volume2,
   VolumeX,
-  X,
   ZoomIn,
 } from 'lucide-react';
 import {
@@ -22,11 +25,23 @@ import {
   sanitizeMediaUrl,
 } from '../constants';
 import { DramaEpisode, PlayerPrivate } from '../types';
+import {
+  ExternalCatalogShow,
+  FeaturedShortDrama,
+  TOP_SHORTS_FEATURED,
+  fetchExternalCatalog,
+} from '../utils/externalCatalog';
 import { useResolvedMediaUrl } from '../utils/mediaStore';
 import { BottomAdBanner } from './BottomAdBanner';
 import { DoubleRewardModal } from './DoubleRewardModal';
+import { FeaturedShortPosterArtwork } from './FeaturedShortPosterArtwork';
 import { IsolatedHtml5Video, IsolatedYouTubeIframe } from './IsolatedYouTubeIframe';
 import { RealisticGoldCoin } from './RealisticGoldCoin';
+
+interface ForYouFeedItem extends DramaEpisode {
+  externalWatchUrl?: string;
+  featuredDrama?: FeaturedShortDrama;
+}
 
 const FORYOU_YOUTUBE_ALLOW =
   'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen';
@@ -114,8 +129,10 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
   onSwitchToHome,
 }) => {
   const [activeIndex, setActiveIndex] = useState(0);
+  const [externalAnimeShows, setExternalAnimeShows] = useState<ExternalCatalogShow[]>([]);
   const [isPlaying, setIsPlaying] = useState(true);
   const [isZoomed, setIsZoomed] = useState(false);
+  const [hudExpanded, setHudExpanded] = useState(false);
   const [isExpandedFull, setIsExpandedFull] = useState(false);
   const [ringProgress, setRingProgress] = useState(0);
   const [rewardModalOpen, setRewardModalOpen] = useState(false);
@@ -236,12 +253,96 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
   );
 
   useEffect(() => {
-    if (activeIndex >= episodes.length && episodes.length > 0) {
+    if (episodes.length > 0) return;
+    let cancelled = false;
+    void fetchExternalCatalog().then((buckets) => {
+      if (!cancelled) {
+        setExternalAnimeShows(buckets.anime.filter((show) => Boolean(show.trailerEmbedUrl)));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [episodes.length]);
+
+  const feedEpisodes: ForYouFeedItem[] = useMemo(() => {
+    if (episodes.length > 0) {
+      return episodes;
+    }
+
+    const trailerItems: ForYouFeedItem[] = externalAnimeShows.map((show, idx) => ({
+      id: `fy-${show.id}`,
+      title: show.title,
+      series: show.title,
+      seriesId: show.id,
+      category: show.category,
+      episodeLabel: 'Official Trailer',
+      duration: show.episodesLabel,
+      rewardCoins: COIN_POT_BASE_REWARD,
+      coverImage: show.posterUrl,
+      thumbnailUrl: show.posterUrl,
+      posterUrl: show.posterUrl,
+      synopsis: show.synopsis,
+      sponsorUrl: DEFAULT_SPONSOR_URL,
+      youtubeUrl: show.trailerEmbedUrl || '',
+      videoUrl: show.trailerEmbedUrl || '',
+      startTime: 0,
+      sortOrder: idx + 1,
+      isPublic: true,
+      externalWatchUrl: show.watchUrl,
+    }));
+
+    const featuredPreviewItems: ForYouFeedItem[] = TOP_SHORTS_FEATURED.map((item, idx) => ({
+      id: `fy-featured-${item.id}`,
+      title: item.title,
+      series: item.title,
+      seriesId: item.id,
+      category: item.genre,
+      episodeLabel: `${item.episodesCount} Eps`,
+      duration: `${item.episodesCount} Eps`,
+      rewardCoins: COIN_POT_BASE_REWARD,
+      coverImage: '',
+      thumbnailUrl: '',
+      posterUrl: '',
+      synopsis: item.tagline,
+      sponsorUrl: item.trackingUrl,
+      youtubeUrl: '',
+      videoUrl: '',
+      startTime: 0,
+      sortOrder: 100 + idx,
+      isPublic: true,
+      externalWatchUrl: item.trackingUrl,
+      featuredDrama: item,
+    }));
+
+    if (trailerItems.length === 0) {
+      return featuredPreviewItems;
+    }
+
+    // Interleave playable Jikan YouTube trailers upfront with Featured Short Drama previews
+    const combined: ForYouFeedItem[] = [];
+    let tIdx = 0;
+    let fIdx = 0;
+    while (tIdx < trailerItems.length || fIdx < featuredPreviewItems.length) {
+      for (let count = 0; count < 2 && tIdx < trailerItems.length; count += 1) {
+        combined.push(trailerItems[tIdx]);
+        tIdx += 1;
+      }
+      if (fIdx < featuredPreviewItems.length) {
+        combined.push(featuredPreviewItems[fIdx]);
+        fIdx += 1;
+      }
+    }
+    return combined;
+  }, [episodes, externalAnimeShows]);
+
+  useEffect(() => {
+    if (activeIndex >= feedEpisodes.length && feedEpisodes.length > 0) {
       setActiveIndex(0);
     }
-  }, [activeIndex, episodes.length]);
+  }, [activeIndex, feedEpisodes.length]);
 
-  const currentEpisode = episodes[activeIndex] || null;
+  const currentEpisode: ForYouFeedItem | null = feedEpisodes[activeIndex] || null;
 
   const rawVideoUrl = currentEpisode
     ? sanitizeMediaUrl((currentEpisode.videoUrl || currentEpisode.youtubeUrl || '').trim())
@@ -281,7 +382,7 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
     rewardModalOpenRef.current = false;
     elapsedMsRef.current = 0;
     setRingProgress(0);
-    setIsZoomed(true);
+    setIsZoomed(false);
     return () => {
       clearRecoveryTimers();
       clearStallPill();
@@ -637,9 +738,11 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
     scheduleStallPill,
   ]);
 
-  // Smooth circular Coin Progress Ring timer
+  const isFeaturedPreviewSlide = Boolean(currentEpisode?.featuredDrama);
+
+  // Smooth circular Coin Progress Ring timer (ticks during active video / trailer playback)
   useEffect(() => {
-    if (!currentEpisode) return;
+    if (!currentEpisode || isFeaturedPreviewSlide) return;
     const cycleMs = COIN_POT_CYCLE_SECONDS * 1000;
     let lastTick = Date.now();
 
@@ -669,7 +772,7 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
     }, 100);
 
     return () => window.clearInterval(interval);
-  }, [currentEpisode?.id]);
+  }, [currentEpisode?.id, isFeaturedPreviewSlide]);
 
   const handleTogglePlayPause = useCallback(() => {
     setIsPlaying((prev) => !prev);
@@ -703,14 +806,14 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
   };
 
   const handlePrev = useCallback(() => {
-    if (episodes.length <= 1) return;
-    setActiveIndex((prev) => (prev - 1 + episodes.length) % episodes.length);
-  }, [episodes.length]);
+    if (feedEpisodes.length <= 1) return;
+    setActiveIndex((prev) => (prev - 1 + feedEpisodes.length) % feedEpisodes.length);
+  }, [feedEpisodes.length]);
 
   const handleNext = useCallback(() => {
-    if (episodes.length <= 1) return;
-    setActiveIndex((prev) => (prev + 1) % episodes.length);
-  }, [episodes.length]);
+    if (feedEpisodes.length <= 1) return;
+    setActiveIndex((prev) => (prev + 1) % feedEpisodes.length);
+  }, [feedEpisodes.length]);
 
   const handleAwardDoubleCoinsOnly = async (amount: number) => {
     if (!currentEpisode) return;
@@ -745,8 +848,8 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
     }
   };
 
-  const ringSize = 54;
-  const strokeWidth = 3.5;
+  const ringSize = 36;
+  const strokeWidth = 3;
   const radius = (ringSize - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
   const dashOffset = circumference * (1 - ringProgress / 100);
@@ -801,12 +904,62 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
       >
         {/* 1. True Full-Screen Edge-to-Edge Video Stage with Floating Translucent DramaWin HUD */}
         <div className="relative flex-1 min-h-0 w-full bg-[#060608] overflow-hidden [container-type:size]">
-          {/* Video Frame Layer */}
-          {videoSource.kind === 'youtube' ||
-          videoSource.kind === 'dailymotion' ||
-          videoSource.kind === 'vimeo' ||
-          videoSource.kind === 'odysee' ||
-          videoSource.kind === 'iframe' ? (
+          {/* Video Frame / Featured Drama Preview Layer */}
+          {currentEpisode.featuredDrama ? (
+            <div className="relative w-full h-full overflow-hidden bg-[#060608]">
+              <FeaturedShortPosterArtwork
+                item={currentEpisode.featuredDrama}
+                showCenterTitle={false}
+                variant="stage"
+              />
+              <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black via-black/45 to-black/55" />
+
+              <div className="relative z-20 h-full w-full flex flex-col items-center justify-center px-5 pb-12 pt-16 text-center max-w-md mx-auto gap-4">
+                <div className="inline-flex items-center gap-2 text-[11px] font-mono-num uppercase tracking-[0.18em] text-[#FCE7A2]">
+                  <span>{currentEpisode.featuredDrama.genre}</span>
+                  <span aria-hidden="true">·</span>
+                  <span>{currentEpisode.featuredDrama.episodesCount} Eps</span>
+                  <span aria-hidden="true">·</span>
+                  <span>Featured Short</span>
+                </div>
+
+                <h2 className="text-3xl sm:text-4xl font-display font-black uppercase tracking-tight leading-[1.05] bg-gradient-to-b from-[#FFFDF7] via-[#FDE68A] to-[#D4AF37] bg-clip-text text-transparent drop-shadow-[0_4px_16px_rgba(0,0,0,0.95)] text-balance">
+                  {currentEpisode.featuredDrama.title}
+                </h2>
+
+                <p className="text-xs sm:text-sm text-zinc-200/90 leading-relaxed max-w-xs">
+                  {currentEpisode.featuredDrama.tagline}
+                </p>
+
+                <div className="flex flex-wrap items-center justify-center gap-2.5 pt-1">
+                  <a
+                    href={currentEpisode.featuredDrama.trackingUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="min-h-[44px] px-5 rounded-xl gold-gradient-bg text-[#181307] text-xs sm:text-sm font-extrabold inline-flex items-center gap-1.5 hover:brightness-105 active:scale-[0.98] shadow-[0_8px_24px_rgba(212,175,55,0.4)] transition"
+                  >
+                    <span>Watch Full Series</span>
+                    <ExternalLink className="w-4 h-4 shrink-0" />
+                  </a>
+
+                  {feedEpisodes.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={handleNext}
+                      className="min-h-[44px] px-4 rounded-xl bg-black/65 hover:bg-black/85 backdrop-blur-md border border-white/20 hover:border-[#D4AF37]/60 text-white text-xs sm:text-sm font-bold inline-flex items-center gap-1.5 cursor-pointer transition"
+                    >
+                      <span>Next</span>
+                      <SkipForward className="w-3.5 h-3.5 fill-current" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : videoSource.kind === 'youtube' ||
+            videoSource.kind === 'dailymotion' ||
+            videoSource.kind === 'vimeo' ||
+            videoSource.kind === 'odysee' ||
+            videoSource.kind === 'iframe' ? (
             <IsolatedYouTubeIframe
               iframeRef={iframeRef}
               iframeKey={`fy-${currentEpisode.id}-${videoSource.url}-r${retryCount}`}
@@ -843,11 +996,11 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
           ) : (
             <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center gap-3 bg-[#060608]">
               <Film className="w-10 h-10 text-amber-400" />
-              <p className="text-xs text-zinc-400">Video ready in /admin</p>
+              <p className="text-xs text-zinc-400">Preview ready — swipe for next stream</p>
             </div>
           )}
 
-          {(isRecovering || recoveryFailed) && (
+          {!isFeaturedPreviewSlide && (isRecovering || recoveryFailed) && (
             <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center p-4">
               {recoveryFailed ? (
                 <button
@@ -874,27 +1027,50 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
             </div>
           )}
 
-          {/* Center Play/Pause Tap Shield */}
-          <button
-            type="button"
-            onClick={handleTogglePlayPause}
-            aria-label={isPlaying ? 'Pause episode' : 'Play episode'}
-            className="absolute inset-0 z-10 w-full h-full bg-transparent cursor-pointer flex items-center justify-center focus:outline-none"
-          >
-            {!isPlaying && (
-              <span className="w-16 h-16 rounded-full bg-black/70 backdrop-blur-md border border-amber-400/50 text-amber-300 flex items-center justify-center shadow-[0_0_28px_rgba(0,0,0,0.8)]">
-                <Play className="w-7 h-7 fill-current ml-1" />
-              </span>
-            )}
-          </button>
+          {/* Center Play/Pause Tap Shield (active on playable video/trailer slides) */}
+          {!isFeaturedPreviewSlide && (
+            <button
+              type="button"
+              onClick={handleTogglePlayPause}
+              aria-label={isPlaying ? 'Pause episode' : 'Play episode'}
+              className="absolute inset-0 z-10 w-full h-full bg-transparent cursor-pointer flex items-center justify-center focus:outline-none"
+            >
+              {!isPlaying && (
+                <span className="w-16 h-16 rounded-full bg-black/70 backdrop-blur-md border border-amber-400/50 text-amber-300 flex items-center justify-center shadow-[0_0_28px_rgba(0,0,0,0.8)]">
+                  <Play className="w-7 h-7 fill-current ml-1" />
+                </span>
+              )}
+            </button>
+          )}
 
-          {/* 2. Floating Translucent DramaWin Header, Controls, Tournament Bar, Reload & Gold Coin Pot (+300) */}
-          <div className="pointer-events-none absolute inset-x-0 top-0 z-30 bg-gradient-to-b from-black/88 via-black/58 to-transparent px-3 sm:px-5 pt-[max(0.5rem,env(safe-area-inset-top))] pb-6 space-y-2">
-            {/* Row 1: Series & Episode Title + Close ✕ */}
+          {/* External Show Link + Quick Next Pill on Trailer Slides */}
+          {!isFeaturedPreviewSlide && currentEpisode.externalWatchUrl && (
+            <div className="pointer-events-none absolute left-3 bottom-3 z-20 flex items-center gap-2">
+              <a
+                href={currentEpisode.externalWatchUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="pointer-events-auto min-h-[34px] px-3 rounded-full gold-gradient-bg text-[#181307] text-[11px] font-extrabold inline-flex items-center gap-1 shadow-[0_4px_16px_rgba(212,175,55,0.35)] hover:brightness-105 transition"
+              >
+                <span>Watch Full Series</span>
+                <ExternalLink className="w-3 h-3 shrink-0" />
+              </a>
+              {feedEpisodes.length > 1 && (
+                <button
+                  type="button"
+                  onClick={handleNext}
+                  className="pointer-events-auto min-h-[34px] px-3 rounded-full bg-black/75 hover:bg-black/90 backdrop-blur-md border border-white/20 text-[#FFF8E7] text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer transition"
+                >
+                  <span>Next</span>
+                  <SkipForward className="w-3 h-3 fill-current" />
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* 2. Single Slim Top Bar: Back/Close, Title, Optional Fit/Zoom, Mute */}
+          <header className="pointer-events-none absolute inset-x-0 top-0 z-30 bg-gradient-to-b from-black/85 via-black/45 to-transparent px-3 sm:px-5 pt-[max(0.45rem,env(safe-area-inset-top))] pb-3">
             <div className="pointer-events-auto flex items-center justify-between gap-2">
-              <h1 className="text-sm sm:text-base font-display font-extrabold uppercase tracking-wide text-[#FFF8E7] drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)] truncate">
-                {currentEpisode.series} · {currentEpisode.episodeLabel}
-              </h1>
               <button
                 type="button"
                 onClick={() => {
@@ -903,24 +1079,45 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
                   }
                   onSwitchToHome();
                 }}
-                aria-label="Close For You player"
-                className="min-h-[38px] min-w-[38px] rounded-full bg-black/60 backdrop-blur-md border border-[#D4AF37]/50 flex items-center justify-center text-[#FCE7A2] hover:border-[#FBBF24] cursor-pointer shrink-0 transition"
+                aria-label="Back to Home"
+                className="min-h-[36px] min-w-[36px] rounded-full bg-black/65 backdrop-blur-md border border-[#D4AF37]/45 flex items-center justify-center text-[#FCE7A2] hover:border-[#FBBF24] cursor-pointer shrink-0 transition"
               >
-                <X className="w-4 h-4" />
+                <ArrowLeft className="w-4 h-4" />
               </button>
-            </div>
 
-            {/* Row 2: Speaker, Fit / Zoom, Fullscreen, and Next Episode ⏭ */}
-            <div className="pointer-events-auto flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5 sm:gap-2">
+              <h1 className="flex-1 min-w-0 text-xs sm:text-sm font-display font-extrabold uppercase tracking-wide text-[#FFF8E7] drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)] truncate">
+                {currentEpisode.series} · {currentEpisode.episodeLabel}
+              </h1>
+
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setIsZoomed((prev) => !prev)}
+                  aria-pressed={isZoomed}
+                  aria-label={isZoomed ? 'Switch to Original Fit' : 'Switch to Zoom Cover'}
+                  title={isZoomed ? 'Zoomed — tap for Fit' : 'Fit — tap for Zoom'}
+                  className={`min-h-[34px] px-2.5 rounded-full backdrop-blur-md border text-[11px] font-bold inline-flex items-center gap-1 whitespace-nowrap shrink-0 transition cursor-pointer ${
+                    isZoomed
+                      ? 'border-[#FBBF24] bg-[#241A07]/90 text-[#FFF3B0] shadow-[0_0_10px_rgba(251,191,36,0.28)]'
+                      : 'border-white/20 bg-black/65 text-[#FCE7A2] hover:border-[#D4AF37]/60'
+                  }`}
+                >
+                  {isZoomed ? (
+                    <ZoomIn className="w-3.5 h-3.5 text-[#FBBF24]" />
+                  ) : (
+                    <Scan className="w-3.5 h-3.5 text-[#D4AF37]" />
+                  )}
+                  <span>{isZoomed ? 'Zoom' : 'Fit'}</span>
+                </button>
+
                 <button
                   type="button"
                   onClick={onToggleMute}
                   aria-pressed={!muted}
                   aria-label={muted ? 'Unmute video' : 'Mute video'}
-                  className={`min-h-[38px] min-w-[38px] px-2.5 rounded-full backdrop-blur-md border flex items-center justify-center cursor-pointer transition ${
+                  className={`min-h-[36px] min-w-[36px] rounded-full backdrop-blur-md border flex items-center justify-center cursor-pointer transition ${
                     muted
-                      ? 'bg-black/60 border-white/20 text-zinc-300 hover:text-white'
+                      ? 'bg-black/65 border-white/20 text-zinc-300 hover:text-white'
                       : 'bg-black/65 border-[#D4AF37]/60 text-[#FCE7A2]'
                   }`}
                 >
@@ -930,85 +1127,103 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
                     <Volume2 className="w-4 h-4 text-[#D4AF37]" />
                   )}
                 </button>
+              </div>
+            </div>
+          </header>
 
-                <button
-                  type="button"
-                  onClick={() => setIsZoomed((prev) => !prev)}
-                  aria-pressed={isZoomed}
-                  aria-label={
-                    isZoomed
-                      ? 'Fullscreen Cover active — switch to Original Fit'
-                      : 'Original Fit active — switch to Fullscreen Cover'
-                  }
-                  title={isZoomed ? 'Tap for Original Fit' : 'Tap for Fullscreen Cover'}
-                  className={`min-h-[38px] px-3 rounded-full backdrop-blur-md border text-xs font-bold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition cursor-pointer ${
-                    isZoomed
-                      ? 'border-[#D4AF37]/65 bg-black/65 text-[#FCE7A2] hover:border-[#FBBF24]'
-                      : 'border-[#FBBF24] bg-[#241A07]/85 text-[#FFF3B0] shadow-[0_0_12px_rgba(251,191,36,0.28)]'
-                  }`}
+          {/* 3. Compact Side / Collapsible Pill: +300 Coin Pot Ring + Sunday Tournament Progress */}
+          <div className="pointer-events-none absolute top-[max(3.5rem,calc(env(safe-area-inset-top)+3.15rem))] right-3 z-30 flex flex-col items-end gap-1.5">
+            <button
+              type="button"
+              onClick={() => setHudExpanded((prev) => !prev)}
+              aria-expanded={hudExpanded}
+              aria-label="Toggle tournament progress and coin pot details"
+              className="pointer-events-auto inline-flex items-center gap-2 rounded-full bg-black/75 hover:bg-black/90 backdrop-blur-md border border-[#D4AF37]/60 pl-1.5 pr-2.5 py-1 shadow-[0_4px_18px_rgba(0,0,0,0.65)] cursor-pointer transition"
+            >
+              <div className="relative w-[36px] h-[36px] rounded-full bg-black/80 flex items-center justify-center shrink-0">
+                <svg
+                  width={ringSize}
+                  height={ringSize}
+                  viewBox={`0 0 ${ringSize} ${ringSize}`}
+                  className="-rotate-90 absolute inset-0"
+                  aria-hidden="true"
                 >
-                  {isZoomed ? (
-                    <Scan className="w-3.5 h-3.5 text-[#D4AF37]" />
-                  ) : (
-                    <ZoomIn className="w-3.5 h-3.5 text-[#FBBF24]" />
-                  )}
-                  <span>{isZoomed ? 'Fit / Zoom' : 'Original Fit'}</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => void handleToggleFullscreen()}
-                  aria-label={isExpandedFull ? 'Exit full screen' : 'Full screen'}
-                  className="min-h-[38px] min-w-[38px] rounded-full bg-black/60 backdrop-blur-md border border-[#D4AF37]/45 text-[#FCE7A2] hover:border-[#FBBF24] flex items-center justify-center cursor-pointer transition"
-                >
-                  {isExpandedFull ? (
-                    <Minimize2 className="w-4 h-4" />
-                  ) : (
-                    <Maximize2 className="w-4 h-4" />
-                  )}
-                </button>
+                  <defs>
+                    <linearGradient id="fy-ring-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" stopColor="#FFF7CC" />
+                      <stop offset="50%" stopColor="#D4AF37" />
+                      <stop offset="100%" stopColor="#A88220" />
+                    </linearGradient>
+                  </defs>
+                  <circle
+                    cx={ringSize / 2}
+                    cy={ringSize / 2}
+                    r={radius}
+                    fill="none"
+                    stroke="rgba(255,255,255,0.16)"
+                    strokeWidth={strokeWidth}
+                  />
+                  <circle
+                    cx={ringSize / 2}
+                    cy={ringSize / 2}
+                    r={radius}
+                    fill="none"
+                    stroke="url(#fy-ring-grad)"
+                    strokeWidth={strokeWidth}
+                    strokeLinecap="round"
+                    strokeDasharray={circumference}
+                    strokeDashoffset={dashOffset}
+                    className="transition-[stroke-dashoffset] duration-150 ease-linear"
+                  />
+                </svg>
+                <div className="flex flex-col items-center justify-center">
+                  <Coins className="w-3 h-3 text-amber-300" />
+                  <span className="font-mono-num text-[8px] font-extrabold text-amber-200 leading-none">
+                    +{COIN_POT_BASE_REWARD}
+                  </span>
+                </div>
               </div>
 
-              {episodes.length > 1 ? (
-                <button
-                  type="button"
-                  onClick={handleNext}
-                  className="min-h-[38px] px-3.5 rounded-full gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer hover:brightness-105 shadow-[0_0_16px_rgba(251,191,36,0.4)]"
-                >
-                  <span>Next Episode</span>
-                  <SkipForward className="w-3.5 h-3.5 fill-current" />
-                </button>
-              ) : (
-                <span className="font-mono-num text-[11px] font-semibold text-[#FCE7A2] bg-black/55 backdrop-blur-md px-2.5 py-1 rounded-full border border-[#D4AF37]/30 whitespace-nowrap">
-                  {activeIndex + 1} / {episodes.length}
+              <div className="flex flex-col items-start text-left leading-tight">
+                <span className="font-mono-num text-[10px] font-extrabold text-[#FCE7A2]">
+                  {isFeaturedPreviewSlide
+                    ? 'Preview'
+                    : isPlaying
+                      ? `${Math.round(ringProgress)}%`
+                      : 'Paused'}
                 </span>
-              )}
-            </div>
+                <span className="inline-flex items-center gap-1 text-[9px] font-bold text-amber-300/90">
+                  <Trophy className="w-2.5 h-2.5 shrink-0" />
+                  <span>{isQualified ? 'Qualified' : `${weeklyPct.toFixed(1)}%`}</span>
+                </span>
+              </div>
 
-            {/* Row 3: Compact Sunday Tournament Progress + Reload Pill (Left) & Glowing Gold Coin Pot +300 (Top-Right) */}
-            <div className="flex items-start justify-between gap-2.5">
-              <div className="pointer-events-auto flex-1 min-w-0 space-y-1.5">
-                <div className="w-full rounded-xl bg-black/60 backdrop-blur-md border border-[#D4AF37]/55 px-2.5 py-1.5 shadow-[0_4px_18px_rgba(0,0,0,0.45)]">
-                  <div className="flex items-center justify-between gap-1.5 text-[10px] sm:text-xs">
-                    <span className="inline-flex items-center gap-1 font-bold text-[#FCE7A2] truncate">
-                      <Trophy className="w-3 h-3 text-[#FBBF24] shrink-0" />
-                      <span className="truncate">Sunday Tournament</span>
+              {hudExpanded ? (
+                <ChevronUp className="w-3.5 h-3.5 text-[#FCE7A2]/80 shrink-0" />
+              ) : (
+                <ChevronDown className="w-3.5 h-3.5 text-[#FCE7A2]/80 shrink-0" />
+              )}
+            </button>
+
+            {hudExpanded && (
+              <div className="pointer-events-auto w-64 sm:w-72 rounded-2xl bg-black/88 backdrop-blur-md border border-[#D4AF37]/60 p-3 shadow-[0_12px_32px_rgba(0,0,0,0.85)] space-y-2.5">
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2 text-[11px]">
+                    <span className="inline-flex items-center gap-1 font-bold text-[#FCE7A2]">
+                      <Trophy className="w-3.5 h-3.5 text-[#FBBF24] shrink-0" />
+                      <span>Sunday Tournament</span>
                     </span>
-                    <span className="font-mono-num font-bold text-[#FFF8E7] whitespace-nowrap shrink-0">
-                      {playerWeeklyCoins.toLocaleString()} / {safeThreshold.toLocaleString()}{' '}
-                      <span className={isQualified ? 'text-emerald-300' : 'text-[#FBBF24]'}>
-                        ({isQualified ? 'Qualified' : `${weeklyPct.toFixed(2)}%`})
-                      </span>
+                    <span className="font-mono-num font-bold text-[#FFF8E7]">
+                      {playerWeeklyCoins.toLocaleString()} / {safeThreshold.toLocaleString()}
                     </span>
                   </div>
-
                   <div
                     role="progressbar"
                     aria-valuenow={playerWeeklyCoins}
                     aria-valuemin={0}
                     aria-valuemax={safeThreshold}
                     aria-label="Sunday Tournament Progress"
-                    className="mt-1 h-1.5 w-full rounded-full bg-black/80 border border-[#D4AF37]/30 overflow-hidden"
+                    className="h-1.5 w-full rounded-full bg-white/10 border border-[#D4AF37]/30 overflow-hidden"
                   >
                     <div
                       className={`h-full rounded-full transition-all duration-300 ${
@@ -1021,88 +1236,64 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <span className="font-mono-num text-[10px] font-semibold text-[#FCE7A2]/90 drop-shadow whitespace-nowrap">
-                    {activeIndex + 1}/{episodes.length}
+                <div className="flex items-center justify-between gap-2 pt-1 border-t border-white/10">
+                  <span className="font-mono-num text-[10px] font-semibold text-zinc-300">
+                    {activeIndex + 1} / {feedEpisodes.length}
                   </span>
 
-                  {isStalledOver5s && (
+                  <div className="flex items-center gap-1.5">
                     <button
                       type="button"
-                      onClick={() => {
-                        clearRecoveryTimers();
-                        clearStallPill();
-                        scheduleStallPill();
-                        setRecoveryFailed(false);
-                        setIsRecovering(false);
-                        setRetryCount((prev) => prev + 1);
-                      }}
-                      className="min-h-[28px] px-2.5 rounded-full bg-black/75 hover:bg-black/90 backdrop-blur-md border border-[#D4AF37]/55 text-[11px] font-bold text-[#FCE7A2] inline-flex items-center gap-1 whitespace-nowrap cursor-pointer shadow-[0_0_12px_rgba(212,175,55,0.28)] transition"
+                      onClick={() => void handleToggleFullscreen()}
+                      aria-label={isExpandedFull ? 'Exit full screen' : 'Full screen'}
+                      className="min-h-[30px] min-w-[30px] rounded-full bg-white/10 border border-[#D4AF37]/40 text-[#FCE7A2] flex items-center justify-center cursor-pointer"
                     >
-                      <RotateCcw className="w-3 h-3 text-[#D4AF37] shrink-0" />
-                      <span>Reload</span>
+                      {isExpandedFull ? (
+                        <Minimize2 className="w-3.5 h-3.5" />
+                      ) : (
+                        <Maximize2 className="w-3.5 h-3.5" />
+                      )}
                     </button>
-                  )}
-                </div>
-              </div>
 
-              {/* Glowing Gold Coin Pot (+300) Circular Progress Ring */}
-              <div className="shrink-0 flex flex-col items-center gap-0.5">
-                <div className="relative w-[54px] h-[54px] rounded-full bg-black/70 backdrop-blur-md border border-[#D4AF37]/75 shadow-[0_0_20px_rgba(251,191,36,0.48)] flex items-center justify-center">
-                  <svg
-                    width={ringSize}
-                    height={ringSize}
-                    viewBox={`0 0 ${ringSize} ${ringSize}`}
-                    className="-rotate-90 absolute inset-0"
-                    aria-hidden="true"
-                  >
-                    <defs>
-                      <linearGradient id="fy-ring-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-                        <stop offset="0%" stopColor="#FFF7CC" />
-                        <stop offset="50%" stopColor="#D4AF37" />
-                        <stop offset="100%" stopColor="#A88220" />
-                      </linearGradient>
-                    </defs>
-                    <circle
-                      cx={ringSize / 2}
-                      cy={ringSize / 2}
-                      r={radius}
-                      fill="none"
-                      stroke="rgba(255,255,255,0.16)"
-                      strokeWidth={strokeWidth}
-                    />
-                    <circle
-                      cx={ringSize / 2}
-                      cy={ringSize / 2}
-                      r={radius}
-                      fill="none"
-                      stroke="url(#fy-ring-grad)"
-                      strokeWidth={strokeWidth}
-                      strokeLinecap="round"
-                      strokeDasharray={circumference}
-                      strokeDashoffset={dashOffset}
-                      className="transition-[stroke-dashoffset] duration-150 ease-linear"
-                    />
-                  </svg>
-                  <div className="flex flex-col items-center justify-center">
-                    <Coins className="w-4 h-4 text-amber-300" />
-                    <span className="font-mono-num text-[9px] font-extrabold text-amber-200 leading-none mt-0.5">
-                      +{COIN_POT_BASE_REWARD}
-                    </span>
+                    {feedEpisodes.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={handleNext}
+                        className="min-h-[30px] px-2.5 rounded-full gold-gradient-bg text-[#181307] text-[11px] font-extrabold inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <span>Next</span>
+                        <SkipForward className="w-3 h-3 fill-current" />
+                      </button>
+                    )}
                   </div>
                 </div>
-                <span className="font-mono-num text-[10px] font-extrabold text-[#FCE7A2] bg-black/70 px-1.5 rounded">
-                  {isPlaying ? `${Math.round(ringProgress)}%` : 'Paused'}
-                </span>
               </div>
-            </div>
+            )}
+
+            {!isFeaturedPreviewSlide && isStalledOver5s && (
+              <button
+                type="button"
+                onClick={() => {
+                  clearRecoveryTimers();
+                  clearStallPill();
+                  scheduleStallPill();
+                  setRecoveryFailed(false);
+                  setIsRecovering(false);
+                  setRetryCount((prev) => prev + 1);
+                }}
+                className="pointer-events-auto min-h-[28px] px-2.5 rounded-full bg-black/80 hover:bg-black/95 backdrop-blur-md border border-[#D4AF37]/60 text-[11px] font-bold text-[#FCE7A2] inline-flex items-center gap-1 whitespace-nowrap cursor-pointer shadow-[0_0_12px_rgba(212,175,55,0.28)] transition"
+              >
+                <RotateCcw className="w-3 h-3 text-[#D4AF37] shrink-0" />
+                <span>Reload</span>
+              </button>
+            )}
           </div>
 
           {/* Flying Coin Burst Feedback */}
           {flyingBurst && (
             <div
               key={flyingBurst.id}
-              className="coin-shoot-up pointer-events-none absolute right-6 top-36 z-40 flex flex-col items-center gap-1"
+              className="coin-shoot-up pointer-events-none absolute right-6 top-28 z-40 flex flex-col items-center gap-1"
             >
               <RealisticGoldCoin sizePx={44} emblem="$" />
               <span className="px-2.5 py-0.5 rounded-full gold-gradient-bg text-[#181307] font-mono-num text-xs font-extrabold shadow-lg">
@@ -1112,9 +1303,9 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
           )}
         </div>
 
-        {/* 3. Pinned Bottom 320x50px Adsterra Banner & 18+ Disclaimer Right Above Bottom Nav Bar */}
+        {/* 4. Pinned Bottom 320x50px Adsterra/Monetag Banner & 18+ Disclaimer Right Above Bottom Nav Bar */}
         <footer
-          className={`shrink-0 relative z-20 bg-[#09090b] border-t border-[#D4AF37]/30 px-3 pt-1.5 pb-1.5 flex flex-col items-center justify-center ${
+          className={`shrink-0 relative z-20 bg-[#09090b] border-t border-[#D4AF37]/30 px-3 pt-2 pb-2 flex flex-col items-center justify-center ${
             isExpandedFull ? 'mb-0' : 'mb-16'
           }`}
         >

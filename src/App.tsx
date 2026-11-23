@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { User, onAuthStateChanged, signInAnonymously, signInWithPopup } from 'firebase/auth';
-import { AlertTriangle, Crown, Flame, X } from 'lucide-react';
+import { AlertTriangle, Crown, Flame, ShieldCheck, X } from 'lucide-react';
 import { AdminBoardPage } from './components/AdminBoardPage';
 import { BoostTab } from './components/BoostTab';
 import { BottomNavBar } from './components/BottomNavBar';
@@ -221,6 +221,7 @@ function DramaWinApp() {
 
   const [activeTab, setActiveTab] = useState<AppTab>('watch');
   const [giftVaultModalOpen, setGiftVaultModalOpen] = useState(false);
+  const [legalModalOpen, setLegalModalOpen] = useState(false);
   const [referralsJoinedCount, setReferralsJoinedCount] = useState(0);
   const [myListSeriesIds, setMyListSeriesIds] = useState<string[]>(() => loadMyListSeriesIds());
   const [toast, setToast] = useState<ToastNotice | null>(null);
@@ -2087,6 +2088,11 @@ function DramaWinApp() {
             episodes={episodes}
             cloudSeries={cloudSeries}
             privateState={privateProfile}
+            isAdmin={Boolean(
+              adminUnlocked ||
+                (firebaseUser?.email &&
+                  firebaseUser.email.toLowerCase() === 'gerinaicker04@gmail.com')
+            )}
             referralUserId={referralUserId}
             sponsorAdUrl={appConfig.sponsorAdUrl}
             playerWeeklyCoins={currentPlayer.weeklyCoins}
@@ -2189,16 +2195,29 @@ function DramaWinApp() {
           />
         )}
 
-        {/* Quiet Footer */}
-        <footer className="pt-4 border-t border-white/[0.06] flex flex-wrap items-center justify-between gap-3 text-xs text-[#8D867A]">
-          <span className="inline-flex items-center gap-1.5">
-            <Crown className="w-3.5 h-3.5 text-[#D4AF37]" />
-            <strong className="text-[#E8C96D]">{BRAND_NAME}</strong>
-            <span>· Instant Play ({currentPlayer.username})</span>
-          </span>
-          <span className="font-mono-num text-[11px] text-[#7A746A]">
-            Progress saved automatically
-          </span>
+        {/* Compliance Footer */}
+        <footer className="pt-4 pb-2 border-t border-white/[0.06] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 text-xs text-[#8D867A]">
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+            <span className="inline-flex items-center gap-1.5">
+              <Crown className="w-3.5 h-3.5 text-[#D4AF37]" />
+              <strong className="text-[#E8C96D]">{BRAND_NAME}</strong>
+              <span>· Instant Play</span>
+            </span>
+            <span className="text-white/20">•</span>
+            <span className="text-[11px] text-[#9E978B]">
+              Show metadata provided by TVMaze &amp; Jikan
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setLegalModalOpen(true)}
+              className="inline-flex items-center gap-1 text-[11px] font-medium text-[#E8C96D] hover:text-[#F6D778] underline underline-offset-4 cursor-pointer"
+            >
+              <ShieldCheck className="w-3.5 h-3.5" />
+              Privacy Policy &amp; Affiliate Disclosure
+            </button>
+          </div>
         </footer>
       </main>
 
@@ -2247,6 +2266,91 @@ function DramaWinApp() {
               onOpenMysteryBox={handleOpenMysteryBox}
               onDismissVoucherModal={() => setMysteryVoucherModal(null)}
             />
+          </div>
+        </div>
+      )}
+
+      {/* Privacy Policy & Affiliate Disclosure Modal */}
+      {legalModalOpen && (
+        <div
+          className="fixed inset-0 z-[70] bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-5 overflow-y-auto"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Privacy Policy and Affiliate Disclosure"
+          onClick={() => setLegalModalOpen(false)}
+        >
+          <div
+            className="relative w-full max-w-lg my-auto rounded-2xl bg-[#121218] border border-[#D4AF37]/30 p-5 sm:p-6 shadow-2xl text-left"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 pb-3 border-b border-white/10">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-[#D4AF37] shrink-0" />
+                <h2 className="text-base sm:text-lg font-bold text-white">
+                  Privacy Policy &amp; Affiliate Disclosure
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setLegalModalOpen(false)}
+                aria-label="Close Privacy Policy and Affiliate Disclosure"
+                className="min-h-[38px] min-w-[38px] rounded-full bg-white/5 border border-white/15 text-zinc-200 hover:bg-white/10 flex items-center justify-center cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-4 text-xs sm:text-sm text-[#C8C0B2] leading-relaxed max-h-[65vh] overflow-y-auto pr-1">
+              <section className="space-y-1.5">
+                <h3 className="font-semibold text-[#E8C96D]">1. Affiliate &amp; Partner Disclosure</h3>
+                <p>
+                  Some external &ldquo;Watch Full Series&rdquo; links (including ReelsGo links) and
+                  sponsored partner placements on {BRAND_NAME} are affiliate or referral tracking
+                  links. Opening or engaging with these partner links may earn {BRAND_NAME} a
+                  commission or reward credit at no extra cost to you.
+                </p>
+              </section>
+
+              <section className="space-y-1.5">
+                <h3 className="font-semibold text-[#E8C96D]">2. Privacy &amp; Data Storage</h3>
+                <p>
+                  {BRAND_NAME} stores your player progress, coin balance, watchlist, and tracking ID
+                  locally in your browser and, when signed in or synced, in our cloud database so
+                  your rewards stay intact across sessions. Optional feedback, series requests, and
+                  support messages are transmitted solely to process your request.
+                </p>
+              </section>
+
+              <section className="space-y-1.5">
+                <h3 className="font-semibold text-[#E8C96D]">3. Catalog Metadata Attribution</h3>
+                <p>
+                  Show metadata, synopses, cover artwork, and official trailer references are
+                  provided by{' '}
+                  <strong className="text-white">TVMaze</strong> and{' '}
+                  <strong className="text-white">Jikan (MyAnimeList)</strong> public APIs. All
+                  trademarks and show artwork belong to their respective owners.
+                </p>
+              </section>
+
+              <section className="space-y-1">
+                <h3 className="font-semibold text-[#E8C96D]">4. Support &amp; Inquiries</h3>
+                <p className="text-[#9E978B]">
+                  For privacy questions or support inquiries, contact{' '}
+                  <span className="text-white font-medium">gerinaicker04@gmail.com</span> or use the
+                  in-app VIP Support chat.
+                </p>
+              </section>
+            </div>
+
+            <div className="mt-5 pt-3 border-t border-white/10 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setLegalModalOpen(false)}
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#D4AF37] to-[#F3D36B] text-black font-bold text-xs sm:text-sm cursor-pointer hover:brightness-105 transition"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

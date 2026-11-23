@@ -7,6 +7,7 @@ interface WatchTabProps {
   episodes: DramaEpisode[];
   cloudSeries?: DramaSeries[];
   privateState: PlayerPrivate;
+  isAdmin?: boolean;
   referralUserId?: string;
   sponsorAdUrl?: string;
   playerWeeklyCoins: number;
@@ -31,6 +32,7 @@ export const WatchTab: React.FC<WatchTabProps> = ({
   episodes,
   cloudSeries,
   privateState,
+  isAdmin = false,
   referralUserId,
   sponsorAdUrl,
   playerWeeklyCoins,
@@ -52,6 +54,7 @@ export const WatchTab: React.FC<WatchTabProps> = ({
       episodes={episodes}
       cloudSeries={cloudSeries}
       privateState={privateState}
+      isAdmin={isAdmin}
       referralUserId={referralUserId}
       sponsorAdUrl={sponsorAdUrl}
       playerWeeklyCoins={playerWeeklyCoins}

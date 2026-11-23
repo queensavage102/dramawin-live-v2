@@ -1,5 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ArrowLeft,
+  ChevronDown,
+  ChevronUp,
   Coins,
   Film,
   Maximize2,
@@ -10,7 +13,6 @@ import {
   Trophy,
   Volume2,
   VolumeX,
-  X,
   ZoomIn,
 } from 'lucide-react';
 import {
@@ -771,7 +773,8 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
   const [rewardModalOpen, setRewardModalOpen] = useState(false);
   const [flyingBurst, setFlyingBurst] = useState<{ id: number; amount: number } | null>(null);
   const [isExpandedFull, setIsExpandedFull] = useState(false);
-  const [isZoomed, setIsZoomed] = useState(true);
+  const [isZoomed, setIsZoomed] = useState(false);
+  const [hudExpanded, setHudExpanded] = useState(false);
   const [videoReloadNonce, setVideoReloadNonce] = useState(0);
   const [isVideoStalledOver5s, setIsVideoStalledOver5s] = useState(false);
 
@@ -831,7 +834,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
     rewardModalOpenRef.current = false;
     setRewardModalOpen(false);
     setRingProgress(0);
-    setIsZoomed(true);
+    setIsZoomed(false);
     setVideoReloadNonce(0);
     setIsVideoStalledOver5s(false);
   }, [episode.id]);
@@ -970,8 +973,8 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
     }
   };
 
-  const ringSize = 54;
-  const strokeWidth = 3.5;
+  const ringSize = 36;
+  const strokeWidth = 3;
   const radius = (ringSize - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
   const dashOffset = circumference * (1 - ringProgress / 100);
@@ -1002,34 +1005,51 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
             onStallStateChange={setIsVideoStalledOver5s}
           />
 
-          {/* 2. Floating Translucent DramaWin Header, Controls, Tournament Bar, Reload & Gold Coin Pot (+300) */}
-          <div className="pointer-events-none absolute inset-x-0 top-0 z-30 bg-gradient-to-b from-black/88 via-black/58 to-transparent px-3 sm:px-5 pt-[max(0.5rem,env(safe-area-inset-top))] pb-6 space-y-2">
-            {/* Row 1: Series & Episode Title + Close ✕ */}
+          {/* 2. Single Slim Top Bar: Back/Close, Title, Optional Fit/Zoom, Mute */}
+          <header className="pointer-events-none absolute inset-x-0 top-0 z-30 bg-gradient-to-b from-black/85 via-black/45 to-transparent px-3 sm:px-5 pt-[max(0.45rem,env(safe-area-inset-top))] pb-3">
             <div className="pointer-events-auto flex items-center justify-between gap-2">
-              <h1 className="text-sm sm:text-base font-display font-extrabold uppercase tracking-wide text-[#FFF8E7] drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)] truncate">
-                {episode.series} · {episode.episodeLabel}
-              </h1>
               <button
                 type="button"
                 onClick={handleClose}
-                aria-label="Close video player"
-                className="min-h-[38px] min-w-[38px] rounded-full bg-black/60 backdrop-blur-md border border-[#D4AF37]/50 flex items-center justify-center text-[#FCE7A2] hover:border-[#FBBF24] cursor-pointer shrink-0 transition"
+                aria-label="Back to catalog"
+                className="min-h-[36px] min-w-[36px] rounded-full bg-black/65 backdrop-blur-md border border-[#D4AF37]/45 flex items-center justify-center text-[#FCE7A2] hover:border-[#FBBF24] cursor-pointer shrink-0 transition"
               >
-                <X className="w-4 h-4" />
+                <ArrowLeft className="w-4 h-4" />
               </button>
-            </div>
 
-            {/* Row 2: Speaker, Fit / Zoom, Fullscreen, and Next Episode ⏭ */}
-            <div className="pointer-events-auto flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5 sm:gap-2">
+              <h1 className="flex-1 min-w-0 text-xs sm:text-sm font-display font-extrabold uppercase tracking-wide text-[#FFF8E7] drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)] truncate">
+                {episode.series} · {episode.episodeLabel}
+              </h1>
+
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setIsZoomed((prev) => !prev)}
+                  aria-pressed={isZoomed}
+                  aria-label={isZoomed ? 'Switch to Original Fit' : 'Switch to Zoom Cover'}
+                  title={isZoomed ? 'Zoomed — tap for Fit' : 'Fit — tap for Zoom'}
+                  className={`min-h-[34px] px-2.5 rounded-full backdrop-blur-md border text-[11px] font-bold inline-flex items-center gap-1 whitespace-nowrap shrink-0 transition cursor-pointer ${
+                    isZoomed
+                      ? 'border-[#FBBF24] bg-[#241A07]/90 text-[#FFF3B0] shadow-[0_0_10px_rgba(251,191,36,0.28)]'
+                      : 'border-white/20 bg-black/65 text-[#FCE7A2] hover:border-[#D4AF37]/60'
+                  }`}
+                >
+                  {isZoomed ? (
+                    <ZoomIn className="w-3.5 h-3.5 text-[#FBBF24]" />
+                  ) : (
+                    <Scan className="w-3.5 h-3.5 text-[#D4AF37]" />
+                  )}
+                  <span>{isZoomed ? 'Zoom' : 'Fit'}</span>
+                </button>
+
                 <button
                   type="button"
                   onClick={onToggleMute}
                   aria-pressed={!muted}
-                  aria-label={muted ? 'Sound Off' : 'Sound On'}
-                  className={`min-h-[38px] min-w-[38px] px-2.5 rounded-full backdrop-blur-md border flex items-center justify-center transition cursor-pointer ${
+                  aria-label={muted ? 'Unmute video' : 'Mute video'}
+                  className={`min-h-[36px] min-w-[36px] rounded-full backdrop-blur-md border flex items-center justify-center transition cursor-pointer ${
                     muted
-                      ? 'border-white/20 bg-black/60 text-zinc-300 hover:text-white'
+                      ? 'border-white/20 bg-black/65 text-zinc-300 hover:text-white'
                       : 'border-[#D4AF37]/60 bg-black/65 text-[#FCE7A2]'
                   }`}
                 >
@@ -1039,86 +1059,99 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
                     <Volume2 className="w-4 h-4 text-[#D4AF37]" />
                   )}
                 </button>
+              </div>
+            </div>
+          </header>
 
-                <button
-                  type="button"
-                  onClick={() => setIsZoomed((prev) => !prev)}
-                  aria-pressed={isZoomed}
-                  aria-label={
-                    isZoomed
-                      ? 'Fullscreen Cover active — switch to Original Fit'
-                      : 'Original Fit active — switch to Fullscreen Cover'
-                  }
-                  title={isZoomed ? 'Tap for Original Fit' : 'Tap for Fullscreen Cover'}
-                  className={`min-h-[38px] px-3 rounded-full backdrop-blur-md border text-xs font-bold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition cursor-pointer ${
-                    isZoomed
-                      ? 'border-[#D4AF37]/65 bg-black/65 text-[#FCE7A2] hover:border-[#FBBF24]'
-                      : 'border-[#FBBF24] bg-[#241A07]/85 text-[#FFF3B0] shadow-[0_0_12px_rgba(251,191,36,0.28)]'
-                  }`}
+          {/* 3. Compact Side / Collapsible Pill: +300 Coin Pot Ring + Sunday Tournament Progress */}
+          <div className="pointer-events-none absolute top-[max(3.5rem,calc(env(safe-area-inset-top)+3.15rem))] right-3 z-30 flex flex-col items-end gap-1.5">
+            <button
+              type="button"
+              onClick={() => setHudExpanded((prev) => !prev)}
+              aria-expanded={hudExpanded}
+              aria-label="Toggle tournament progress and coin pot details"
+              className="pointer-events-auto inline-flex items-center gap-2 rounded-full bg-black/75 hover:bg-black/90 backdrop-blur-md border border-[#D4AF37]/60 pl-1.5 pr-2.5 py-1 shadow-[0_4px_18px_rgba(0,0,0,0.65)] cursor-pointer transition"
+            >
+              <div className="relative w-[36px] h-[36px] rounded-full bg-black/80 flex items-center justify-center shrink-0">
+                <svg
+                  width={ringSize}
+                  height={ringSize}
+                  viewBox={`0 0 ${ringSize} ${ringSize}`}
+                  className="-rotate-90 absolute inset-0"
+                  aria-hidden="true"
                 >
-                  {isZoomed ? (
-                    <Scan className="w-3.5 h-3.5 text-[#D4AF37]" />
-                  ) : (
-                    <ZoomIn className="w-3.5 h-3.5 text-[#FBBF24]" />
-                  )}
-                  <span>{isZoomed ? 'Fit / Zoom' : 'Original Fit'}</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => void handleToggleFullscreen()}
-                  aria-label={isExpandedFull ? 'Exit full screen' : 'Full screen'}
-                  className="min-h-[38px] min-w-[38px] rounded-full bg-black/60 backdrop-blur-md border border-[#D4AF37]/45 text-[#FCE7A2] hover:border-[#FBBF24] flex items-center justify-center cursor-pointer transition"
-                >
-                  {isExpandedFull ? (
-                    <Minimize2 className="w-4 h-4" />
-                  ) : (
-                    <Maximize2 className="w-4 h-4" />
-                  )}
-                </button>
+                  <defs>
+                    <linearGradient id="watch-coin-ring-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" stopColor="#FFF7CC" />
+                      <stop offset="50%" stopColor="#D4AF37" />
+                      <stop offset="100%" stopColor="#A88220" />
+                    </linearGradient>
+                  </defs>
+                  <circle
+                    cx={ringSize / 2}
+                    cy={ringSize / 2}
+                    r={radius}
+                    fill="none"
+                    stroke="rgba(255,255,255,0.16)"
+                    strokeWidth={strokeWidth}
+                  />
+                  <circle
+                    cx={ringSize / 2}
+                    cy={ringSize / 2}
+                    r={radius}
+                    fill="none"
+                    stroke="url(#watch-coin-ring-grad)"
+                    strokeWidth={strokeWidth}
+                    strokeLinecap="round"
+                    strokeDasharray={circumference}
+                    strokeDashoffset={dashOffset}
+                    className="transition-[stroke-dashoffset] duration-150 ease-linear"
+                  />
+                </svg>
+                <div className="flex flex-col items-center justify-center">
+                  <Coins className="w-3 h-3 text-amber-300" />
+                  <span className="font-mono-num text-[8px] font-extrabold text-amber-200 leading-none">
+                    +{potReward}
+                  </span>
+                </div>
               </div>
 
-              {onNextEpisode && hasNextEpisode ? (
-                <button
-                  type="button"
-                  onClick={onNextEpisode}
-                  title={nextEpisodeLabel ? `Watch next: ${nextEpisodeLabel}` : 'Next Episode'}
-                  className="min-h-[38px] px-3.5 rounded-full gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer hover:brightness-105 shadow-[0_0_16px_rgba(251,191,36,0.4)]"
-                >
-                  <span>Next Episode</span>
-                  <SkipForward className="w-3.5 h-3.5 fill-current" />
-                </button>
-              ) : (
-                <span className="font-mono-num text-[11px] font-semibold text-[#FCE7A2] bg-black/55 backdrop-blur-md px-2.5 py-1 rounded-full border border-[#D4AF37]/30 whitespace-nowrap">
-                  Ep. {currentEpPos} of {totalSeriesEps}
+              <div className="flex flex-col items-start text-left leading-tight">
+                <span className="font-mono-num text-[10px] font-extrabold text-[#FCE7A2]">
+                  {Math.round(ringProgress)}%
                 </span>
-              )}
-            </div>
+                <span className="inline-flex items-center gap-1 text-[9px] font-bold text-amber-300/90">
+                  <Trophy className="w-2.5 h-2.5 shrink-0" />
+                  <span>{isQualified ? 'Qualified' : `${weeklyPct.toFixed(1)}%`}</span>
+                </span>
+              </div>
 
-            {/* Row 3: Compact Sunday Tournament Progress + Reload Pill (Left) & Glowing Gold Coin Pot +300 (Top-Right) */}
-            <div className="flex items-start justify-between gap-2.5">
-              <div className="pointer-events-auto flex-1 min-w-0 space-y-1.5">
-                <div className="w-full rounded-xl bg-black/60 backdrop-blur-md border border-[#D4AF37]/55 px-2.5 py-1.5 shadow-[0_4px_18px_rgba(0,0,0,0.45)]">
-                  <div className="flex items-center justify-between gap-1.5 text-[10px] sm:text-xs">
-                    <span className="inline-flex items-center gap-1 font-bold text-[#FCE7A2] truncate">
-                      <Trophy className="w-3 h-3 text-[#FBBF24] shrink-0" />
-                      <span className="truncate">Sunday Tournament</span>
+              {hudExpanded ? (
+                <ChevronUp className="w-3.5 h-3.5 text-[#FCE7A2]/80 shrink-0" />
+              ) : (
+                <ChevronDown className="w-3.5 h-3.5 text-[#FCE7A2]/80 shrink-0" />
+              )}
+            </button>
+
+            {hudExpanded && (
+              <div className="pointer-events-auto w-64 sm:w-72 rounded-2xl bg-black/88 backdrop-blur-md border border-[#D4AF37]/60 p-3 shadow-[0_12px_32px_rgba(0,0,0,0.85)] space-y-2.5">
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2 text-[11px]">
+                    <span className="inline-flex items-center gap-1 font-bold text-[#FCE7A2]">
+                      <Trophy className="w-3.5 h-3.5 text-[#FBBF24] shrink-0" />
+                      <span>Sunday Tournament</span>
                     </span>
-                    <span className="font-mono-num font-bold text-[#FFF8E7] whitespace-nowrap shrink-0">
-                      {playerWeeklyCoins.toLocaleString()} / {safeThreshold.toLocaleString()}{' '}
-                      <span className={isQualified ? 'text-emerald-300' : 'text-[#FBBF24]'}>
-                        ({isQualified ? 'Qualified' : `${weeklyPct.toFixed(2)}%`})
-                      </span>
+                    <span className="font-mono-num font-bold text-[#FFF8E7]">
+                      {playerWeeklyCoins.toLocaleString()} / {safeThreshold.toLocaleString()}
                     </span>
                   </div>
-
                   <div
                     role="progressbar"
                     aria-valuenow={playerWeeklyCoins}
                     aria-valuemin={0}
                     aria-valuemax={safeThreshold}
                     aria-label="Sunday Tournament Progress"
-                    className="mt-1 h-1.5 w-full rounded-full bg-black/80 border border-[#D4AF37]/30 overflow-hidden"
+                    className="h-1.5 w-full rounded-full bg-white/10 border border-[#D4AF37]/30 overflow-hidden"
                   >
                     <div
                       className={`h-full rounded-full transition-all duration-300 ${
@@ -1131,84 +1164,61 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <span className="font-mono-num text-[10px] font-semibold text-[#FCE7A2]/90 drop-shadow whitespace-nowrap">
-                    Ep. {currentEpPos}/{totalSeriesEps}
+                <div className="flex items-center justify-between gap-2 pt-1 border-t border-white/10">
+                  <span className="font-mono-num text-[10px] font-semibold text-zinc-300">
+                    Ep. {currentEpPos} / {totalSeriesEps}
                   </span>
 
-                  {isVideoStalledOver5s && (
+                  <div className="flex items-center gap-1.5">
                     <button
                       type="button"
-                      onClick={() => {
-                        setIsVideoStalledOver5s(false);
-                        setVideoReloadNonce((prev) => prev + 1);
-                      }}
-                      className="min-h-[28px] px-2.5 rounded-full bg-black/75 hover:bg-black/90 backdrop-blur-md border border-[#D4AF37]/55 text-[11px] font-bold text-[#FCE7A2] inline-flex items-center gap-1 whitespace-nowrap cursor-pointer shadow-[0_0_12px_rgba(212,175,55,0.28)] transition"
+                      onClick={() => void handleToggleFullscreen()}
+                      aria-label={isExpandedFull ? 'Exit full screen' : 'Full screen'}
+                      className="min-h-[30px] min-w-[30px] rounded-full bg-white/10 border border-[#D4AF37]/40 text-[#FCE7A2] flex items-center justify-center cursor-pointer"
                     >
-                      <RotateCcw className="w-3 h-3 text-[#D4AF37] shrink-0" />
-                      <span>Reload</span>
+                      {isExpandedFull ? (
+                        <Minimize2 className="w-3.5 h-3.5" />
+                      ) : (
+                        <Maximize2 className="w-3.5 h-3.5" />
+                      )}
                     </button>
-                  )}
-                </div>
-              </div>
 
-              {/* Glowing Gold Coin Pot (+300) Circular Progress Ring */}
-              <div className="shrink-0 flex flex-col items-center gap-0.5">
-                <div className="relative w-[54px] h-[54px] rounded-full bg-black/70 backdrop-blur-md border border-[#D4AF37]/75 shadow-[0_0_20px_rgba(251,191,36,0.48)] flex items-center justify-center">
-                  <svg
-                    width={ringSize}
-                    height={ringSize}
-                    viewBox={`0 0 ${ringSize} ${ringSize}`}
-                    className="-rotate-90 absolute inset-0"
-                    aria-hidden="true"
-                  >
-                    <defs>
-                      <linearGradient id="watch-coin-ring-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-                        <stop offset="0%" stopColor="#FFF7CC" />
-                        <stop offset="50%" stopColor="#D4AF37" />
-                        <stop offset="100%" stopColor="#A88220" />
-                      </linearGradient>
-                    </defs>
-                    <circle
-                      cx={ringSize / 2}
-                      cy={ringSize / 2}
-                      r={radius}
-                      fill="none"
-                      stroke="rgba(255,255,255,0.16)"
-                      strokeWidth={strokeWidth}
-                    />
-                    <circle
-                      cx={ringSize / 2}
-                      cy={ringSize / 2}
-                      r={radius}
-                      fill="none"
-                      stroke="url(#watch-coin-ring-grad)"
-                      strokeWidth={strokeWidth}
-                      strokeLinecap="round"
-                      strokeDasharray={circumference}
-                      strokeDashoffset={dashOffset}
-                      className="transition-[stroke-dashoffset] duration-150 ease-linear"
-                    />
-                  </svg>
-                  <div className="flex flex-col items-center justify-center">
-                    <Coins className="w-4 h-4 text-amber-300" />
-                    <span className="font-mono-num text-[9px] font-extrabold text-amber-200 leading-none mt-0.5">
-                      +{potReward}
-                    </span>
+                    {onNextEpisode && hasNextEpisode && (
+                      <button
+                        type="button"
+                        onClick={onNextEpisode}
+                        title={nextEpisodeLabel ? `Watch next: ${nextEpisodeLabel}` : 'Next Episode'}
+                        className="min-h-[30px] px-2.5 rounded-full gold-gradient-bg text-[#181307] text-[11px] font-extrabold inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <span>Next</span>
+                        <SkipForward className="w-3 h-3 fill-current" />
+                      </button>
+                    )}
                   </div>
                 </div>
-                <span className="font-mono-num text-[10px] font-extrabold text-[#FCE7A2] bg-black/70 px-1.5 rounded">
-                  {Math.round(ringProgress)}%
-                </span>
               </div>
-            </div>
+            )}
+
+            {isVideoStalledOver5s && (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsVideoStalledOver5s(false);
+                  setVideoReloadNonce((prev) => prev + 1);
+                }}
+                className="pointer-events-auto min-h-[28px] px-2.5 rounded-full bg-black/80 hover:bg-black/95 backdrop-blur-md border border-[#D4AF37]/60 text-[11px] font-bold text-[#FCE7A2] inline-flex items-center gap-1 whitespace-nowrap cursor-pointer shadow-[0_0_12px_rgba(212,175,55,0.28)] transition"
+              >
+                <RotateCcw className="w-3 h-3 text-[#D4AF37] shrink-0" />
+                <span>Reload</span>
+              </button>
+            )}
           </div>
 
           {/* Flying Coin Burst Feedback */}
           {flyingBurst && (
             <div
               key={flyingBurst.id}
-              className="coin-shoot-up pointer-events-none absolute right-6 top-36 z-40 flex flex-col items-center gap-1"
+              className="coin-shoot-up pointer-events-none absolute right-6 top-28 z-40 flex flex-col items-center gap-1"
             >
               <RealisticGoldCoin sizePx={44} emblem="$" />
               <span className="px-2.5 py-0.5 rounded-full gold-gradient-bg text-[#181307] font-mono-num text-xs font-extrabold shadow-lg">
@@ -1218,8 +1228,8 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
           )}
         </div>
 
-        {/* 3. Pinned Bottom 320x50px Adsterra Banner & 18+ Disclaimer */}
-        <footer className="shrink-0 w-full bg-[#09090b] border-t border-[#D4AF37]/30 px-3 pt-1.5 pb-[max(0.35rem,env(safe-area-inset-bottom))] flex flex-col items-center justify-center">
+        {/* 4. Pinned Bottom 320x50px Adsterra/Monetag Banner & 18+ Disclaimer */}
+        <footer className="shrink-0 w-full bg-[#09090b] border-t border-[#D4AF37]/30 px-3 pt-2 pb-[max(0.45rem,env(safe-area-inset-bottom))] flex flex-col items-center justify-center">
           <BottomAdBanner />
           <p className="text-[9px] sm:text-[10px] text-zinc-400 text-center mt-1 leading-tight px-2">
             18+ Only • Winners know when to stop • National Responsible Gambling: 0800 006 008
