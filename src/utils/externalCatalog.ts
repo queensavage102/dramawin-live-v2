@@ -1,11 +1,11 @@
-import alphaVirginCover from '../assets/images/bright_alpha_portrait_1795433106053.jpg';
-import americanTenantCover from '../assets/images/bright_tenant_portrait_1795433105304.jpg';
-import chainedSatanCover from '../assets/images/bright_chained_portrait_1795433105976.jpg';
-import dragonEarCover from '../assets/images/bright_dragon_portrait_1795433105466.jpg';
-import forbiddenVampireCover from '../assets/images/bright_vampire_portrait_1795433105516.jpg';
-import fourHusbandsCover from '../assets/images/bright_husbands_portrait_1795433105317.jpg';
-import taintedDesireCover from '../assets/images/bright_desire_portrait_1795433105566.jpg';
-import wrongCrownCover from '../assets/images/bright_crown_portrait_1795433105867.jpg';
+import alphaVirginCover from '../assets/images/poster_alpha_virgin_1795442047670.jpg';
+import americanTenantCover from '../assets/images/poster_american_tenant_1795442046536.jpg';
+import chainedSatanCover from '../assets/images/poster_chained_satan_1795442046842.jpg';
+import dragonEarCover from '../assets/images/poster_dragon_ear_1795442047366.jpg';
+import forbiddenVampireCover from '../assets/images/poster_forbidden_vampire_1795442047332.jpg';
+import fourHusbandsCover from '../assets/images/poster_four_husbands_1795442046615.jpg';
+import taintedDesireCover from '../assets/images/poster_tainted_desire_1795442046704.jpg';
+import wrongCrownCover from '../assets/images/poster_wrong_crown_1795442047677.jpg';
 
 export interface FeaturedShortDrama {
   id: string;

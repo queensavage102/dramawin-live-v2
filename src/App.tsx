@@ -2081,7 +2081,7 @@ function DramaWinApp() {
       )}
 
       {/* Main Content — Clean 4-Tab Architecture */}
-      <main className="max-w-6xl mx-auto px-3 sm:px-6 pt-4 space-y-6">
+      <main className="max-w-6xl mx-auto px-3 sm:px-6 pt-2 sm:pt-3 space-y-4">
         {activeTab === 'watch' && (
           <WatchTab
             sections={sections}
