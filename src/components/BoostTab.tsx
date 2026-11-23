@@ -6,7 +6,6 @@ import {
   Film,
   Flame,
   Gamepad2,
-  Globe,
   Loader2,
   Lock,
   ShoppingBag,
@@ -704,16 +703,16 @@ export const BoostTab: React.FC<BoostTabProps> = ({
                 </a>
               </div>
 
-              {/* Card 2: HostAfrica AI Website Builder */}
+              {/* Card 2: FASTA - Instant Online Cash */}
               <div className="rounded-xl border border-white/[0.1] bg-[#18151C] p-3 flex flex-col justify-between gap-2.5">
                 <div className="space-y-1.5">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0">
                       <div className="w-8 h-8 rounded-lg bg-[#D4AF37]/15 border border-[#D4AF37]/40 text-[#FCE7A2] flex items-center justify-center shrink-0">
-                        <Globe className="w-4 h-4" />
+                        <Zap className="w-4 h-4" />
                       </div>
                       <h4 className="text-xs sm:text-sm font-bold text-white leading-tight">
-                        HostAfrica AI Website Builder
+                        FASTA - Instant Online Cash
                       </h4>
                     </div>
                     <span className="px-1.5 py-0.5 rounded bg-white/[0.06] border border-white/10 text-[9px] uppercase tracking-wider text-zinc-400 shrink-0">
@@ -721,17 +720,17 @@ export const BoostTab: React.FC<BoostTabProps> = ({
                     </span>
                   </div>
                   <p className="text-[11px] text-[#C4BDB0] leading-relaxed">
-                    Turn a business idea into a professional website in minutes. No coding skills required.
+                    Apply online in minutes for fast, flexible short-term cash up to R8,000 in South Africa.
                   </p>
                 </div>
 
                 <a
-                  href="https://ofofa.co.za/?E=8B1dlgfYqJEnyzbLCycpP8r%2fbzfuyE55&s1="
+                  href="https://offerforge.co/?E=NhGtJQQVsB9zn8HZsgiBhMr%2fbzfuyE55&s1="
                   target="_blank"
                   rel="noopener noreferrer"
                   className="w-full min-h-[36px] px-3.5 rounded-xl gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center justify-center gap-1.5 shadow-[0_0_12px_rgba(251,191,36,0.3)] hover:brightness-105 active:scale-[0.98] transition-all cursor-pointer"
                 >
-                  <span>Build Website</span>
+                  <span>Apply Now</span>
                   <ExternalLink className="w-3.5 h-3.5 shrink-0" />
                 </a>
               </div>
