@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import { BRAND_NAME } from '../constants';
 
 interface VipSplashScreenProps {
   onComplete: () => void;
@@ -210,7 +209,7 @@ export const VipSplashScreen: React.FC<VipSplashScreenProps> = ({ onComplete }) 
     <div
       role="status"
       aria-live="polite"
-      aria-label={`Loading ${BRAND_NAME}`}
+      aria-label="Loading DRAMA WIN"
       className={`fixed inset-0 z-[100] bg-[#060608] text-[#F6F2E9] overflow-hidden flex flex-col items-center justify-center px-5 transition-opacity duration-200 ${
         fadingOut ? 'opacity-0 pointer-events-none' : 'opacity-100'
       }`}
@@ -273,26 +272,26 @@ export const VipSplashScreen: React.FC<VipSplashScreenProps> = ({ onComplete }) 
 
         {/* Title & Welcoming Tagline */}
         <div className="w-full space-y-3">
-          {/* Delicate Gold Horizontal Divider Lines Above & Below VIP ACCESS */}
+          {/* Delicate Gold Horizontal Divider Lines */}
           <div className="flex flex-col items-center gap-1.5">
             <div
               aria-hidden="true"
-              className="h-px w-36 sm:w-44 bg-gradient-to-r from-transparent via-[#D4AF37]/80 to-transparent"
+              className="h-px w-44 sm:w-56 bg-gradient-to-r from-transparent via-[#D4AF37]/80 to-transparent"
             />
-            <p className="text-[11px] sm:text-xs font-semibold uppercase tracking-[0.32em] text-[#FCE7A2]">
-              VIP ACCESS
+            <p className="text-[11px] sm:text-xs font-semibold uppercase tracking-[0.22em] text-[#FCE7A2]">
+              100% FREE STREAMING · DRAMA WIN
             </p>
             <div
               aria-hidden="true"
-              className="h-px w-36 sm:w-44 bg-gradient-to-r from-transparent via-[#D4AF37]/80 to-transparent"
+              className="h-px w-44 sm:w-56 bg-gradient-to-r from-transparent via-[#D4AF37]/80 to-transparent"
             />
           </div>
 
           <h1 className="font-display text-2xl sm:text-4xl font-bold tracking-tight gold-gradient-text leading-tight drop-shadow-[0_2px_20px_rgba(0,0,0,0.95)]">
-            {BRAND_NAME}
+            DRAMA WIN
           </h1>
           <p className="text-xs sm:text-sm text-[#EDE6D6] font-medium leading-relaxed drop-shadow-[0_1px_10px_rgba(0,0,0,0.9)]">
-            Watch Dramas • Fill Your Coin Pot • Win Sunday Prizes
+            Watch Free Short Dramas · Earn Free Bonus Coins · No Subscription Required
           </p>
         </div>
 
@@ -312,7 +311,7 @@ export const VipSplashScreen: React.FC<VipSplashScreenProps> = ({ onComplete }) 
             aria-valuenow={Math.round(progress)}
             aria-valuemin={0}
             aria-valuemax={100}
-            aria-label="Loading DRAMA WIN TOURNAMENT"
+            aria-label="Loading DRAMA WIN"
             className="h-2.5 w-full rounded-full bg-[#13131A] border border-[#D4AF37]/30 overflow-hidden shadow-inner"
           >
             <div

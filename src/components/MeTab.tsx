@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Bookmark,
   Check,
+  Clock,
   Coins,
   Copy,
   ExternalLink,
@@ -10,6 +11,7 @@ import {
   Fingerprint,
   Flame,
   Loader2,
+  Lock,
   MessageCircle,
   Send,
   Share2,
@@ -49,9 +51,11 @@ interface MeTabProps {
   onNotifyInviteLinkCopied: (url: string) => void;
   onNotifyWhatsappShared: () => void;
   onMarkTiktokVisited: () => void;
-  onClaimTiktokBoost: () => Promise<void>;
+  onClaimTiktokBoost: (tiktokUsername: string) => Promise<void>;
   onSeriesRequestReward: () => Promise<boolean>;
 }
+
+const TIKTOK_VERIFY_SECONDS = 15;
 
 type LegalModalType = 'privacy' | 'terms' | null;
 
@@ -84,6 +88,14 @@ export const MeTab: React.FC<MeTabProps> = ({
   const [copiedId, setCopiedId] = useState(false);
   const [copiedInvite, setCopiedInvite] = useState(false);
   const [claimingTiktok, setClaimingTiktok] = useState(false);
+  const [tiktokStarted, setTiktokStarted] = useState(false);
+  const [tiktokSecondsLeft, setTiktokSecondsLeft] = useState(TIKTOK_VERIFY_SECONDS);
+  const [tiktokTimerComplete, setTiktokTimerComplete] = useState(false);
+  const [tiktokUsername, setTiktokUsername] = useState('');
+  const [tiktokError, setTiktokError] = useState<string | null>(null);
+  const tiktokStartedRef = useRef(false);
+  const tiktokAccumulatedAwayMsRef = useRef(0);
+  const tiktokAwayStartAtRef = useRef(0);
   const [requestTitle, setRequestTitle] = useState('');
   const [submittingRequest, setSubmittingRequest] = useState(false);
   const [requestError, setRequestError] = useState<string | null>(null);
@@ -93,6 +105,94 @@ export const MeTab: React.FC<MeTabProps> = ({
   useEffect(() => {
     setNameInput(player.username);
   }, [player.username]);
+
+  // Strict 15-second off-tab (document.hidden === true) verification timer for TikTok follow
+  useEffect(() => {
+    if (!tiktokStarted || tiktokTimerComplete || boostState.tiktokClaimed) return;
+
+    const totalMs = TIKTOK_VERIFY_SECONDS * 1000;
+
+    const getEffectiveAwayMs = () => {
+      if (tiktokAwayStartAtRef.current > 0 && document.hidden) {
+        return Math.min(
+          totalMs,
+          tiktokAccumulatedAwayMsRef.current +
+            Math.max(0, Date.now() - tiktokAwayStartAtRef.current)
+        );
+      }
+      return Math.min(totalMs, tiktokAccumulatedAwayMsRef.current);
+    };
+
+    const syncCountdown = (effectiveMs: number) => {
+      const remaining = Math.max(0, Math.ceil((totalMs - effectiveMs) / 1000));
+      setTiktokSecondsLeft(remaining);
+      if (effectiveMs >= totalMs) {
+        tiktokAccumulatedAwayMsRef.current = totalMs;
+        tiktokAwayStartAtRef.current = 0;
+        setTiktokSecondsLeft(0);
+        setTiktokTimerComplete(true);
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (!tiktokStartedRef.current) return;
+
+      if (document.hidden) {
+        if (tiktokAwayStartAtRef.current === 0 && tiktokAccumulatedAwayMsRef.current < totalMs) {
+          tiktokAwayStartAtRef.current = Date.now();
+        }
+        return;
+      }
+
+      if (tiktokAwayStartAtRef.current > 0) {
+        const chunk = Math.max(0, Date.now() - tiktokAwayStartAtRef.current);
+        tiktokAccumulatedAwayMsRef.current = Math.min(
+          totalMs,
+          tiktokAccumulatedAwayMsRef.current + chunk
+        );
+        tiktokAwayStartAtRef.current = 0;
+      }
+      syncCountdown(tiktokAccumulatedAwayMsRef.current);
+    };
+
+    const handlePageHide = () => {
+      if (
+        tiktokStartedRef.current &&
+        tiktokAwayStartAtRef.current === 0 &&
+        tiktokAccumulatedAwayMsRef.current < totalMs
+      ) {
+        tiktokAwayStartAtRef.current = Date.now();
+      }
+    };
+
+    const handleReturnCheck = () => {
+      if (!document.hidden) {
+        handleVisibilityChange();
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      if (!tiktokStartedRef.current) return;
+      if (!document.hidden) return;
+      if (tiktokAwayStartAtRef.current === 0) {
+        tiktokAwayStartAtRef.current = Date.now();
+      }
+      syncCountdown(getEffectiveAwayMs());
+    }, 250);
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pagehide', handlePageHide);
+    window.addEventListener('focus', handleReturnCheck);
+    window.addEventListener('pageshow', handleReturnCheck);
+
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pagehide', handlePageHide);
+      window.removeEventListener('focus', handleReturnCheck);
+      window.removeEventListener('pageshow', handleReturnCheck);
+    };
+  }, [tiktokStarted, tiktokTimerComplete, boostState.tiktokClaimed]);
 
   const personalInviteLink = buildPersonalInviteLink(referralUserId);
   const whatsappShareHref = `https://wa.me/?text=${encodeURIComponent(
@@ -136,11 +236,38 @@ export const MeTab: React.FC<MeTabProps> = ({
     }
   };
 
-  const handleClaimTiktok = async () => {
+  const cleanedTiktokHandle = tiktokUsername.trim();
+  const isValidTiktokHandle =
+    /^@[a-zA-Z0-9._]{2,24}$/.test(cleanedTiktokHandle) &&
+    cleanedTiktokHandle.toLowerCase() !== '@faceless_creator_sa';
+
+  const handleStartTiktokFollow = () => {
+    setTiktokError(null);
+    tiktokStartedRef.current = true;
+    setTiktokStarted(true);
+    if (document.hidden && tiktokAwayStartAtRef.current === 0) {
+      tiktokAwayStartAtRef.current = Date.now();
+    }
+    onMarkTiktokVisited();
+  };
+
+  const handleClaimTiktok = async (e?: React.FormEvent) => {
+    e?.preventDefault();
     if (boostState.tiktokClaimed || claimingTiktok) return;
+    setTiktokError(null);
+
+    if (!tiktokTimerComplete) {
+      setTiktokError(`Stay on the TikTok tab for ${tiktokSecondsLeft}s more before claiming.`);
+      return;
+    }
+    if (!isValidTiktokHandle) {
+      setTiktokError('Enter your own TikTok username starting with @ (e.g. @yourname).');
+      return;
+    }
+
     setClaimingTiktok(true);
     try {
-      await onClaimTiktokBoost();
+      await onClaimTiktokBoost(cleanedTiktokHandle);
     } finally {
       setClaimingTiktok(false);
     }
@@ -305,48 +432,107 @@ export const MeTab: React.FC<MeTabProps> = ({
           </button>
         </div>
 
-        {/* Follow @faceless_creator_sa on TikTok Row */}
-        <div className="pt-2.5 border-t border-white/[0.08] flex flex-wrap items-center justify-between gap-2.5">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-8 h-8 rounded-lg bg-amber-500/15 border border-[#D4AF37]/35 flex items-center justify-center text-[#FCE7A2] shrink-0">
-              <Share2 className="w-4 h-4" />
-            </div>
-            <div className="min-w-0">
-              <div className="text-xs sm:text-sm font-bold text-[#F6F2E9] truncate">
-                Follow @faceless_creator_sa on TikTok
+        {/* Follow @faceless_creator_sa on TikTok Row (Strict 15s Off-Tab + @username Verification) */}
+        <div className="pt-2.5 border-t border-white/[0.08] space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-lg bg-amber-500/15 border border-[#D4AF37]/35 flex items-center justify-center text-[#FCE7A2] shrink-0">
+                <Share2 className="w-4 h-4" />
               </div>
-              <div className="text-[11px] text-[#8D867A] font-mono-num">
-                +500 Coins · One-time social bonus
+              <div className="min-w-0">
+                <div className="text-xs sm:text-sm font-bold text-[#F6F2E9] truncate">
+                  Follow @faceless_creator_sa on TikTok
+                </div>
+                <div className="text-[11px] text-[#8D867A] font-mono-num">
+                  +500 Coins · 15s TikTok stay + @username check
+                </div>
               </div>
             </div>
+
+            {boostState.tiktokClaimed ? (
+              <span className="min-h-[38px] px-3.5 rounded-full bg-emerald-950/40 border border-emerald-500/40 text-emerald-300 text-xs font-bold inline-flex items-center gap-1.5 shrink-0">
+                <Check className="w-3.5 h-3.5" />
+                <span>Claimed (+500)</span>
+              </span>
+            ) : (
+              <a
+                href={TIKTOK_PROFILE_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={handleStartTiktokFollow}
+                className="min-h-[38px] px-4 rounded-full gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center gap-1.5 shrink-0 hover:brightness-105 cursor-pointer"
+              >
+                <span>{tiktokStarted && !tiktokTimerComplete ? `Open TikTok (${tiktokSecondsLeft}s)` : 'Follow TikTok'}</span>
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            )}
           </div>
 
-          {boostState.tiktokClaimed ? (
-            <span className="min-h-[38px] px-3.5 rounded-full bg-emerald-950/40 border border-emerald-500/40 text-emerald-300 text-xs font-bold inline-flex items-center gap-1.5 shrink-0">
-              <Check className="w-3.5 h-3.5" />
-              <span>Claimed (+500)</span>
-            </span>
-          ) : boostState.tiktokVisited ? (
-            <button
-              type="button"
-              disabled={claimingTiktok}
-              onClick={() => void handleClaimTiktok()}
-              className="min-h-[38px] px-4 rounded-full gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center gap-1.5 shrink-0 hover:brightness-105 cursor-pointer disabled:opacity-60"
+          {!boostState.tiktokClaimed && tiktokStarted && (
+            <form
+              onSubmit={(e) => void handleClaimTiktok(e)}
+              className="rounded-xl bg-[#070709] border border-[#D4AF37]/30 p-3 space-y-2.5"
             >
-              <Coins className="w-3.5 h-3.5" />
-              <span>{claimingTiktok ? 'Claiming...' : 'Claim +500 Coins'}</span>
-            </button>
-          ) : (
-            <a
-              href={TIKTOK_PROFILE_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={onMarkTiktokVisited}
-              className="min-h-[38px] px-4 rounded-full gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center gap-1.5 shrink-0 hover:brightness-105 cursor-pointer"
-            >
-              <span>Follow TikTok</span>
-              <ExternalLink className="w-3.5 h-3.5" />
-            </a>
+              <div className="flex items-center justify-between gap-2 text-[11px] font-mono-num">
+                {tiktokTimerComplete ? (
+                  <span className="inline-flex items-center gap-1.5 font-bold text-emerald-300">
+                    <Check className="w-3.5 h-3.5 shrink-0" />
+                    <span>15s TikTok check complete — confirm your @username below</span>
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 font-semibold text-[#FCE7A2]">
+                    <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <span>
+                      Paused ({tiktokSecondsLeft}s left) — Tap Open TikTok &amp; stay 15s to unlock
+                    </span>
+                  </span>
+                )}
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input
+                  type="text"
+                  value={tiktokUsername}
+                  onChange={(e) => {
+                    setTiktokUsername(e.target.value);
+                    if (tiktokError) setTiktokError(null);
+                  }}
+                  maxLength={30}
+                  placeholder="@tiktok_username"
+                  aria-label="Enter your TikTok username"
+                  className="flex-1 min-h-[40px] px-3 py-1.5 rounded-xl bg-[#111117] border border-white/15 focus:border-[#D4AF37] text-xs sm:text-sm text-[#F6F2E9] placeholder:text-[#7A746A] focus:outline-none font-mono-num"
+                />
+                <button
+                  type="submit"
+                  disabled={!tiktokTimerComplete || !isValidTiktokHandle || claimingTiktok}
+                  className={`min-h-[40px] px-4 rounded-xl text-xs font-extrabold inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 transition-all ${
+                    tiktokTimerComplete && isValidTiktokHandle && !claimingTiktok
+                      ? 'gold-gradient-bg text-[#181307] shadow-[0_0_16px_rgba(251,191,36,0.45)] hover:brightness-105 cursor-pointer'
+                      : 'bg-white/[0.06] border border-white/15 text-zinc-400 cursor-not-allowed opacity-80'
+                  }`}
+                >
+                  {tiktokTimerComplete && isValidTiktokHandle ? (
+                    <Coins className="w-3.5 h-3.5 shrink-0" />
+                  ) : (
+                    <Lock className="w-3.5 h-3.5 shrink-0" />
+                  )}
+                  <span>
+                    {claimingTiktok ? 'Claiming...' : 'Verify & Claim +500 Coins'}
+                  </span>
+                </button>
+              </div>
+
+              {cleanedTiktokHandle.length > 0 && !isValidTiktokHandle && (
+                <p className="text-[11px] text-amber-300/90">
+                  {cleanedTiktokHandle.toLowerCase() === '@faceless_creator_sa'
+                    ? 'Enter your own TikTok username, not @faceless_creator_sa.'
+                    : 'Include @ at the start (e.g. @yourname).'}
+                </p>
+              )}
+              {tiktokError && (
+                <p className="text-[11px] text-rose-400 font-medium">{tiktokError}</p>
+              )}
+            </form>
           )}
         </div>
       </section>

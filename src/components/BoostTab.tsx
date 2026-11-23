@@ -8,6 +8,7 @@ import {
   Gamepad2,
   Globe,
   Loader2,
+  Lock,
   ShoppingBag,
   Sparkles,
   Trophy,
@@ -42,6 +43,15 @@ interface BoostTabProps {
   qualificationThreshold: number;
   todayKey: string;
   boostState: BoostTrackerState;
+  isSponsorOfferActive?: boolean;
+  onStartSponsorReward?: (
+    rewardAction?: () => Promise<void>,
+    options?: {
+      claimLabel?: string;
+      readyHeadline?: string;
+      onCancel?: () => void;
+    }
+  ) => void;
   onClaimAdBoost: (kind: 'speed' | 'mega', rewardCoins: number, title: string) => Promise<void>;
   onAdvanceMarathonAd: () => void;
   onClaimMarathonReward: () => Promise<void>;
@@ -71,6 +81,8 @@ export const BoostTab: React.FC<BoostTabProps> = ({
   qualificationThreshold,
   todayKey,
   boostState,
+  isSponsorOfferActive = false,
+  onStartSponsorReward,
   onClaimAdBoost,
   onAdvanceMarathonAd,
   onClaimMarathonReward,
@@ -81,6 +93,13 @@ export const BoostTab: React.FC<BoostTabProps> = ({
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [claimingMarathon, setClaimingMarathon] = useState(false);
   const [selectedGameTab, setSelectedGameTab] = useState<MiniGameTab>('trivia');
+  const [activeBoostTask, setActiveBoostTask] = useState<'marathon' | 'speed' | 'mega' | null>(null);
+
+  useEffect(() => {
+    if (!isSponsorOfferActive) {
+      setActiveBoostTask(null);
+    }
+  }, [isSponsorOfferActive]);
 
   const latestClaimAdBoostRef = useRef(onClaimAdBoost);
   const latestUnlockGamePlayRef = useRef(onUnlockSponsorGamePlay);
@@ -171,15 +190,92 @@ export const BoostTab: React.FC<BoostTabProps> = ({
   const marathonTimer = sponsorTimers.marathon;
   const unlockPlayTimer = sponsorTimers.unlockPlay;
 
+  const isAnyBoostVerifying =
+    activeBoostTask !== null ||
+    Boolean(isSponsorOfferActive) ||
+    Boolean(speedTimer || megaTimer || marathonTimer);
+
   const marathonAdsWatched = Math.min(5, Math.max(0, boostState.marathonAdsWatched || 0));
   const handleClaimMarathon = async () => {
-    if (claimingMarathon || marathonAdsWatched < 5 || marathonCooldownRemainingMs > 0) return;
+    if (claimingMarathon || isAnyBoostVerifying || marathonAdsWatched < 5 || marathonCooldownRemainingMs > 0) return;
     setClaimingMarathon(true);
     try {
       await onClaimMarathonReward();
     } finally {
       setClaimingMarathon(false);
     }
+  };
+
+  const handleStartMarathonStep = () => {
+    if (isAnyBoostVerifying || marathonAdsWatched >= 5 || marathonCooldownRemainingMs > 0) return;
+    if (onStartSponsorReward) {
+      setActiveBoostTask('marathon');
+      const nextStep = marathonAdsWatched + 1;
+      onStartSponsorReward(
+        async () => {
+          latestAdvanceMarathonRef.current();
+          setActiveBoostTask(null);
+          setNowMs(Date.now());
+        },
+        {
+          claimLabel: `Verify Ad (${nextStep}/5)`,
+          readyHeadline: `5-Ad Marathon • Ad ${nextStep}/5 Verified!`,
+          onCancel: () => setActiveBoostTask(null),
+        }
+      );
+      return;
+    }
+    startSponsorVerification('marathon', VERIFICATION_DURATION_MS);
+  };
+
+  const handleStartSpeedBoost = () => {
+    if (isAnyBoostVerifying || speedCooldownRemainingMs > 0) return;
+    if (onStartSponsorReward) {
+      setActiveBoostTask('speed');
+      onStartSponsorReward(
+        async () => {
+          await latestClaimAdBoostRef.current(
+            'speed',
+            300,
+            '⚡ 2x Watch Speed Boost (+300 Coins)'
+          );
+          setActiveBoostTask(null);
+          setNowMs(Date.now());
+        },
+        {
+          claimLabel: 'Claim +300',
+          readyHeadline: '2x Watch Speed Boost • +300 Coins Unlocked',
+          onCancel: () => setActiveBoostTask(null),
+        }
+      );
+      return;
+    }
+    startSponsorVerification('speed', VERIFICATION_DURATION_MS);
+  };
+
+  const handleStartMegaBoost = () => {
+    if (isAnyBoostVerifying || megaCooldownRemainingMs > 0) return;
+    if (onStartSponsorReward) {
+      setActiveBoostTask('mega');
+      onStartSponsorReward(
+        async () => {
+          await latestClaimAdBoostRef.current(
+            'mega',
+            500,
+            '🔥 Daily Mega Boost (+500 Coins)'
+          );
+          setActiveBoostTask(null);
+          setNowMs(Date.now());
+        },
+        {
+          claimLabel: 'Claim +500',
+          readyHeadline: 'Daily Mega Boost • +500 Coins Unlocked',
+          onCancel: () => setActiveBoostTask(null),
+        }
+      );
+      return;
+    }
+    startSponsorVerification('mega', VERIFICATION_DURATION_MS);
   };
 
   const safeTarget = Math.max(500000, qualificationThreshold || 500000);
@@ -271,6 +367,15 @@ export const BoostTab: React.FC<BoostTabProps> = ({
                   <Clock className="w-3 h-3 text-amber-300" />
                   <span>{formatCompactDuration(marathonCooldownRemainingMs)}</span>
                 </button>
+              ) : activeBoostTask === 'marathon' ? (
+                <button
+                  type="button"
+                  disabled
+                  className="min-h-[38px] px-3.5 rounded-full bg-[#151109] border border-[#D4AF37]/80 text-[#FFF8E7] text-[11px] font-extrabold inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 cursor-wait font-mono-num shadow-[0_0_14px_rgba(251,191,36,0.28)]"
+                >
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-[#FFF3B0]" />
+                  <span>Verifying 20s...</span>
+                </button>
               ) : marathonTimer ? (
                 <div className="flex items-center gap-1.5 shrink-0 ml-auto">
                   <button
@@ -311,24 +416,31 @@ export const BoostTab: React.FC<BoostTabProps> = ({
               ) : marathonAdsWatched >= 5 ? (
                 <button
                   type="button"
-                  disabled={claimingMarathon}
+                  disabled={claimingMarathon || isAnyBoostVerifying}
                   onClick={() => void handleClaimMarathon()}
-                  className="min-h-[38px] px-3.5 rounded-full gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 shadow-[0_0_18px_rgba(251,191,36,0.55)] border border-[#FFF3B0] hover:brightness-105 active:scale-[0.97] transition-all cursor-pointer disabled:opacity-60"
+                  className="min-h-[38px] px-3.5 rounded-full gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 shadow-[0_0_18px_rgba(251,191,36,0.55)] border border-[#FFF3B0] hover:brightness-105 active:scale-[0.97] transition-all cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
                   <span>{claimingMarathon ? 'Claiming...' : 'Claim +2,000 Coins'}</span>
                 </button>
+              ) : isAnyBoostVerifying ? (
+                <button
+                  type="button"
+                  disabled
+                  className="min-h-[38px] px-3.5 rounded-full bg-white/[0.06] border border-white/15 text-zinc-400 text-[11px] font-bold inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 cursor-not-allowed opacity-70"
+                >
+                  <Lock className="w-3 h-3" />
+                  <span>Locked</span>
+                </button>
               ) : (
-                <a
-                  href={MONETAG_LINK}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => startSponsorVerification('marathon', VERIFICATION_DURATION_MS)}
+                <button
+                  type="button"
+                  onClick={handleStartMarathonStep}
                   className="min-h-[38px] px-3.5 rounded-full gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 shadow-[0_0_16px_rgba(251,191,36,0.45)] border border-[#FFF3B0] hover:brightness-105 active:scale-[0.97] transition-all cursor-pointer"
                 >
                   <span>Watch Ad ({marathonAdsWatched + 1}/5)</span>
                   <ExternalLink className="w-3 h-3" />
-                </a>
+                </button>
               )}
             </div>
 
@@ -377,7 +489,16 @@ export const BoostTab: React.FC<BoostTabProps> = ({
               </p>
             </div>
 
-            {speedTimer ? (
+            {activeBoostTask === 'speed' ? (
+              <button
+                type="button"
+                disabled
+                className="min-h-[38px] px-3.5 rounded-full bg-[#151109] border border-[#D4AF37]/80 text-[#FFF8E7] text-[11px] font-extrabold inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 cursor-wait font-mono-num shadow-[0_0_14px_rgba(245,158,11,0.25)] ml-auto"
+              >
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-[#FFF3B0]" />
+                <span>Verifying 20s...</span>
+              </button>
+            ) : speedTimer ? (
               <div className="flex items-center gap-1.5 shrink-0 ml-auto">
                 <button
                   type="button"
@@ -421,17 +542,24 @@ export const BoostTab: React.FC<BoostTabProps> = ({
                 <Clock className="w-3 h-3 text-amber-300" />
                 <span>{formatCompactDuration(speedCooldownRemainingMs)}</span>
               </button>
+            ) : isAnyBoostVerifying ? (
+              <button
+                type="button"
+                disabled
+                className="min-h-[38px] px-3.5 rounded-full bg-white/[0.06] border border-white/15 text-zinc-400 text-[11px] font-bold inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 cursor-not-allowed opacity-70 ml-auto"
+              >
+                <Lock className="w-3 h-3" />
+                <span>Locked</span>
+              </button>
             ) : (
-              <a
-                href={MONETAG_LINK}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => startSponsorVerification('speed', VERIFICATION_DURATION_MS)}
+              <button
+                type="button"
+                onClick={handleStartSpeedBoost}
                 className="min-h-[38px] px-4 rounded-full gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center justify-center gap-1 whitespace-nowrap shrink-0 shadow-[0_0_14px_rgba(251,191,36,0.4)] hover:brightness-105 active:scale-[0.97] transition-all cursor-pointer ml-auto"
               >
                 <span>Go</span>
                 <ExternalLink className="w-3 h-3" />
-              </a>
+              </button>
             )}
           </div>
 
@@ -455,7 +583,16 @@ export const BoostTab: React.FC<BoostTabProps> = ({
               </p>
             </div>
 
-            {megaTimer ? (
+            {activeBoostTask === 'mega' ? (
+              <button
+                type="button"
+                disabled
+                className="min-h-[38px] px-3.5 rounded-full bg-[#151109] border border-[#D4AF37]/80 text-[#FFF8E7] text-[11px] font-extrabold inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 cursor-wait font-mono-num shadow-[0_0_14px_rgba(245,158,11,0.25)] ml-auto"
+              >
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-[#FFF3B0]" />
+                <span>Verifying 20s...</span>
+              </button>
+            ) : megaTimer ? (
               <div className="flex items-center gap-1.5 shrink-0 ml-auto">
                 <button
                   type="button"
@@ -499,17 +636,24 @@ export const BoostTab: React.FC<BoostTabProps> = ({
                 <Clock className="w-3 h-3 text-amber-300" />
                 <span>{formatCompactDuration(megaCooldownRemainingMs)}</span>
               </button>
+            ) : isAnyBoostVerifying ? (
+              <button
+                type="button"
+                disabled
+                className="min-h-[38px] px-3.5 rounded-full bg-white/[0.06] border border-white/15 text-zinc-400 text-[11px] font-bold inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 cursor-not-allowed opacity-70 ml-auto"
+              >
+                <Lock className="w-3 h-3" />
+                <span>Locked</span>
+              </button>
             ) : (
-              <a
-                href={MONETAG_LINK}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => startSponsorVerification('mega', VERIFICATION_DURATION_MS)}
+              <button
+                type="button"
+                onClick={handleStartMegaBoost}
                 className="min-h-[38px] px-4 rounded-full gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center justify-center gap-1 whitespace-nowrap shrink-0 shadow-[0_0_14px_rgba(251,191,36,0.4)] hover:brightness-105 active:scale-[0.97] transition-all cursor-pointer ml-auto"
               >
                 <span>Go</span>
                 <ExternalLink className="w-3 h-3" />
-              </a>
+              </button>
             )}
           </div>
 
@@ -582,7 +726,7 @@ export const BoostTab: React.FC<BoostTabProps> = ({
                 </div>
 
                 <a
-                  href="https://of0101.com/?E=8B1dlgfYqJEnyzbLCycpP8r%2fbzfuyE55&s1="
+                  href="https://ofofa.co.za/?E=8B1dlgfYqJEnyzbLCycpP8r%2fbzfuyE55&s1="
                   target="_blank"
                   rel="noopener noreferrer"
                   className="w-full min-h-[36px] px-3.5 rounded-xl gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center justify-center gap-1.5 shadow-[0_0_12px_rgba(251,191,36,0.3)] hover:brightness-105 active:scale-[0.98] transition-all cursor-pointer"

@@ -36,6 +36,7 @@ import { BottomAdBanner } from './BottomAdBanner';
 import { DoubleRewardModal } from './DoubleRewardModal';
 import { FeaturedShortPosterArtwork } from './FeaturedShortPosterArtwork';
 import { IsolatedHtml5Video, IsolatedYouTubeIframe } from './IsolatedYouTubeIframe';
+import { LuckySpinFloatingButton } from './LuckySpinFloatingButton';
 import { RealisticGoldCoin } from './RealisticGoldCoin';
 
 interface ForYouFeedItem extends DramaEpisode {
@@ -70,6 +71,7 @@ interface ForYouTabProps {
   onClaimGiftBoxCoins?: () => Promise<void>;
   onStartSponsorReward?: (rewardAction?: () => Promise<void>) => void;
   onMarkEpisodeWatched?: (episode: DramaEpisode) => Promise<void>;
+  onOpenSpinWheel?: () => void;
   onSwitchToHome: () => void;
 }
 
@@ -126,6 +128,7 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
   onAwardCoinPot,
   onStartSponsorReward,
   onMarkEpisodeWatched,
+  onOpenSpinWheel,
   onSwitchToHome,
 }) => {
   const [activeIndex, setActiveIndex] = useState(0);
@@ -945,17 +948,6 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
                     <span>Watch Full Series</span>
                     <ExternalLink className="w-4 h-4 shrink-0" />
                   </a>
-
-                  {feedEpisodes.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={handleNext}
-                      className="min-h-[44px] px-4 rounded-xl bg-black/65 hover:bg-black/85 backdrop-blur-md border border-white/20 hover:border-[#D4AF37]/60 text-white text-xs sm:text-sm font-bold inline-flex items-center gap-1.5 cursor-pointer transition"
-                    >
-                      <span>Next</span>
-                      <SkipForward className="w-3.5 h-3.5 fill-current" />
-                    </button>
-                  )}
                 </div>
               </div>
             </div>
@@ -1047,7 +1039,7 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
             </button>
           )}
 
-          {/* External Show Link + Quick Next Pill on Trailer Slides */}
+          {/* External Show Link on Trailer Slides (Bottom-Left) */}
           {!isFeaturedPreviewSlide && currentEpisode.externalWatchUrl && (
             <div className="pointer-events-none absolute left-3 bottom-3 z-20 flex items-center gap-2">
               <a
@@ -1059,18 +1051,25 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
                 <span>Watch Full Series</span>
                 <ExternalLink className="w-3 h-3 shrink-0" />
               </a>
-              {feedEpisodes.length > 1 && (
-                <button
-                  type="button"
-                  onClick={handleNext}
-                  className="pointer-events-auto min-h-[34px] px-3 rounded-full bg-black/75 hover:bg-black/90 backdrop-blur-md border border-white/20 text-[#FFF8E7] text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer transition"
-                >
-                  <span>Next</span>
-                  <SkipForward className="w-3 h-3 fill-current" />
-                </button>
-              )}
             </div>
           )}
+
+          {/* Floating Right Action Stack: Glowing Lucky Spin Wheel above Next */}
+          <div className="pointer-events-none absolute right-3 bottom-3 z-30 flex flex-col items-center gap-2.5">
+            {onOpenSpinWheel && <LuckySpinFloatingButton onClick={onOpenSpinWheel} />}
+
+            {feedEpisodes.length > 1 && (
+              <button
+                type="button"
+                onClick={handleNext}
+                aria-label="Next stream"
+                className="pointer-events-auto min-h-[36px] px-3 rounded-full bg-black/75 hover:bg-black/90 backdrop-blur-md border border-white/25 hover:border-amber-400/60 text-[#FFF8E7] text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer shadow-lg transition"
+              >
+                <span>Next</span>
+                <SkipForward className="w-3 h-3 fill-current" />
+              </button>
+            )}
+          </div>
 
           {/* 2. Single Slim Top Bar: Back/Close, Title, Optional Fit/Zoom, Mute */}
           <header className="pointer-events-none absolute inset-x-0 top-0 z-30 bg-gradient-to-b from-black/85 via-black/45 to-transparent px-3 sm:px-5 pt-[max(0.45rem,env(safe-area-inset-top))] pb-3">
@@ -1307,14 +1306,14 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
           )}
         </div>
 
-        {/* 4. Pinned Bottom 320x50px Adsterra/Monetag Banner & 18+ Disclaimer Right Above Bottom Nav Bar */}
+        {/* 4. Pinned Bottom 320x50px Adsterra/Monetag Banner & 18+ Disclaimer Flush Above Bottom Nav Bar */}
         <footer
-          className={`shrink-0 relative z-20 bg-[#09090b] border-t border-[#D4AF37]/30 px-3 pt-2 pb-2 flex flex-col items-center justify-center ${
+          className={`shrink-0 relative z-20 bg-[#09090b] border-t border-[#D4AF37]/30 px-3 py-1 flex flex-col items-center justify-center ${
             isExpandedFull ? 'mb-0' : 'mb-16'
           }`}
         >
           <BottomAdBanner />
-          <p className="text-[9px] sm:text-[10px] text-zinc-400 text-center mt-1 leading-tight px-2">
+          <p className="text-[9px] text-zinc-400 text-center mt-0.5 leading-tight px-2">
             18+ Only • Winners know when to stop • National Responsible Gambling: 0800 006 008
           </p>
         </footer>

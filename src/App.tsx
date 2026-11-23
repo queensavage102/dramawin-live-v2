@@ -10,6 +10,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { FeaturedPartnerOfferModal } from './components/FeaturedPartnerOfferModal';
 import { ForYouTab } from './components/ForYouTab';
 import { InAppBrowserBanner } from './components/InAppBrowserBanner';
+import { LuckySpinFloatingButton } from './components/LuckySpinFloatingButton';
 import { LuckySpinWheelModal, type SpinSliceSpec } from './components/LuckySpinWheelModal';
 import { MeTab } from './components/MeTab';
 import { MysteryRevealState, MysteryVaultCard } from './components/MysteryVaultCard';
@@ -1072,7 +1073,6 @@ function DramaWinApp() {
     loadDailySpinState(guestPlayer.uid)
   );
   const [spinModalOpen, setSpinModalOpen] = useState(false);
-  const hasAutoShownSpinAfterIntroRef = useRef(false);
 
   useEffect(() => {
     setSpinState(loadDailySpinState(currentPlayer.uid));
@@ -1313,25 +1313,40 @@ function DramaWinApp() {
     }
   }, []);
 
-  const handleClaimTiktokBoost = useCallback(async (): Promise<void> => {
-    const uid = latestStateRef.current.currentPlayer.uid;
-    const todayKey = getTodayDateKey();
-    const latest = loadBoostTrackerState(uid, todayKey);
-    if (latest.tiktokClaimed) {
-      showToast('TikTok follow bonus already claimed!', undefined, 'neutral', undefined, 2600);
-      return;
-    }
+  const handleClaimTiktokBoost = useCallback(
+    async (tiktokUsername: string): Promise<void> => {
+      const uid = latestStateRef.current.currentPlayer.uid;
+      const todayKey = getTodayDateKey();
+      const latest = loadBoostTrackerState(uid, todayKey);
+      if (latest.tiktokClaimed) {
+        showToast('TikTok follow bonus already claimed!', undefined, 'neutral', undefined, 2600);
+        return;
+      }
 
-    await grantBoostCoins(500, '📲 Follow on TikTok (@faceless_creator_sa)');
-    const refreshed = loadBoostTrackerState(uid, todayKey);
-    setBoostState(
-      saveBoostTrackerState(uid, {
-        ...refreshed,
-        tiktokVisited: true,
-        tiktokClaimed: true,
-      })
-    );
-  }, [grantBoostCoins, showToast]);
+      const cleanedHandle = tiktokUsername.trim();
+      if (
+        !/^@[a-zA-Z0-9._]{2,24}$/.test(cleanedHandle) ||
+        cleanedHandle.toLowerCase() === '@faceless_creator_sa'
+      ) {
+        showToast('Please enter your valid @tiktok_username first.', undefined, 'error', undefined, 2800);
+        return;
+      }
+
+      await grantBoostCoins(
+        500,
+        `📲 Follow on TikTok (@faceless_creator_sa · ${cleanedHandle})`
+      );
+      const refreshed = loadBoostTrackerState(uid, todayKey);
+      setBoostState(
+        saveBoostTrackerState(uid, {
+          ...refreshed,
+          tiktokVisited: true,
+          tiktokClaimed: true,
+        })
+      );
+    },
+    [grantBoostCoins, showToast]
+  );
 
   const handleSeriesRequestReward = useCallback(async (): Promise<boolean> => {
     const uid = latestStateRef.current.currentPlayer.uid;
@@ -1459,22 +1474,7 @@ function DramaWinApp() {
     };
   }, [isAdminRoute, firebaseUser?.uid, grantBoostCoins]);
 
-  // Always show Lucky Spin Wheel right after the Intro screen finishes (even if free spin was used)
-  useEffect(() => {
-    if (isAdminRoute || !splashDone || hasAutoShownSpinAfterIntroRef.current) return;
-    hasAutoShownSpinAfterIntroRef.current = true;
-    const todayKey = getTodayDateKey();
-    const current = loadDailySpinState(currentPlayer.uid, todayKey);
-    if (current.popupShownDate !== todayKey) {
-      setSpinState(
-        saveDailySpinState(currentPlayer.uid, {
-          ...current,
-          popupShownDate: todayKey,
-        })
-      );
-    }
-    setSpinModalOpen(true);
-  }, [isAdminRoute, splashDone, currentPlayer.uid]);
+  // Lucky Spin Wheel opens manually via floating glowing Spin button on For You page
 
   const handleSpinWheelWin = useCallback(
     async (slice: SpinSliceSpec, usedExtraSpin: boolean): Promise<void> => {
@@ -2127,6 +2127,7 @@ function DramaWinApp() {
             onClaimGiftBoxCoins={handleClaimPlayerGiftBox}
             onStartSponsorReward={startSponsorRewardFlow}
             onMarkEpisodeWatched={handleMarkEpisodeWatched}
+            onOpenSpinWheel={() => setSpinModalOpen(true)}
             onSwitchToHome={() => setActiveTab('watch')}
           />
         )}
@@ -2138,6 +2139,8 @@ function DramaWinApp() {
             qualificationThreshold={qualificationThreshold}
             todayKey={getTodayDateKey()}
             boostState={boostState}
+            isSponsorOfferActive={Boolean(sponsorOffer)}
+            onStartSponsorReward={startSponsorRewardFlow}
             onClaimAdBoost={handleClaimAdBoost}
             onAdvanceMarathonAd={handleAdvanceMarathonAd}
             onClaimMarathonReward={handleClaimMarathonReward}
@@ -2220,6 +2223,13 @@ function DramaWinApp() {
           </div>
         </footer>
       </main>
+
+      {/* Floating Glowing SPIN Wheel Icon on Home Screen (directly above AI Assistant button) */}
+      {activeTab === 'watch' && splashDone && !sponsorOffer && !spinModalOpen && (
+        <div className="fixed bottom-36 right-3 z-50 pointer-events-none">
+          <LuckySpinFloatingButton onClick={() => setSpinModalOpen(true)} />
+        </div>
+      )}
 
       {/* Existing Floating Yellow Support Button & VIP Support Chat Modal (Gmail/Web3Forms forwarding intact) */}
       <SupportChatWidget
