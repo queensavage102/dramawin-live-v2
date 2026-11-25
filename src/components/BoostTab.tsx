@@ -797,7 +797,8 @@ export const BoostTab: React.FC<BoostTabProps> = ({
               <a
                 href={`https://ofofa.co.za/?E=NhGtJQQVSB8Oyo1LSgUc8r%2fbzfuyE53&s1=${encodedTrackingId}`}
                 target="_blank"
-                rel="noopener noreferrer"
+                rel="noreferrer noopener"
+                referrerPolicy="no-referrer"
                 className="w-full min-h-[34px] px-3 rounded-xl gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center justify-center gap-1.5 shadow-[0_0_12px_rgba(251,191,36,0.3)] hover:brightness-105 active:scale-[0.98] transition-all cursor-pointer"
               >
                 <span>Apply Online</span>
@@ -824,7 +825,8 @@ export const BoostTab: React.FC<BoostTabProps> = ({
               <a
                 href={`https://offerforge.co/?E=NhGtJQQVsB9zn8HZsgiBhMr%2fbzfuyE55&s1=${encodedTrackingId}`}
                 target="_blank"
-                rel="noopener noreferrer"
+                rel="noreferrer noopener"
+                referrerPolicy="no-referrer"
                 className="w-full min-h-[34px] px-3 rounded-xl gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center justify-center gap-1.5 shadow-[0_0_12px_rgba(251,191,36,0.3)] hover:brightness-105 active:scale-[0.98] transition-all cursor-pointer"
               >
                 <span>Apply Now</span>
@@ -851,7 +853,8 @@ export const BoostTab: React.FC<BoostTabProps> = ({
               <a
                 href={`https://of0101.com/?E=8B1dlgfYqJEnyzbLCycpP8r%2fbzfuyE55&s1=${encodedTrackingId}`}
                 target="_blank"
-                rel="noopener noreferrer"
+                rel="noreferrer noopener"
+                referrerPolicy="no-referrer"
                 className="w-full min-h-[34px] px-3 rounded-xl gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center justify-center gap-1.5 shadow-[0_0_12px_rgba(251,191,36,0.3)] hover:brightness-105 active:scale-[0.98] transition-all cursor-pointer"
               >
                 <span>Try AI Builder</span>
