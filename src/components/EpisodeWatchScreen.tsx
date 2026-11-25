@@ -24,10 +24,15 @@ import {
   sanitizeMediaUrl,
 } from '../constants';
 import { DramaEpisode } from '../types';
+import {
+  FULL_EPISODE_UNLOCK_COINS,
+  PREVIEW_FREE_SECONDS,
+} from '../utils/modernCatalog';
 import { useResolvedMediaUrl } from '../utils/mediaStore';
 import { BottomAdBanner } from './BottomAdBanner';
 import { DoubleRewardModal } from './DoubleRewardModal';
 import { IsolatedHtml5Video, IsolatedYouTubeIframe } from './IsolatedYouTubeIframe';
+import { MovieUnlockOverlay } from './MovieUnlockOverlay';
 import { RealisticGoldCoin } from './RealisticGoldCoin';
 
 interface EpisodeWatchScreenProps {
@@ -42,6 +47,9 @@ interface EpisodeWatchScreenProps {
   resumePlaybackSignal?: number;
   hasNextEpisode?: boolean;
   nextEpisodeLabel?: string;
+  isArchiveLocked?: boolean;
+  onUnlockArchiveMovie?: (identifier: string, movieTitle: string) => Promise<boolean>;
+  onGoToBoost?: () => void;
   onNextEpisode?: () => void;
   onSelectEpisode?: (episode: DramaEpisode) => void;
   onShareEpisode?: (episode: DramaEpisode) => void;
@@ -111,6 +119,9 @@ interface WatchVideoStageProps {
   playbackRate: number;
   resumePlaybackSignal: number;
   manualReloadNonce: number;
+  isPreviewLocked?: boolean;
+  previewReplayNonce?: number;
+  onPreviewLimitReached?: () => void;
   onPlayingChange?: (playing: boolean) => void;
   onVideoEnded?: () => void;
   onStallStateChange?: (stalledOver5s: boolean) => void;
@@ -125,6 +136,9 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
     playbackRate,
     resumePlaybackSignal,
     manualReloadNonce,
+    isPreviewLocked = false,
+    previewReplayNonce = 0,
+    onPreviewLimitReached,
     onPlayingChange,
     onVideoEnded,
     onStallStateChange,
@@ -154,6 +168,8 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
     const onPlayingChangeRef = useRef(onPlayingChange);
     const onVideoEndedRef = useRef(onVideoEnded);
     const onStallStateChangeRef = useRef(onStallStateChange);
+    const onPreviewLimitReachedRef = useRef(onPreviewLimitReached);
+    const isPreviewLockedRef = useRef(isPreviewLocked);
     const mutedRef = useRef(muted);
     const pausedRef = useRef(paused);
     const playbackRateRef = useRef(playbackRate);
@@ -251,6 +267,32 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
     useEffect(() => {
       onStallStateChangeRef.current = onStallStateChange;
     }, [onStallStateChange]);
+
+    useEffect(() => {
+      onPreviewLimitReachedRef.current = onPreviewLimitReached;
+    }, [onPreviewLimitReached]);
+
+    useEffect(() => {
+      isPreviewLockedRef.current = isPreviewLocked;
+    }, [isPreviewLocked]);
+
+    useEffect(() => {
+      if (previewReplayNonce > 0) {
+        savedTimeRef.current = 0;
+        if (videoSource.kind === 'youtube') {
+          postYouTubeCommand(iframeRef.current, 'seekTo', [0, true]);
+          postYouTubeCommand(iframeRef.current, 'playVideo');
+        }
+        if (videoRef.current) {
+          try {
+            videoRef.current.currentTime = 0;
+          } catch {
+            // Ignore seek errors before readyState
+          }
+          void videoRef.current.play().catch(() => {});
+        }
+      }
+    }, [previewReplayNonce, videoSource.kind]);
 
     // Arm initial load stall check (>5s) for direct or iframe sources while unpaused
     useEffect(() => {
@@ -459,6 +501,16 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
         ) {
           const ytTime = (payload.info as { currentTime: number }).currentTime;
           if (Number.isFinite(ytTime) && ytTime > 0) {
+            if (isPreviewLockedRef.current && ytTime >= PREVIEW_FREE_SECONDS) {
+              savedTimeRef.current = PREVIEW_FREE_SECONDS - 1;
+              postYouTubeCommand(iframeRef.current, 'seekTo', [PREVIEW_FREE_SECONDS - 1, true]);
+              postYouTubeCommand(iframeRef.current, 'pauseVideo');
+              clearRecoveryTimers();
+              clearStallPill();
+              onPlayingChangeRef.current?.(false);
+              onPreviewLimitReachedRef.current?.();
+              return;
+            }
             savedTimeRef.current = ytTime;
           }
         }
@@ -601,6 +653,20 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
     const handleVideoTimeUpdate = useCallback(
       (e: React.SyntheticEvent<HTMLVideoElement>) => {
         const nowTime = e.currentTarget.currentTime;
+        if (isPreviewLockedRef.current && nowTime >= PREVIEW_FREE_SECONDS) {
+          savedTimeRef.current = PREVIEW_FREE_SECONDS - 0.1;
+          try {
+            e.currentTarget.currentTime = PREVIEW_FREE_SECONDS - 0.1;
+          } catch {
+            // Ignore seek clamp error
+          }
+          e.currentTarget.pause();
+          clearRecoveryTimers();
+          clearStallPill();
+          onPlayingChangeRef.current?.(false);
+          onPreviewLimitReachedRef.current?.();
+          return;
+        }
         if (nowTime > 0) {
           savedTimeRef.current = nowTime;
         }
@@ -614,6 +680,23 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
         }
       },
       [clearRecoveryTimers, clearStallPill]
+    );
+
+    const handleVideoSeekingGuard = useCallback(
+      (e: React.SyntheticEvent<HTMLVideoElement>) => {
+        if (isPreviewLockedRef.current && e.currentTarget.currentTime >= PREVIEW_FREE_SECONDS) {
+          savedTimeRef.current = PREVIEW_FREE_SECONDS - 0.2;
+          try {
+            e.currentTarget.currentTime = PREVIEW_FREE_SECONDS - 0.2;
+          } catch {
+            // Ignore seek clamp error
+          }
+          e.currentTarget.pause();
+          onPlayingChangeRef.current?.(false);
+          onPreviewLimitReachedRef.current?.();
+        }
+      },
+      []
     );
 
     const handleVideoWaitingOrStalled = useCallback(() => {
@@ -720,6 +803,8 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
             onPlaying={handleVideoPlaying}
             onPlay={handleVideoPlay}
             onTimeUpdate={handleVideoTimeUpdate}
+            onSeeking={handleVideoSeekingGuard}
+            onSeeked={handleVideoSeekingGuard}
             onWaiting={handleVideoWaitingOrStalled}
             onStalled={handleVideoWaitingOrStalled}
             onError={handleVideoError}
@@ -752,11 +837,15 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
   episodes = [],
   sponsorAdUrl,
   playerWeeklyCoins,
+  playerTotalCoins,
   qualificationThreshold,
   muted,
   resumePlaybackSignal = 0,
   hasNextEpisode = false,
   nextEpisodeLabel,
+  isArchiveLocked = false,
+  onUnlockArchiveMovie,
+  onGoToBoost,
   onNextEpisode,
   onToggleMute,
   onAwardCoinPot,
@@ -771,6 +860,8 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
 
   const [ringProgress, setRingProgress] = useState(0);
   const [rewardModalOpen, setRewardModalOpen] = useState(false);
+  const [previewLockOpen, setPreviewLockOpen] = useState(false);
+  const [previewReplayNonce, setPreviewReplayNonce] = useState(0);
   const [flyingBurst, setFlyingBurst] = useState<{ id: number; amount: number } | null>(null);
   const [isExpandedFull, setIsExpandedFull] = useState(false);
   const [isZoomed, setIsZoomed] = useState(false);
@@ -781,6 +872,8 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
   const playerContainerRef = useRef<HTMLDivElement | null>(null);
   const awardingRef = useRef(false);
   const rewardModalOpenRef = useRef(false);
+  const previewLockOpenRef = useRef(false);
+  const previewElapsedMsRef = useRef(0);
   const resetPotTimerRef = useRef(false);
   const onAwardRef = useRef(onAwardCoinPot);
   const onMarkEpisodeWatchedRef = useRef(onMarkEpisodeWatched);
@@ -820,7 +913,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
   const totalSeriesEps = Math.max(1, seriesEpisodes.length);
 
   const handlePlayingChange = useCallback((playing: boolean) => {
-    if (!rewardModalOpenRef.current) {
+    if (!rewardModalOpenRef.current && !previewLockOpenRef.current) {
       isVideoPlayingRef.current = playing;
     }
   }, []);
@@ -832,12 +925,47 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
   useEffect(() => {
     isVideoPlayingRef.current = true;
     rewardModalOpenRef.current = false;
+    previewLockOpenRef.current = false;
+    previewElapsedMsRef.current = 0;
     setRewardModalOpen(false);
+    setPreviewLockOpen(false);
+    setPreviewReplayNonce(0);
     setRingProgress(0);
     setIsZoomed(false);
     setVideoReloadNonce(0);
     setIsVideoStalledOver5s(false);
   }, [episode.id]);
+
+  // 3-minute free preview timer (covers YouTube embeds reliably alongside message listener)
+  useEffect(() => {
+    if (!isArchiveLocked) return;
+    const limitMs = PREVIEW_FREE_SECONDS * 1000;
+    let lastTick = Date.now();
+
+    const interval = window.setInterval(() => {
+      const now = Date.now();
+      const delta = now - lastTick;
+      lastTick = now;
+
+      if (
+        document.visibilityState !== 'visible' ||
+        !isVideoPlayingRef.current ||
+        rewardModalOpenRef.current ||
+        previewLockOpenRef.current
+      ) {
+        return;
+      }
+
+      previewElapsedMsRef.current += delta;
+      if (previewElapsedMsRef.current >= limitMs && !previewLockOpenRef.current) {
+        previewLockOpenRef.current = true;
+        isVideoPlayingRef.current = false;
+        setPreviewLockOpen(true);
+      }
+    }, 100);
+
+    return () => window.clearInterval(interval);
+  }, [episode.id, isArchiveLocked]);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -883,7 +1011,8 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
       if (
         document.visibilityState !== 'visible' ||
         !isVideoPlayingRef.current ||
-        rewardModalOpenRef.current
+        rewardModalOpenRef.current ||
+        previewLockOpenRef.current
       ) {
         return;
       }
@@ -995,15 +1124,45 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
           <WatchVideoStage
             episode={episode}
             zoomed={isZoomed}
-            paused={rewardModalOpen}
+            paused={rewardModalOpen || previewLockOpen}
             muted={muted}
             playbackRate={1}
             resumePlaybackSignal={resumePlaybackSignal}
             manualReloadNonce={videoReloadNonce}
+            isPreviewLocked={isArchiveLocked}
+            previewReplayNonce={previewReplayNonce}
+            onPreviewLimitReached={() => {
+              if (!isArchiveLocked) return;
+              previewLockOpenRef.current = true;
+              isVideoPlayingRef.current = false;
+              setPreviewLockOpen(true);
+            }}
             onPlayingChange={handlePlayingChange}
             onVideoEnded={handleVideoEnded}
             onStallStateChange={setIsVideoStalledOver5s}
           />
+
+          {episode.archiveIdentifier && (
+            <div className="pointer-events-none absolute top-[max(3.6rem,calc(env(safe-area-inset-top)+3.25rem))] left-3 z-30">
+              {isArchiveLocked ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    previewLockOpenRef.current = true;
+                    isVideoPlayingRef.current = false;
+                    setPreviewLockOpen(true);
+                  }}
+                  className="pointer-events-auto inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/75 hover:bg-black/90 backdrop-blur-md border border-[#D4AF37]/50 text-[10px] font-bold text-[#FCE7A2] shadow-lg cursor-pointer transition"
+                >
+                  <span>3m Free Preview · Unlock Full ({FULL_EPISODE_UNLOCK_COINS})</span>
+                </button>
+              ) : (
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-950/80 backdrop-blur-md border border-emerald-400/45 text-[10px] font-bold text-emerald-200 shadow-lg">
+                  <span>Full Episode Unlocked</span>
+                </span>
+              )}
+            </div>
+          )}
 
           {/* 2. Single Slim Top Bar: Back/Close, Title, Optional Fit/Zoom, Mute */}
           <header className="pointer-events-none absolute inset-x-0 top-0 z-30 bg-gradient-to-b from-black/85 via-black/45 to-transparent px-3 sm:px-5 pt-[max(0.45rem,env(safe-area-inset-top))] pb-3">
@@ -1226,6 +1385,40 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
               </span>
             </div>
           )}
+
+          {/* 3-Minute Free Preview -> Spend 500 Coins Lock Overlay */}
+          <MovieUnlockOverlay
+            open={previewLockOpen && isArchiveLocked}
+            movieTitle={episode.title}
+            playerTotalCoins={playerTotalCoins}
+            unlockCost={FULL_EPISODE_UNLOCK_COINS}
+            onUnlock={async () => {
+              if (!episode.archiveIdentifier || !onUnlockArchiveMovie) return false;
+              const ok = await onUnlockArchiveMovie(episode.archiveIdentifier, episode.title);
+              if (ok) {
+                previewLockOpenRef.current = false;
+                setPreviewLockOpen(false);
+                isVideoPlayingRef.current = true;
+              }
+              return ok;
+            }}
+            onReplayPreview={() => {
+              previewElapsedMsRef.current = 0;
+              previewLockOpenRef.current = false;
+              setPreviewLockOpen(false);
+              isVideoPlayingRef.current = true;
+              setPreviewReplayNonce((prev) => prev + 1);
+            }}
+            onGoToBoost={
+              onGoToBoost
+                ? () => {
+                    handleClose();
+                    onGoToBoost();
+                  }
+                : undefined
+            }
+            onClose={handleClose}
+          />
         </div>
 
         {/* 4. Pinned Bottom 320x50px Adsterra/Monetag Banner & 18+ Disclaimer */}

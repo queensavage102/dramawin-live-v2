@@ -264,6 +264,34 @@
   }
 }
 
+@keyframes splashMarqueeLeft {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+@keyframes splashMarqueeRight {
+  0% {
+    transform: translate3d(-50%, 0, 0);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.splash-marquee-left {
+  animation: splashMarqueeLeft 22s linear infinite;
+  will-change: transform;
+}
+
+.splash-marquee-right {
+  animation: splashMarqueeRight 26s linear infinite;
+  will-change: transform;
+}
+
 .security-emerald-burst {
   animation: securityEmeraldBurst 0.65s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
@@ -283,6 +311,8 @@
   .vip-dust-particle,
   .vip-crown-halo,
   .memory-card-matched-pop,
+  .splash-marquee-left,
+  .splash-marquee-right,
   .security-emerald-burst,
   .security-wrong-shake {
     animation: none;

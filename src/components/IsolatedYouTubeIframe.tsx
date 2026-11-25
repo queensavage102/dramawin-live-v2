@@ -49,12 +49,15 @@ export interface IsolatedHtml5VideoProps {
   autoPlay?: boolean;
   loop?: boolean;
   muted?: boolean;
+  controls?: boolean;
   videoRef?: React.RefObject<HTMLVideoElement | null>;
   onLoadedMetadata?: (e: React.SyntheticEvent<HTMLVideoElement>) => void;
   onCanPlay?: () => void;
   onPlaying?: () => void;
   onPlay?: (e: React.SyntheticEvent<HTMLVideoElement>) => void;
   onTimeUpdate?: (e: React.SyntheticEvent<HTMLVideoElement>) => void;
+  onSeeking?: (e: React.SyntheticEvent<HTMLVideoElement>) => void;
+  onSeeked?: (e: React.SyntheticEvent<HTMLVideoElement>) => void;
   onWaiting?: () => void;
   onStalled?: () => void;
   onError?: () => void;
@@ -70,12 +73,15 @@ export const IsolatedHtml5Video = React.memo<IsolatedHtml5VideoProps>(
     autoPlay = true,
     loop = false,
     muted = false,
+    controls = true,
     videoRef,
     onLoadedMetadata,
     onCanPlay,
     onPlaying,
     onPlay,
     onTimeUpdate,
+    onSeeking,
+    onSeeked,
     onWaiting,
     onStalled,
     onError,
@@ -87,7 +93,7 @@ export const IsolatedHtml5Video = React.memo<IsolatedHtml5VideoProps>(
         ref={videoRef}
         key={videoKey}
         src={src}
-        controls
+        controls={controls}
         playsInline
         preload="metadata"
         autoPlay={autoPlay}
@@ -98,6 +104,8 @@ export const IsolatedHtml5Video = React.memo<IsolatedHtml5VideoProps>(
         onPlaying={onPlaying}
         onPlay={onPlay}
         onTimeUpdate={onTimeUpdate}
+        onSeeking={onSeeking}
+        onSeeked={onSeeked}
         onWaiting={onWaiting}
         onStalled={onStalled}
         onError={onError}

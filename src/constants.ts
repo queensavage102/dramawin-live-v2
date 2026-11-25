@@ -8,7 +8,11 @@ export const REFERRAL_REWARD_COINS = 1000;
 
 export function buildPersonalInviteLink(userId: string): string {
   const cleanId = encodeURIComponent((userId || '').trim());
-  return cleanId ? `${PUBLIC_APP_SHARE_ORIGIN}/?ref=${cleanId}` : PUBLIC_APP_SHARE_ORIGIN;
+  const origin =
+    typeof window !== 'undefined' && window.location?.origin
+      ? window.location.origin
+      : PUBLIC_APP_SHARE_ORIGIN;
+  return cleanId ? `${origin}/?ref=${cleanId}` : origin;
 }
 
 export const ADMIN_PASSCODE = 'Gideon_123';

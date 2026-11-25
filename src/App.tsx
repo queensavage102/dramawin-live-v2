@@ -14,10 +14,6 @@ import { LuckySpinFloatingButton } from './components/LuckySpinFloatingButton';
 import { LuckySpinWheelModal, type SpinSliceSpec } from './components/LuckySpinWheelModal';
 import { MeTab } from './components/MeTab';
 import { MysteryRevealState, MysteryVaultCard } from './components/MysteryVaultCard';
-import {
-  HUMAN_VERIFIED_SESSION_KEY,
-  QuickSecurityCheck,
-} from './components/QuickSecurityCheck';
 import { RealisticGoldCoin } from './components/RealisticGoldCoin';
 import { SupportChatWidget } from './components/SupportChatWidget';
 import { TopHeader } from './components/TopHeader';
@@ -46,6 +42,7 @@ import {
   awardBoostCoins,
   awardHeroBonusCoins,
   awardMysteryBoxCoins,
+  awardPlayerCoins,
   awardSpinWheelCoins,
   awardWatchPotCoins,
   claimStreakDay,
@@ -71,6 +68,7 @@ import {
   updateMysteryAndRolloverConfig,
   updateSponsorAdUrl,
 } from './services/dramawinService';
+import { FULL_EPISODE_UNLOCK_COINS } from './utils/modernCatalog';
 import {
   AppConfig,
   AppTab,
@@ -102,6 +100,8 @@ import {
   loadLocalPrizeWins,
   loadLocalTransactions,
   loadMyListSeriesIds,
+  loadUnlockedArchiveMovieIds,
+  markArchiveMovieUnlocked,
   mergeLeaderboardWithSeedPlayers,
   saveBoostTrackerState,
   saveDailySpinState,
@@ -229,6 +229,9 @@ function DramaWinApp() {
   const [legalModalOpen, setLegalModalOpen] = useState(false);
   const [referralsJoinedCount, setReferralsJoinedCount] = useState(0);
   const [myListSeriesIds, setMyListSeriesIds] = useState<string[]>(() => loadMyListSeriesIds());
+  const [unlockedMovieIds, setUnlockedMovieIds] = useState<string[]>(() =>
+    loadUnlockedArchiveMovieIds()
+  );
   const [toast, setToast] = useState<ToastNotice | null>(null);
   const [cloudOpenedBoxes, setCloudOpenedBoxes] = useState<number[]>([]);
   const [mysteryReveal, setMysteryReveal] = useState<MysteryRevealState | null>(null);
@@ -243,14 +246,6 @@ function DramaWinApp() {
   });
   const [confettiActive, setConfettiActive] = useState(false);
   const [splashDone, setSplashDone] = useState<boolean>(() => isAdminPath());
-  const [isHumanVerified, setIsHumanVerified] = useState<boolean>(() => {
-    if (isAdminPath()) return true;
-    try {
-      return window.sessionStorage.getItem(HUMAN_VERIFIED_SESSION_KEY) === 'true';
-    } catch {
-      return false;
-    }
-  });
   const [sponsorOffer, setSponsorOffer] = useState<{
     claimLabel: string;
     readyHeadline?: string;
@@ -615,7 +610,7 @@ function DramaWinApp() {
 
   // Subtle Daily Streak Reminder once per day on first visit if today's check-in is open
   useEffect(() => {
-    if (isAdminRoute || !splashDone || !isHumanVerified) return;
+    if (isAdminRoute || !splashDone) return;
     const uid = currentPlayer.uid;
     const todayKey = getTodayDateKey();
     const currentWeek = getCurrentWeekKey();
@@ -670,7 +665,7 @@ function DramaWinApp() {
     }, 1200);
 
     return () => window.clearTimeout(timer);
-  }, [isAdminRoute, splashDone, isHumanVerified, currentPlayer.uid, privateProfile.weekKey, privateProfile.claimedDays, showToast]);
+  }, [isAdminRoute, splashDone, currentPlayer.uid, privateProfile.weekKey, privateProfile.claimedDays, showToast]);
 
   const qualificationThreshold =
     appConfig.qualificationThreshold || DEFAULT_QUALIFICATION_THRESHOLD;
@@ -1009,6 +1004,88 @@ function DramaWinApp() {
       setLocalLeaderboard(loadLocalLeaderboard(res.player));
       playCoinPotCashChime(mutedNow);
       showToast(`+${safeAmount} Coins Added to Wallet!`, safeAmount, 'gold', undefined, 3000);
+    },
+    [showToast]
+  );
+
+  const handleUnlockArchiveMovie = useCallback(
+    async (identifier: string, movieTitle: string): Promise<boolean> => {
+      const cleanId = identifier.trim();
+      if (!cleanId) return false;
+
+      if (loadUnlockedArchiveMovieIds().includes(cleanId)) {
+        return true;
+      }
+
+      const {
+        isCloudMode: cloudNow,
+        currentPlayer: playerNow,
+        privateProfile: privNow,
+        appConfig: cfgNow,
+        muted: mutedNow,
+      } = latestStateRef.current;
+
+      const cost = FULL_EPISODE_UNLOCK_COINS;
+      if (playerNow.coins < cost) {
+        showToast(
+          `You need ${cost} Coins to unlock this full episode. Watch or Boost to earn more!`,
+          undefined,
+          'error',
+          undefined,
+          3200
+        );
+        return false;
+      }
+
+      const threshold = cfgNow.qualificationThreshold || DEFAULT_QUALIFICATION_THRESHOLD;
+      const unlockTitle = `Unlocked Episode: ${movieTitle}`.slice(0, 100);
+
+      if (cloudNow) {
+        try {
+          await awardPlayerCoins(
+            playerNow,
+            privNow,
+            -cost,
+            threshold,
+            { lastActivityDate: getTodayDateKey() },
+            undefined,
+            0,
+            {
+              category: 'boost',
+              title: unlockTitle,
+            }
+          );
+        } catch (err) {
+          showToast(
+            err instanceof Error ? err.message : 'Unable to process coin unlock right now.',
+            undefined,
+            'error',
+            undefined,
+            3200
+          );
+          return false;
+        }
+      } else {
+        const res = applyLocalCoinMutation({
+          player: playerNow,
+          privateProfile: privNow,
+          walletDelta: -cost,
+          qualificationThreshold: threshold,
+          txMeta: {
+            category: 'boost',
+            title: unlockTitle,
+          },
+        });
+        setGuestPlayer(res.player);
+        setGuestPrivate(res.privateProfile);
+        setLocalTransactions(res.transactions);
+        setLocalLeaderboard(loadLocalLeaderboard(res.player));
+      }
+
+      setUnlockedMovieIds(markArchiveMovieUnlocked(cleanId));
+      playCoinChime(mutedNow);
+      showToast(`Full Episode Unlocked! (-${cost} Coins)`, undefined, 'gold', undefined, 3200);
+      return true;
     },
     [showToast]
   );
@@ -1978,10 +2055,6 @@ function DramaWinApp() {
     );
   }
 
-  if (!isHumanVerified) {
-    return <QuickSecurityCheck onVerified={() => setIsHumanVerified(true)} />;
-  }
-
   return (
     <div className="min-h-screen bg-[#09090b] text-[#F6F2E9] pb-24">
 
@@ -2115,6 +2188,7 @@ function DramaWinApp() {
             episodes={episodes}
             cloudSeries={cloudSeries}
             privateState={privateProfile}
+            unlockedMovieIds={unlockedMovieIds}
             isAdmin={Boolean(
               adminUnlocked ||
                 (firebaseUser?.email &&
@@ -2134,6 +2208,8 @@ function DramaWinApp() {
             onStartSponsorReward={startSponsorRewardFlow}
             onClaimHeroBonus={handleClaimHeroBonus}
             onMarkEpisodeWatched={handleMarkEpisodeWatched}
+            onUnlockArchiveMovie={handleUnlockArchiveMovie}
+            onGoToBoost={() => setActiveTab('boost')}
           />
         )}
 
@@ -2141,6 +2217,7 @@ function DramaWinApp() {
           <ForYouTab
             episodes={episodes}
             privateState={privateProfile}
+            unlockedMovieIds={unlockedMovieIds}
             referralUserId={referralUserId}
             sponsorAdUrl={appConfig.sponsorAdUrl}
             playerWeeklyCoins={currentPlayer.weeklyCoins}
@@ -2154,6 +2231,8 @@ function DramaWinApp() {
             onClaimGiftBoxCoins={handleClaimPlayerGiftBox}
             onStartSponsorReward={startSponsorRewardFlow}
             onMarkEpisodeWatched={handleMarkEpisodeWatched}
+            onUnlockArchiveMovie={handleUnlockArchiveMovie}
+            onGoToBoost={() => setActiveTab('boost')}
             onOpenSpinWheel={() => setSpinModalOpen(true)}
             onSwitchToHome={() => setActiveTab('watch')}
           />
@@ -2236,7 +2315,7 @@ function DramaWinApp() {
             </span>
             <span className="text-white/20">•</span>
             <span className="text-[11px] text-[#9E978B]">
-              Show metadata provided by TVMaze &amp; Jikan
+              Featured Drama, Horror &amp; Anime Streaming
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-3">

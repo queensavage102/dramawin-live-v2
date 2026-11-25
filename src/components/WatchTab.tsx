@@ -7,6 +7,7 @@ interface WatchTabProps {
   episodes: DramaEpisode[];
   cloudSeries?: DramaSeries[];
   privateState: PlayerPrivate;
+  unlockedMovieIds?: string[];
   isAdmin?: boolean;
   referralUserId?: string;
   sponsorAdUrl?: string;
@@ -25,6 +26,8 @@ interface WatchTabProps {
   ) => void;
   onClaimHeroBonus?: () => Promise<void>;
   onMarkEpisodeWatched?: (episode: DramaEpisode) => Promise<void>;
+  onUnlockArchiveMovie?: (identifier: string, movieTitle: string) => Promise<boolean>;
+  onGoToBoost?: () => void;
 }
 
 export const WatchTab: React.FC<WatchTabProps> = ({
@@ -32,6 +35,7 @@ export const WatchTab: React.FC<WatchTabProps> = ({
   episodes,
   cloudSeries,
   privateState,
+  unlockedMovieIds = [],
   isAdmin = false,
   referralUserId,
   sponsorAdUrl,
@@ -47,6 +51,8 @@ export const WatchTab: React.FC<WatchTabProps> = ({
   onStartSponsorReward,
   onClaimHeroBonus,
   onMarkEpisodeWatched,
+  onUnlockArchiveMovie,
+  onGoToBoost,
 }) => {
   return (
     <SeriesFoldersSection
@@ -54,6 +60,7 @@ export const WatchTab: React.FC<WatchTabProps> = ({
       episodes={episodes}
       cloudSeries={cloudSeries}
       privateState={privateState}
+      unlockedMovieIds={unlockedMovieIds}
       isAdmin={isAdmin}
       referralUserId={referralUserId}
       sponsorAdUrl={sponsorAdUrl}
@@ -69,6 +76,8 @@ export const WatchTab: React.FC<WatchTabProps> = ({
       onStartSponsorReward={onStartSponsorReward}
       onClaimHeroBonus={onClaimHeroBonus}
       onMarkEpisodeWatched={onMarkEpisodeWatched}
+      onUnlockArchiveMovie={onUnlockArchiveMovie}
+      onGoToBoost={onGoToBoost}
     />
   );
 };

@@ -6,6 +6,7 @@ import {
   Coins,
   ExternalLink,
   Film,
+  Lock,
   Maximize2,
   Minimize2,
   Play,
@@ -13,6 +14,7 @@ import {
   Scan,
   SkipForward,
   Trophy,
+  Unlock,
   Volume2,
   VolumeX,
   ZoomIn,
@@ -26,10 +28,15 @@ import {
 } from '../constants';
 import { DramaEpisode, PlayerPrivate } from '../types';
 import {
-  ExternalCatalogShow,
+  FULL_EPISODE_UNLOCK_COINS,
+  MODERN_GENRES,
+  ModernGenre,
+  PREVIEW_FREE_SECONDS,
+  buildModernPlayerEpisode,
+  getModernCatalogByGenre,
+} from '../utils/modernCatalog';
+import {
   FeaturedShortDrama,
-  TOP_SHORTS_FEATURED,
-  fetchExternalCatalog,
 } from '../utils/externalCatalog';
 import { useResolvedMediaUrl } from '../utils/mediaStore';
 import { BottomAdBanner } from './BottomAdBanner';
@@ -37,6 +44,7 @@ import { DoubleRewardModal } from './DoubleRewardModal';
 import { FeaturedShortPosterArtwork } from './FeaturedShortPosterArtwork';
 import { IsolatedHtml5Video, IsolatedYouTubeIframe } from './IsolatedYouTubeIframe';
 import { LuckySpinFloatingButton } from './LuckySpinFloatingButton';
+import { MovieUnlockOverlay } from './MovieUnlockOverlay';
 import { RealisticGoldCoin } from './RealisticGoldCoin';
 
 interface ForYouFeedItem extends DramaEpisode {
@@ -58,6 +66,7 @@ const FORYOU_VIDEO_ZOOM_CLASS =
 interface ForYouTabProps {
   episodes: DramaEpisode[];
   privateState: PlayerPrivate;
+  unlockedMovieIds?: string[];
   referralUserId: string;
   sponsorAdUrl?: string;
   playerWeeklyCoins: number;
@@ -71,6 +80,8 @@ interface ForYouTabProps {
   onClaimGiftBoxCoins?: () => Promise<void>;
   onStartSponsorReward?: (rewardAction?: () => Promise<void>) => void;
   onMarkEpisodeWatched?: (episode: DramaEpisode) => Promise<void>;
+  onUnlockArchiveMovie?: (identifier: string, movieTitle: string) => Promise<boolean>;
+  onGoToBoost?: () => void;
   onOpenSpinWheel?: () => void;
   onSwitchToHome: () => void;
 }
@@ -120,25 +131,30 @@ function postVimeoCommand(
 
 export const ForYouTab: React.FC<ForYouTabProps> = ({
   episodes,
+  unlockedMovieIds = [],
   sponsorAdUrl,
   playerWeeklyCoins,
+  playerTotalCoins,
   qualificationThreshold,
   muted,
   onToggleMute,
   onAwardCoinPot,
   onStartSponsorReward,
   onMarkEpisodeWatched,
+  onUnlockArchiveMovie,
+  onGoToBoost,
   onOpenSpinWheel,
   onSwitchToHome,
 }) => {
+  const [selectedGenre, setSelectedGenre] = useState<ModernGenre>('All');
   const [activeIndex, setActiveIndex] = useState(0);
-  const [externalAnimeShows, setExternalAnimeShows] = useState<ExternalCatalogShow[]>([]);
   const [isPlaying, setIsPlaying] = useState(true);
   const [isZoomed, setIsZoomed] = useState(false);
   const [hudExpanded, setHudExpanded] = useState(false);
   const [isExpandedFull, setIsExpandedFull] = useState(false);
   const [ringProgress, setRingProgress] = useState(0);
   const [rewardModalOpen, setRewardModalOpen] = useState(false);
+  const [previewLockOpen, setPreviewLockOpen] = useState(false);
   const [flyingBurst, setFlyingBurst] = useState<{ id: number; amount: number } | null>(null);
 
   const [retryCount, setRetryCount] = useState(0);
@@ -151,14 +167,19 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const touchStartYRef = useRef<number | null>(null);
   const elapsedMsRef = useRef(0);
+  const previewElapsedMsRef = useRef(0);
   const isPlayingRef = useRef(true);
   const rewardModalOpenRef = useRef(false);
+  const previewLockOpenRef = useRef(false);
+  const isCurrentArchiveLockedRef = useRef(false);
   const onAwardRef = useRef(onAwardCoinPot);
   const stallTimerRef = useRef<number | null>(null);
   const stallPillTimerRef = useRef<number | null>(null);
   const retryDelayTimerRef = useRef<number | null>(null);
   const savedTimeRef = useRef<number>(0);
   const lastProgressTimeRef = useRef<number>(-1);
+
+  const unlockedSet = useMemo(() => new Set(unlockedMovieIds), [unlockedMovieIds]);
 
   useEffect(() => {
     onAwardRef.current = onAwardCoinPot;
@@ -255,89 +276,34 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
     [scheduleStallPill]
   );
 
-  useEffect(() => {
-    if (episodes.length > 0) return;
-    let cancelled = false;
-    void fetchExternalCatalog().then((buckets) => {
-      if (!cancelled) {
-        setExternalAnimeShows(buckets.anime.filter((show) => Boolean(show.trailerEmbedUrl)));
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [episodes.length]);
+  const modernShows = useMemo(
+    () => getModernCatalogByGenre(selectedGenre),
+    [selectedGenre]
+  );
+
+  const playableAdminEpisodes = useMemo(
+    () =>
+      episodes.filter((ep) => {
+        const raw = (ep.videoUrl || ep.youtubeUrl || '').trim();
+        return raw.length > 0 && resolveVideoSource(raw).kind !== 'empty';
+      }),
+    [episodes]
+  );
 
   const feedEpisodes: ForYouFeedItem[] = useMemo(() => {
-    if (episodes.length > 0) {
-      return episodes;
+    const modernItems: ForYouFeedItem[] = modernShows.map((show, idx) => {
+      const base = buildModernPlayerEpisode(show);
+      return {
+        ...base,
+        sortOrder: idx + 1,
+      };
+    });
+
+    if (selectedGenre === 'All' && playableAdminEpisodes.length > 0) {
+      return [...playableAdminEpisodes, ...modernItems];
     }
-
-    const trailerItems: ForYouFeedItem[] = externalAnimeShows.map((show, idx) => ({
-      id: `fy-${show.id}`,
-      title: show.title,
-      series: show.title,
-      seriesId: show.id,
-      category: show.category,
-      episodeLabel: 'Official Trailer',
-      duration: show.episodesLabel,
-      rewardCoins: COIN_POT_BASE_REWARD,
-      coverImage: show.posterUrl,
-      thumbnailUrl: show.posterUrl,
-      posterUrl: show.posterUrl,
-      synopsis: show.synopsis,
-      sponsorUrl: DEFAULT_SPONSOR_URL,
-      youtubeUrl: show.trailerEmbedUrl || '',
-      videoUrl: show.trailerEmbedUrl || '',
-      startTime: 0,
-      sortOrder: idx + 1,
-      isPublic: true,
-      externalWatchUrl: show.watchUrl,
-    }));
-
-    const featuredPreviewItems: ForYouFeedItem[] = TOP_SHORTS_FEATURED.map((item, idx) => ({
-      id: `fy-featured-${item.id}`,
-      title: item.title,
-      series: item.title,
-      seriesId: item.id,
-      category: item.genre,
-      episodeLabel: `${item.episodesCount} Eps`,
-      duration: `${item.episodesCount} Eps`,
-      rewardCoins: COIN_POT_BASE_REWARD,
-      coverImage: '',
-      thumbnailUrl: '',
-      posterUrl: '',
-      synopsis: item.tagline,
-      sponsorUrl: item.trackingUrl,
-      youtubeUrl: '',
-      videoUrl: '',
-      startTime: 0,
-      sortOrder: 100 + idx,
-      isPublic: true,
-      externalWatchUrl: item.trackingUrl,
-      featuredDrama: item,
-    }));
-
-    if (trailerItems.length === 0) {
-      return featuredPreviewItems;
-    }
-
-    // Interleave playable Jikan YouTube trailers upfront with Featured Short Drama previews
-    const combined: ForYouFeedItem[] = [];
-    let tIdx = 0;
-    let fIdx = 0;
-    while (tIdx < trailerItems.length || fIdx < featuredPreviewItems.length) {
-      for (let count = 0; count < 2 && tIdx < trailerItems.length; count += 1) {
-        combined.push(trailerItems[tIdx]);
-        tIdx += 1;
-      }
-      if (fIdx < featuredPreviewItems.length) {
-        combined.push(featuredPreviewItems[fIdx]);
-        fIdx += 1;
-      }
-    }
-    return combined;
-  }, [episodes, externalAnimeShows]);
+    return modernItems;
+  }, [modernShows, selectedGenre, playableAdminEpisodes]);
 
   useEffect(() => {
     if (activeIndex >= feedEpisodes.length && feedEpisodes.length > 0) {
@@ -346,6 +312,14 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
   }, [activeIndex, feedEpisodes.length]);
 
   const currentEpisode: ForYouFeedItem | null = feedEpisodes[activeIndex] || null;
+  const currentArchiveId = currentEpisode?.archiveIdentifier || null;
+  const isCurrentArchiveLocked = Boolean(
+    currentArchiveId && !unlockedSet.has(currentArchiveId)
+  );
+
+  useEffect(() => {
+    isCurrentArchiveLockedRef.current = isCurrentArchiveLocked;
+  }, [isCurrentArchiveLocked]);
 
   const rawVideoUrl = currentEpisode
     ? sanitizeMediaUrl((currentEpisode.videoUrl || currentEpisode.youtubeUrl || '').trim())
@@ -383,7 +357,10 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
     isPlayingRef.current = true;
     setRewardModalOpen(false);
     rewardModalOpenRef.current = false;
+    setPreviewLockOpen(false);
+    previewLockOpenRef.current = false;
     elapsedMsRef.current = 0;
+    previewElapsedMsRef.current = 0;
     setRingProgress(0);
     setIsZoomed(false);
     return () => {
@@ -524,6 +501,22 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
   const handleVideoTimeUpdate = useCallback(
     (e: React.SyntheticEvent<HTMLVideoElement>) => {
       const nowTime = e.currentTarget.currentTime;
+      if (isCurrentArchiveLockedRef.current && nowTime >= PREVIEW_FREE_SECONDS) {
+        savedTimeRef.current = PREVIEW_FREE_SECONDS - 0.1;
+        try {
+          e.currentTarget.currentTime = PREVIEW_FREE_SECONDS - 0.1;
+        } catch {
+          // Ignore seek clamp error
+        }
+        e.currentTarget.pause();
+        clearRecoveryTimers();
+        clearStallPill();
+        setIsPlaying(false);
+        isPlayingRef.current = false;
+        previewLockOpenRef.current = true;
+        setPreviewLockOpen(true);
+        return;
+      }
       if (nowTime > 0) {
         savedTimeRef.current = nowTime;
       }
@@ -537,6 +530,28 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
       }
     },
     [clearRecoveryTimers, clearStallPill]
+  );
+
+  const handleVideoSeekingGuard = useCallback(
+    (e: React.SyntheticEvent<HTMLVideoElement>) => {
+      if (
+        isCurrentArchiveLockedRef.current &&
+        e.currentTarget.currentTime >= PREVIEW_FREE_SECONDS
+      ) {
+        savedTimeRef.current = PREVIEW_FREE_SECONDS - 0.2;
+        try {
+          e.currentTarget.currentTime = PREVIEW_FREE_SECONDS - 0.2;
+        } catch {
+          // Ignore seek clamp error
+        }
+        e.currentTarget.pause();
+        setIsPlaying(false);
+        isPlayingRef.current = false;
+        previewLockOpenRef.current = true;
+        setPreviewLockOpen(true);
+      }
+    },
+    []
   );
 
   const handleVideoWaitingOrStalled = useCallback(() => {
@@ -685,6 +700,18 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
       ) {
         const ytTime = (payload.info as { currentTime: number }).currentTime;
         if (Number.isFinite(ytTime) && ytTime > 0) {
+          if (isCurrentArchiveLockedRef.current && ytTime >= PREVIEW_FREE_SECONDS) {
+            savedTimeRef.current = PREVIEW_FREE_SECONDS - 1;
+            postYouTubeCommand(iframeRef.current, 'seekTo', [PREVIEW_FREE_SECONDS - 1, true]);
+            postYouTubeCommand(iframeRef.current, 'pauseVideo');
+            clearRecoveryTimers();
+            clearStallPill();
+            setIsPlaying(false);
+            isPlayingRef.current = false;
+            previewLockOpenRef.current = true;
+            setPreviewLockOpen(true);
+            return;
+          }
           savedTimeRef.current = ytTime;
         }
       }
@@ -757,7 +784,8 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
       if (
         document.visibilityState !== 'visible' ||
         !isPlayingRef.current ||
-        rewardModalOpenRef.current
+        rewardModalOpenRef.current ||
+        previewLockOpenRef.current
       ) {
         return;
       }
@@ -777,7 +805,40 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
     return () => window.clearInterval(interval);
   }, [currentEpisode?.id, isFeaturedPreviewSlide]);
 
+  // 3-minute free preview timer for YouTube / embedded streams
+  useEffect(() => {
+    if (!currentEpisode || isFeaturedPreviewSlide || !isCurrentArchiveLocked) return;
+    const limitMs = PREVIEW_FREE_SECONDS * 1000;
+    let lastTick = Date.now();
+
+    const interval = window.setInterval(() => {
+      const now = Date.now();
+      const delta = now - lastTick;
+      lastTick = now;
+
+      if (
+        document.visibilityState !== 'visible' ||
+        !isPlayingRef.current ||
+        rewardModalOpenRef.current ||
+        previewLockOpenRef.current
+      ) {
+        return;
+      }
+
+      previewElapsedMsRef.current += delta;
+      if (previewElapsedMsRef.current >= limitMs && !previewLockOpenRef.current) {
+        previewLockOpenRef.current = true;
+        setPreviewLockOpen(true);
+        setIsPlaying(false);
+        isPlayingRef.current = false;
+      }
+    }, 100);
+
+    return () => window.clearInterval(interval);
+  }, [currentEpisode?.id, isFeaturedPreviewSlide, isCurrentArchiveLocked]);
+
   const handleTogglePlayPause = useCallback(() => {
+    if (previewLockOpenRef.current) return;
     setIsPlaying((prev) => !prev);
   }, []);
 
@@ -859,14 +920,36 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
 
   if (!currentEpisode) {
     return (
-      <section className="max-w-lg mx-auto my-8 rounded-3xl bg-[#111116] border border-white/[0.08] p-8 text-center space-y-4">
+      <section className="max-w-lg mx-auto my-8 rounded-3xl bg-[#111116] border border-white/[0.08] p-6 sm:p-8 text-center space-y-4">
+        <div className="flex items-center justify-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+          {MODERN_GENRES.map((genre) => {
+            const active = selectedGenre === genre;
+            return (
+              <button
+                key={`fy-empty-${genre}`}
+                type="button"
+                onClick={() => {
+                  setSelectedGenre(genre);
+                  setActiveIndex(0);
+                }}
+                className={`min-h-[36px] px-3.5 rounded-full border text-xs font-bold whitespace-nowrap shrink-0 cursor-pointer transition ${
+                  active
+                    ? 'bg-gradient-to-r from-amber-400 to-yellow-500 border-amber-200 text-zinc-950'
+                    : 'bg-white/[0.05] border-white/[0.1] text-zinc-300 hover:text-white'
+                }`}
+              >
+                {genre}
+              </button>
+            );
+          })}
+        </div>
         <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-amber-400/20 to-fuchsia-500/20 border border-amber-400/35 mx-auto flex items-center justify-center">
           <Film className="w-7 h-7 text-amber-300" />
         </div>
         <div className="space-y-1.5">
           <h2 className="text-xl font-display font-bold text-white">For You Feed Ready</h2>
           <p className="text-xs text-zinc-400">
-            Publish drama episodes inside /admin to unlock the vertical short-drama stream.
+            Tap another genre pill above or return Home.
           </p>
         </div>
         <button
@@ -975,11 +1058,14 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
               autoPlay
               loop={false}
               muted={muted}
+              controls={false}
               onLoadedMetadata={handleVideoLoadedMetadata}
               onCanPlay={handleVideoCanPlay}
               onPlaying={handleVideoPlaying}
               onPlay={handleVideoPlay}
               onTimeUpdate={handleVideoTimeUpdate}
+              onSeeking={handleVideoSeekingGuard}
+              onSeeked={handleVideoSeekingGuard}
               onWaiting={handleVideoWaitingOrStalled}
               onStalled={handleVideoWaitingOrStalled}
               onError={handleVideoError}
@@ -990,9 +1076,32 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
               className={isZoomed ? FORYOU_VIDEO_ZOOM_CLASS : FORYOU_VIDEO_FIT_CLASS}
             />
           ) : (
-            <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center gap-3 bg-[#060608]">
-              <Film className="w-10 h-10 text-amber-400" />
-              <p className="text-xs text-zinc-400">Preview ready — swipe for next stream</p>
+            <div className="relative w-full h-full flex flex-col items-center justify-center p-6 text-center gap-3 bg-[#060608]">
+              {currentEpisode.coverImage && currentEpisode.coverImage !== 'none' && (
+                <img
+                  src={currentEpisode.coverImage}
+                  alt={currentEpisode.title}
+                  referrerPolicy="no-referrer"
+                  className="pointer-events-none absolute inset-0 w-full h-full object-cover opacity-35 blur-sm"
+                />
+              )}
+              <div className="pointer-events-none absolute inset-0 bg-black/55" />
+              <div className="relative z-10 flex flex-col items-center gap-3 max-w-xs">
+                <Film className="w-10 h-10 text-amber-400" />
+                <p className="text-xs text-zinc-300">
+                  Stream unavailable right now — tap Next for another episode.
+                </p>
+                {feedEpisodes.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={handleNext}
+                    className="pointer-events-auto min-h-[40px] px-4 rounded-full gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center gap-1.5 cursor-pointer shadow-lg"
+                  >
+                    <span>Next Episode</span>
+                    <SkipForward className="w-3.5 h-3.5 fill-current" />
+                  </button>
+                )}
+              </div>
             </div>
           )}
 
@@ -1031,7 +1140,7 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
               aria-label={isPlaying ? 'Pause episode' : 'Play episode'}
               className="absolute inset-0 z-10 w-full h-full bg-transparent cursor-pointer flex items-center justify-center focus:outline-none"
             >
-              {!isPlaying && (
+              {!isPlaying && !previewLockOpen && videoSource.kind !== 'empty' && (
                 <span className="w-16 h-16 rounded-full bg-black/70 backdrop-blur-md border border-amber-400/50 text-amber-300 flex items-center justify-center shadow-[0_0_28px_rgba(0,0,0,0.8)]">
                   <Play className="w-7 h-7 fill-current ml-1" />
                 </span>
@@ -1039,18 +1148,41 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
             </button>
           )}
 
-          {/* External Show Link on Trailer Slides (Bottom-Left) */}
-          {!isFeaturedPreviewSlide && currentEpisode.externalWatchUrl && (
+          {/* Archive Preview Status or External Show Link (Bottom-Left) */}
+          {!isFeaturedPreviewSlide && (currentArchiveId || currentEpisode.externalWatchUrl) && (
             <div className="pointer-events-none absolute left-3 bottom-3 z-20 flex items-center gap-2">
-              <a
-                href={currentEpisode.externalWatchUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="pointer-events-auto min-h-[34px] px-3 rounded-full gold-gradient-bg text-[#181307] text-[11px] font-extrabold inline-flex items-center gap-1 shadow-[0_4px_16px_rgba(212,175,55,0.35)] hover:brightness-105 transition"
-              >
-                <span>Watch Full Series</span>
-                <ExternalLink className="w-3 h-3 shrink-0" />
-              </a>
+              {currentArchiveId ? (
+                isCurrentArchiveLocked ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      previewLockOpenRef.current = true;
+                      setPreviewLockOpen(true);
+                      setIsPlaying(false);
+                      isPlayingRef.current = false;
+                    }}
+                    className="pointer-events-auto min-h-[34px] px-3 rounded-full bg-black/80 hover:bg-black/95 backdrop-blur-md border border-[#D4AF37]/55 text-[#FCE7A2] text-[11px] font-bold inline-flex items-center gap-1.5 shadow-lg cursor-pointer transition"
+                  >
+                    <Lock className="w-3 h-3 text-[#FBBF24] shrink-0" />
+                    <span>3m Free · Unlock ({FULL_EPISODE_UNLOCK_COINS})</span>
+                  </button>
+                ) : (
+                  <span className="min-h-[32px] px-3 rounded-full bg-emerald-950/85 backdrop-blur-md border border-emerald-400/45 text-emerald-200 text-[11px] font-bold inline-flex items-center gap-1 shadow-lg">
+                    <Unlock className="w-3 h-3 shrink-0" />
+                    <span>Full Episode Unlocked</span>
+                  </span>
+                )
+              ) : currentEpisode.externalWatchUrl ? (
+                <a
+                  href={currentEpisode.externalWatchUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="pointer-events-auto min-h-[34px] px-3 rounded-full gold-gradient-bg text-[#181307] text-[11px] font-extrabold inline-flex items-center gap-1 shadow-[0_4px_16px_rgba(212,175,55,0.35)] hover:brightness-105 transition"
+                >
+                  <span>Watch Full Series</span>
+                  <ExternalLink className="w-3 h-3 shrink-0" />
+                </a>
+              ) : null}
             </div>
           )}
 
@@ -1071,8 +1203,8 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
             )}
           </div>
 
-          {/* 2. Single Slim Top Bar: Back/Close, Title, Optional Fit/Zoom, Mute */}
-          <header className="pointer-events-none absolute inset-x-0 top-0 z-30 bg-gradient-to-b from-black/85 via-black/45 to-transparent px-3 sm:px-5 pt-[max(0.45rem,env(safe-area-inset-top))] pb-3">
+          {/* 2. Single Slim Top Bar + Genre Filter Pills (All, Horror, Romance, Drama, Anime, Sci-Fi) */}
+          <header className="pointer-events-none absolute inset-x-0 top-0 z-30 bg-gradient-to-b from-black/90 via-black/55 to-transparent px-3 sm:px-5 pt-[max(0.45rem,env(safe-area-inset-top))] pb-3 space-y-2">
             <div className="pointer-events-auto flex items-center justify-between gap-2">
               <button
                 type="button"
@@ -1132,10 +1264,39 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
                 </button>
               </div>
             </div>
+
+            <div
+              role="tablist"
+              aria-label="Filter For You stream by genre"
+              className="pointer-events-auto flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5"
+            >
+              {MODERN_GENRES.map((genre) => {
+                const isSelected = selectedGenre === genre;
+                return (
+                  <button
+                    key={`fy-pill-${genre}`}
+                    type="button"
+                    role="tab"
+                    aria-selected={isSelected}
+                    onClick={() => {
+                      setSelectedGenre(genre);
+                      setActiveIndex(0);
+                    }}
+                    className={`min-h-[32px] px-3 rounded-full border text-[11px] font-bold whitespace-nowrap shrink-0 cursor-pointer transition ${
+                      isSelected
+                        ? 'bg-gradient-to-r from-amber-400 to-yellow-500 border-amber-200 text-zinc-950 shadow-[0_0_12px_rgba(251,191,36,0.4)]'
+                        : 'bg-black/65 backdrop-blur-md border-white/20 text-zinc-200 hover:text-white hover:border-[#D4AF37]/50'
+                    }`}
+                  >
+                    {genre}
+                  </button>
+                );
+              })}
+            </div>
           </header>
 
           {/* 3. Compact Side / Collapsible Pill: +300 Coin Pot Ring + Sunday Tournament Progress */}
-          <div className="pointer-events-none absolute top-[max(3.5rem,calc(env(safe-area-inset-top)+3.15rem))] right-3 z-30 flex flex-col items-end gap-1.5">
+          <div className="pointer-events-none absolute top-[max(6.25rem,calc(env(safe-area-inset-top)+5.75rem))] right-3 z-30 flex flex-col items-end gap-1.5">
             <button
               type="button"
               onClick={() => setHudExpanded((prev) => !prev)}
@@ -1304,6 +1465,49 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
               </span>
             </div>
           )}
+
+          {/* 3-Minute Free Preview -> Spend 500 Coins Lock Overlay */}
+          <MovieUnlockOverlay
+            open={previewLockOpen && isCurrentArchiveLocked}
+            movieTitle={currentEpisode.title}
+            playerTotalCoins={playerTotalCoins}
+            unlockCost={FULL_EPISODE_UNLOCK_COINS}
+            onUnlock={async () => {
+              if (!currentArchiveId || !onUnlockArchiveMovie) return false;
+              const ok = await onUnlockArchiveMovie(currentArchiveId, currentEpisode.title);
+              if (ok) {
+                previewLockOpenRef.current = false;
+                setPreviewLockOpen(false);
+                isPlayingRef.current = true;
+                setIsPlaying(true);
+              }
+              return ok;
+            }}
+            onReplayPreview={() => {
+              previewElapsedMsRef.current = 0;
+              previewLockOpenRef.current = false;
+              setPreviewLockOpen(false);
+              savedTimeRef.current = 0;
+              if (videoSource.kind === 'youtube') {
+                postYouTubeCommand(iframeRef.current, 'seekTo', [0, true]);
+                postYouTubeCommand(iframeRef.current, 'playVideo');
+              }
+              if (videoRef.current) {
+                try {
+                  videoRef.current.currentTime = 0;
+                } catch {
+                  // Ignore seek errors
+                }
+              }
+              isPlayingRef.current = true;
+              setIsPlaying(true);
+            }}
+            onGoToBoost={onGoToBoost}
+            onClose={() => {
+              previewLockOpenRef.current = false;
+              setPreviewLockOpen(false);
+            }}
+          />
         </div>
 
         {/* 4. Pinned Bottom 320x50px Adsterra/Monetag Banner & 18+ Disclaimer Flush Above Bottom Nav Bar */}

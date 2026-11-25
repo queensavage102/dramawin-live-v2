@@ -81,6 +81,7 @@ export interface DramaEpisode {
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
   updatedAtMs?: number;
+  archiveIdentifier?: string;
 }
 
 export interface AppConfig {

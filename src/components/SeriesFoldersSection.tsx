@@ -4,16 +4,15 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
-  ExternalLink,
   Film,
-  Flame,
   Layers,
+  Lock,
   Play,
   Sparkles,
+  Unlock,
   X,
 } from 'lucide-react';
 import {
-  DRAMA_CATEGORIES,
   getCanonicalVideoKey,
   getEpisodeSeriesId,
   getYouTubeFallbackThumbnailUrl,
@@ -22,21 +21,21 @@ import {
   isLegacyBrokenEpisode,
   isStrayGojoOrAnimeInWrongSeries,
   resolveSponsorLink,
+  resolveVideoSource,
   sanitizePosterUrl,
   toSeriesId,
 } from '../constants';
 import { DramaEpisode, DramaSeries, PlayerPrivate } from '../types';
 import {
-  ExternalCatalogBuckets,
-  ExternalCatalogShow,
-  FeaturedShortDrama,
-  TOP_SHORTS_FEATURED,
-  fetchExternalCatalog,
-} from '../utils/externalCatalog';
+  MODERN_GENRES,
+  ModernGenre,
+  ModernShowItem,
+  buildModernPlayerEpisode,
+  getModernCatalogByGenre,
+} from '../utils/modernCatalog';
 import { resolveEpisodeCover } from '../utils/localState';
 import { useResolvedMediaUrl } from '../utils/mediaStore';
 import { EpisodeWatchScreen } from './EpisodeWatchScreen';
-import { FeaturedShortPosterArtwork } from './FeaturedShortPosterArtwork';
 import { InstallAppWidget } from './InstallAppWidget';
 
 interface SeriesFoldersSectionProps {
@@ -44,6 +43,7 @@ interface SeriesFoldersSectionProps {
   episodes: DramaEpisode[];
   cloudSeries?: DramaSeries[];
   privateState: PlayerPrivate;
+  unlockedMovieIds?: string[];
   isAdmin?: boolean;
   referralUserId?: string;
   sponsorAdUrl?: string;
@@ -62,6 +62,8 @@ interface SeriesFoldersSectionProps {
   ) => void;
   onClaimHeroBonus?: () => Promise<void>;
   onMarkEpisodeWatched?: (episode: DramaEpisode) => Promise<void>;
+  onUnlockArchiveMovie?: (identifier: string, movieTitle: string) => Promise<boolean>;
+  onGoToBoost?: () => void;
 }
 
 interface SeriesFolderGroup {
@@ -221,107 +223,68 @@ const VerticalPosterCard: React.FC<{
   );
 };
 
-const FeaturedShortPosterCard: React.FC<{
-  item: FeaturedShortDrama;
-  matchedPosterUrl?: string;
-  scrollable?: boolean;
-  className?: string;
-}> = ({ item, matchedPosterUrl, scrollable = false, className = '' }) => {
+const ModernShowPosterCard: React.FC<{
+  show: ModernShowItem;
+  isUnlocked: boolean;
+  onWatch: (show: ModernShowItem) => void;
+}> = ({ show, isUnlocked, onWatch }) => {
   return (
-    <a
-      href={item.trackingUrl}
-      target="_blank"
-      rel="noopener noreferrer"
-      className={`group relative rounded-2xl bg-[#111116] border border-[#D4AF37]/40 hover:border-[#FBBF24]/85 overflow-hidden transition-all shadow-[0_12px_30px_rgba(0,0,0,0.65)] flex flex-col justify-between cursor-pointer active:scale-[0.98] ${
-        scrollable
-          ? 'aspect-[2/3] w-[166px] sm:w-[190px] shrink-0 snap-start'
-          : className || 'aspect-[2/3] w-full'
-      }`}
-    >
-      {matchedPosterUrl ? (
-        <EpisodeCover
-          src={matchedPosterUrl}
-          alt={item.title}
-          className="absolute inset-0 w-full h-full object-cover brightness-100 contrast-105 saturate-115 transition-transform duration-500 group-hover:scale-[1.04]"
-        />
-      ) : (
-        <FeaturedShortPosterArtwork item={item} showCenterTitle={false} variant="card" />
-      )}
-
-      {/* Dark gradient strictly confined to bottom behind title text */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[34%] bg-gradient-to-t from-black/85 via-black/35 to-transparent" />
-
-      {/* Top Metadata Strip: Genre & Episodes */}
-      <div className="relative z-10 p-2 flex items-center justify-between gap-1.5">
-        <span className="px-2 py-0.5 rounded-md border border-white/20 bg-black/75 text-white text-[10px] font-bold uppercase tracking-wider backdrop-blur-md shadow-sm">
-          {item.genre}
-        </span>
-        <span className="px-2 py-0.5 rounded-md bg-black/75 backdrop-blur-md border border-white/20 font-mono-num text-[10px] font-semibold text-white shadow-sm">
-          {item.episodesCount} Eps
-        </span>
-      </div>
-
-      {/* Bottom: Title on bottom-left + Compact Gold "Watch ▶" pill on bottom-right */}
-      <div className="relative z-10 p-2.5 flex items-end justify-between gap-2">
-        <h3 className="min-w-0 text-[13px] sm:text-sm font-display font-bold text-white line-clamp-2 leading-tight drop-shadow-[0_2px_6px_rgba(0,0,0,0.95)] group-hover:text-amber-300 transition-colors">
-          {item.title}
-        </h3>
-        <span className="shrink-0 px-2.5 py-1 rounded-full gold-gradient-bg text-[#181307] text-[10px] font-extrabold inline-flex items-center gap-1 whitespace-nowrap shadow-[0_4px_12px_rgba(212,175,55,0.45)] group-hover:brightness-105 transition">
-          <span>Watch</span>
-          <Play className="w-2.5 h-2.5 fill-current" />
-        </span>
-      </div>
-    </a>
-  );
-};
-
-const ExternalCatalogPosterCard: React.FC<{
-  show: ExternalCatalogShow;
-  scrollable?: boolean;
-  onSelect: (show: ExternalCatalogShow) => void;
-}> = ({ show, scrollable = false, onSelect }) => {
-  return (
-    <button
-      type="button"
-      onClick={() => onSelect(show)}
-      className={`group relative aspect-[2/3] text-left rounded-2xl bg-[#111116] border border-white/[0.08] hover:border-amber-400/50 overflow-hidden transition-all active:scale-[0.98] cursor-pointer ${
-        scrollable
-          ? 'w-[152px] sm:w-[176px] shrink-0 snap-start'
-          : 'w-full'
-      }`}
-    >
+    <div className="group relative aspect-[2/3] w-full rounded-2xl bg-[#111116] border border-white/[0.1] hover:border-amber-400/60 overflow-hidden transition-all shadow-[0_10px_28px_rgba(0,0,0,0.55)] flex flex-col justify-between">
       <img
-        src={show.posterUrl}
+        src={show.coverUrl}
         alt={show.title}
         loading="lazy"
-        referrerPolicy="no-referrer"
-        className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
+        className="absolute inset-0 w-full h-full object-cover object-center brightness-105 saturate-110 transition-transform duration-500 group-hover:scale-[1.04]"
       />
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/95 via-black/40 to-black/20" />
 
-      <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between gap-1.5">
-        {show.ratingLabel ? (
-          <span className="px-2 py-0.5 rounded-md bg-black/70 backdrop-blur-md border border-amber-400/35 font-mono-num text-[10px] font-bold text-amber-300">
-            {show.ratingLabel}
+      {/* Measured Dark Gradient Scrim for Poster Readability */}
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/92 via-black/25 to-black/25" />
+
+      {/* Top Badges: Genre + Unlock Status */}
+      <div className="relative z-10 p-2 flex items-center justify-between gap-1.5">
+        <span className="px-2 py-0.5 rounded-md bg-black/75 backdrop-blur-md border border-white/20 text-[10px] font-bold uppercase tracking-wider text-white shadow-sm">
+          {show.genre}
+        </span>
+
+        {isUnlocked ? (
+          <span className="px-2 py-0.5 rounded-md bg-emerald-950/85 backdrop-blur-md border border-emerald-400/50 text-[10px] font-bold text-emerald-200 inline-flex items-center gap-1 shadow-sm">
+            <Unlock className="w-2.5 h-2.5" />
+            <span>Unlocked</span>
           </span>
         ) : (
-          <span />
+          <span className="px-2 py-0.5 rounded-md bg-black/75 backdrop-blur-md border border-[#D4AF37]/45 font-mono-num text-[10px] font-bold text-[#FCE7A2] inline-flex items-center gap-1 shadow-sm">
+            <Lock className="w-2.5 h-2.5 text-[#FBBF24]" />
+            <span>3m Free</span>
+          </span>
         )}
-        <span className="px-2 py-0.5 rounded-md bg-black/65 backdrop-blur-md border border-white/15 font-mono-num text-[10px] font-semibold text-white/95 tracking-tight shadow-sm">
-          {show.episodesLabel}
-        </span>
       </div>
 
-      <div className="absolute inset-x-0 bottom-0 p-3 space-y-1">
-        <h3 className="text-[13px] sm:text-sm font-display font-bold text-white line-clamp-2 leading-snug drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)] group-hover:text-amber-300 transition-colors">
-          {show.title}
-        </h3>
-        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-300/90">
-          <Play className="w-2.5 h-2.5 fill-current" />
-          <span>{show.trailerEmbedUrl ? 'Trailer & Details' : 'Details & Watch'}</span>
-        </span>
+      {/* Bottom Title + Watch CTA */}
+      <div className="relative z-10 p-2.5 space-y-2">
+        <div className="space-y-0.5">
+          <div className="flex items-center justify-between gap-1.5">
+            <span className="text-[10px] font-mono-num font-bold text-amber-300/95">
+              {show.episodesLabel}
+            </span>
+          </div>
+          <h3 className="text-[13px] sm:text-sm font-display font-bold text-white line-clamp-2 leading-tight drop-shadow-[0_2px_6px_rgba(0,0,0,0.95)] group-hover:text-amber-300 transition-colors">
+            {show.title}
+          </h3>
+          <p className="text-[11px] text-zinc-200/85 line-clamp-1">
+            {show.tagline}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => onWatch(show)}
+          className="w-full min-h-[36px] px-3 rounded-xl gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center justify-center gap-1.5 shadow-[0_6px_18px_rgba(212,175,55,0.4)] hover:brightness-105 active:scale-[0.98] cursor-pointer transition"
+        >
+          <Play className="w-3.5 h-3.5 fill-current" />
+          <span>Watch</span>
+        </button>
       </div>
-    </button>
+    </div>
   );
 };
 
@@ -330,6 +293,7 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
   episodes,
   cloudSeries = [],
   privateState,
+  unlockedMovieIds = [],
   referralUserId,
   sponsorAdUrl,
   playerWeeklyCoins,
@@ -344,40 +308,25 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
   onStartSponsorReward,
   onClaimHeroBonus,
   onMarkEpisodeWatched,
+  onUnlockArchiveMovie,
+  onGoToBoost,
 }) => {
-  const [selectedCategory, setSelectedCategory] = useState<string>('All');
+  const [selectedCategory, setSelectedCategory] = useState<ModernGenre>('All');
   const [selectedSeriesId, setSelectedSeriesId] = useState<string | null>(null);
-  const [selectedExternalShow, setSelectedExternalShow] = useState<ExternalCatalogShow | null>(null);
-  const [externalCatalog, setExternalCatalog] = useState<ExternalCatalogBuckets>({
-    drama: [],
-    horror: [],
-    romance: [],
-    anime: [],
-  });
-  const [externalLoading, setExternalLoading] = useState<boolean>(true);
   const [activePlayerEpisode, setActivePlayerEpisode] = useState<DramaEpisode | null>(null);
   const [heroIndex, setHeroIndex] = useState(0);
   const heroTouchStartX = useRef<number | null>(null);
-  const topShortsCarouselRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    setExternalLoading(true);
-    void fetchExternalCatalog()
-      .then((buckets) => {
-        if (!cancelled) {
-          setExternalCatalog(buckets);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setExternalLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const unlockedSet = useMemo(() => new Set(unlockedMovieIds), [unlockedMovieIds]);
+
+  const modernShows = useMemo(
+    () => getModernCatalogByGenre(selectedCategory),
+    [selectedCategory]
+  );
+
+  const handleWatchModernShow = (show: ModernShowItem) => {
+    setActivePlayerEpisode(buildModernPlayerEpisode(show));
+  };
 
   const watchedEpisodeIdSet = useMemo(() => {
     const set = new Set<string>();
@@ -391,7 +340,7 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
     return set;
   }, [privateState?.watchedEpisodeIds]);
 
-  // Build deduplicated distinct Series folders keyed strictly by canonical seriesId
+  // Build deduplicated distinct custom /admin Series folders with genuinely playable episodes
   const seriesGroups: SeriesFolderGroup[] = useMemo(() => {
     const map = new Map<string, { displayName: string; episodes: DramaEpisode[] }>();
 
@@ -406,6 +355,8 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
 
     episodes.forEach((ep) => {
       if (!ep?.id || isStrayJjkGojoEpisodeForSeries(ep)) return;
+      const resolved = resolveVideoSource((ep.videoUrl || ep.youtubeUrl || '').trim());
+      if (resolved.kind === 'empty') return;
       const clean = (ep.series || '').trim().replace(/\s+/g, ' ') || 'Featured Series';
       const sId = getEpisodeSeriesId({ series: clean, seriesId: ep.seriesId });
       const entry = map.get(sId) || { displayName: clean, episodes: [] };
@@ -514,27 +465,24 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
     });
   }, [sections, episodes, cloudSeries]);
 
-  // Hero Carousel slides: custom /admin series first, or the 8 Featured Top Shorts when none are published yet
+  // Hero Carousel slides: custom /admin series with playable episodes first, or top curated modern shows
   const heroSlides = useMemo(() => {
-    if (seriesGroups.length > 0) {
-      const withMedia = seriesGroups.filter(
-        (g) => g.episodes.length > 0 || Boolean(g.posterUrl || g.fallbackYtThumb)
-      );
-      const chosen = (withMedia.length > 0 ? withMedia : seriesGroups).slice(0, 5);
-      return chosen.map((series) => ({
+    const playableGroups = seriesGroups.filter((g) => g.episodes.length > 0);
+    if (playableGroups.length > 0) {
+      return playableGroups.slice(0, 5).map((series) => ({
         key: series.seriesId,
         label: series.seriesName,
         kind: 'series' as const,
         series,
       }));
     }
-    return TOP_SHORTS_FEATURED.map((drama) => ({
-      key: drama.id,
-      label: drama.title,
-      kind: 'featured' as const,
-      drama,
+    return modernShows.slice(0, 5).map((show) => ({
+      key: `hero-modern-${show.id}`,
+      label: show.title,
+      kind: 'modern' as const,
+      show,
     }));
-  }, [seriesGroups]);
+  }, [seriesGroups, modernShows]);
 
   useEffect(() => {
     if (heroIndex >= heroSlides.length && heroSlides.length > 0) {
@@ -550,86 +498,10 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
     return () => window.clearInterval(timer);
   }, [heroSlides.length]);
 
-  // Group series + auto-filled TVMaze/Jikan shows into ordered genre buckets
-  const categoryBuckets = useMemo(() => {
-    const map = new Map<
-      string,
-      { groups: SeriesFolderGroup[]; externalShows: ExternalCatalogShow[] }
-    >();
-
-    const ensureBucket = (cat: string) => {
-      if (!map.has(cat)) {
-        map.set(cat, { groups: [], externalShows: [] });
-      }
-      return map.get(cat)!;
-    };
-
-    // Always ensure core TVMaze + Jikan + Featured genre tabs exist cleanly
-    ['Drama', 'Fantasy', 'Horror', 'Romance', 'Anime'].forEach(ensureBucket);
-
-    seriesGroups.forEach((group) => {
-      const cat = group.category || 'Drama';
-      ensureBucket(cat).groups.push(group);
-    });
-
-    ensureBucket('Drama').externalShows.push(...externalCatalog.drama);
-    ensureBucket('Horror').externalShows.push(...externalCatalog.horror);
-    ensureBucket('Romance').externalShows.push(...externalCatalog.romance);
-    ensureBucket('Anime').externalShows.push(...externalCatalog.anime);
-
-    const knownOrder: string[] = ['Drama', 'Fantasy', 'Horror', 'Romance', 'Anime', ...DRAMA_CATEGORIES];
-    const sortedKeys = Array.from(map.keys()).sort((a, b) => {
-      const idxA = knownOrder.indexOf(a);
-      const idxB = knownOrder.indexOf(b);
-      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
-      if (idxA !== -1) return -1;
-      if (idxB !== -1) return 1;
-      return a.localeCompare(b);
-    });
-
-    return sortedKeys
-      .map((category) => {
-        const entry = map.get(category)!;
-        const featuredCount = TOP_SHORTS_FEATURED.filter(
-          (item) => item.genre.toLowerCase() === category.toLowerCase()
-        ).length;
-        return {
-          category,
-          groups: entry.groups,
-          externalShows: entry.externalShows,
-          featuredCount,
-          totalCount: entry.groups.length + entry.externalShows.length + featuredCount,
-        };
-      })
-      .filter(
-        (b) =>
-          b.totalCount > 0 ||
-          b.category === 'Drama' ||
-          b.category === 'Horror' ||
-          b.category === 'Romance' ||
-          b.category === 'Anime'
-      );
-  }, [seriesGroups, externalCatalog]);
-
-  useEffect(() => {
-    if (
-      selectedCategory !== 'All' &&
-      !categoryBuckets.some((bucket) => bucket.category === selectedCategory)
-    ) {
-      setSelectedCategory('All');
-    }
-  }, [categoryBuckets, selectedCategory]);
-
-  const featuredPosterByTitle = useMemo(() => {
-    const lookup = new Map<string, string>();
-    seriesGroups.forEach((g) => {
-      const poster = g.posterUrl || g.fallbackYtThumb;
-      if (poster) {
-        lookup.set(g.seriesName.trim().toLowerCase(), poster);
-      }
-    });
-    return lookup;
-  }, [seriesGroups]);
+  const playableSeriesGroups = useMemo(
+    () => seriesGroups.filter((g) => g.episodes.length > 0),
+    [seriesGroups]
+  );
 
   const activeSeriesGroup = useMemo(() => {
     if (!selectedSeriesId) return null;
@@ -659,7 +531,7 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
     };
   }, [seriesGroups, selectedSeriesId, episodes]);
 
-  const isModalOpen = Boolean(activeSeriesGroup || selectedExternalShow || activePlayerEpisode);
+  const isModalOpen = Boolean(activeSeriesGroup || activePlayerEpisode);
   useEffect(() => {
     if (!isModalOpen || typeof document === 'undefined') return;
     const htmlEl = document.documentElement;
@@ -680,24 +552,18 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
   }, [isModalOpen]);
 
   useEffect(() => {
-    if ((!activeSeriesGroup && !selectedExternalShow) || activePlayerEpisode) return;
+    if (!activeSeriesGroup || activePlayerEpisode) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setSelectedSeriesId(null);
-        setSelectedExternalShow(null);
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeSeriesGroup, selectedExternalShow, activePlayerEpisode]);
-
-  const activeCategoryBucket = useMemo(
-    () => categoryBuckets.find((b) => b.category === selectedCategory) || null,
-    [categoryBuckets, selectedCategory]
-  );
+  }, [activeSeriesGroup, activePlayerEpisode]);
 
   const nextEpisodeForActivePlayer = useMemo(() => {
-    if (!activePlayerEpisode) return null;
+    if (!activePlayerEpisode || activePlayerEpisode.archiveIdentifier) return null;
     const orderedSeries = seriesGroups.flatMap((g) => g.episodes);
     if (orderedSeries.length > 1) {
       const currentIdx = orderedSeries.findIndex((ep) => ep.id === activePlayerEpisode.id);
@@ -714,35 +580,12 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
   }, [activePlayerEpisode, seriesGroups, episodes]);
 
   const activeHero = heroSlides[heroIndex] || null;
-  const shelfBuckets = useMemo(
-    () =>
-      categoryBuckets.filter(
-        (b) =>
-          b.groups.length > 0 ||
-          b.externalShows.length > 0 ||
-          (externalLoading && ['Drama', 'Horror', 'Romance', 'Anime'].includes(b.category))
-      ),
-    [categoryBuckets, externalLoading]
-  );
-  const horrorBucketIndex = shelfBuckets.findIndex(
-    (b) => b.category.toLowerCase() === 'horror'
-  );
-
-  // Split category buckets into Drama/pre-Horror rows and Horror+ rows
-  const preAdBuckets =
-    horrorBucketIndex >= 0
-      ? shelfBuckets.slice(0, horrorBucketIndex)
-      : shelfBuckets.slice(0, 1);
-  const postAdBuckets =
-    horrorBucketIndex >= 0
-      ? shelfBuckets.slice(horrorBucketIndex)
-      : shelfBuckets.slice(1);
 
   return (
     <>
       <section className="space-y-3">
         {/* 1. Full-Bleed Auto-Sliding Hero Carousel with Touch-Swipe */}
-        {heroSlides.length > 0 && activeHero && (
+        {heroSlides.length > 0 && activeHero ? (
           <div className="space-y-2">
             <div
               onTouchStart={(e) => {
@@ -802,34 +645,35 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
                   </div>
                 </button>
               ) : (
-                <a
-                  href={activeHero.drama.trackingUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                <button
+                  type="button"
+                  onClick={() => handleWatchModernShow(activeHero.show)}
                   className="w-full h-full relative text-left block cursor-pointer"
                 >
-                  <FeaturedShortPosterArtwork
-                    key={`hero-${activeHero.drama.id}`}
-                    item={activeHero.drama}
-                    showCenterTitle={false}
-                    variant="stage"
+                  <img
+                    key={`hero-modern-${activeHero.show.id}`}
+                    src={activeHero.show.coverUrl}
+                    alt={activeHero.show.title}
+                    className="w-full h-full object-cover object-[center_22%] opacity-100 brightness-105 contrast-105 saturate-115 transition-transform duration-500 group-hover:scale-[1.03]"
                   />
                   {/* Dark gradient strictly confined to bottom behind title text */}
-                  <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[36%] bg-gradient-to-t from-black/85 via-black/35 to-transparent" />
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[42%] bg-gradient-to-t from-black/90 via-black/45 to-transparent" />
 
-                  {/* Bottom-Left Overlay: Genre & Episode Badges + Title | Bottom-Right: Compact Gold Watch ▶ Pill */}
+                  {/* Bottom-Left Overlay: Genre & Preview Status + Title | Bottom-Right: Compact Gold Watch ▶ Pill */}
                   <div className="absolute bottom-3 left-3.5 right-3.5 sm:bottom-4 sm:left-6 sm:right-6 flex items-end justify-between gap-3">
                     <div className="min-w-0 max-w-2xl space-y-1">
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span className="px-2 py-0.5 rounded-full bg-black/75 text-white backdrop-blur-md border border-white/20 text-[10px] font-bold uppercase tracking-wider shadow-sm">
-                          {activeHero.drama.genre}
+                          {activeHero.show.genre}
                         </span>
-                        <span className="px-2 py-0.5 rounded-full bg-black/75 backdrop-blur-md border border-white/20 text-[10px] font-mono-num font-semibold text-white shadow-sm">
-                          {activeHero.drama.episodesCount} Eps
+                        <span className="px-2 py-0.5 rounded-full bg-black/75 backdrop-blur-md border border-[#D4AF37]/45 text-[10px] font-mono-num font-semibold text-[#FCE7A2] shadow-sm">
+                          {unlockedSet.has(activeHero.show.id)
+                            ? 'Full Episode Unlocked'
+                            : '3m Free · 500 Coins Full'}
                         </span>
                       </div>
                       <h1 className="text-lg sm:text-3xl font-display font-bold text-white line-clamp-2 leading-tight text-balance drop-shadow-[0_2px_10px_rgba(0,0,0,0.95)]">
-                        {activeHero.drama.title}
+                        {activeHero.show.title}
                       </h1>
                     </div>
 
@@ -838,7 +682,7 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
                       <Play className="w-3 h-3 fill-current" />
                     </span>
                   </div>
-                </a>
+                </button>
               )}
 
               {/* Floating Right Reward Button (Opens Sponsor Ad + Claims Bonus Coins without opening player) */}
@@ -923,281 +767,103 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
               </div>
             )}
           </div>
-        )}
+        ) : null}
 
         {/* Install DramaWin App (PWA) Widget below Hero Carousel */}
         <InstallAppWidget storageKey="dramawin_install_home_dismissed_v1" />
 
-        {/* 2. Genre Filter Pills */}
+        {/* 2. Top Genre Filter Pills (All, Horror, Romance, Drama, Anime) */}
         <div
           role="tablist"
-          aria-label="Filter series by genre"
-          className="flex items-center gap-2 overflow-x-auto pb-1"
+          aria-label="Filter shows by genre"
+          className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar"
         >
-          <button
-            type="button"
-            role="tab"
-            aria-selected={selectedCategory === 'All'}
-            onClick={() => setSelectedCategory('All')}
-            className={`min-h-[38px] px-4 rounded-full border text-xs font-bold whitespace-nowrap shrink-0 transition-all cursor-pointer inline-flex items-center gap-1.5 ${
-              selectedCategory === 'All'
-                ? 'bg-gradient-to-r from-amber-400 to-fuchsia-500 border-amber-200 text-zinc-950 shadow-[0_0_16px_rgba(251,191,36,0.3)]'
-                : 'bg-white/[0.05] border-white/[0.1] text-zinc-300 hover:text-white hover:border-amber-400/40'
-            }`}
-          >
-            <Layers className="w-3.5 h-3.5" />
-            <span>All Genres</span>
-          </button>
-
-          {categoryBuckets.map((bucket) => {
-            const isSelected = selectedCategory === bucket.category;
+          {MODERN_GENRES.map((genre) => {
+            const isSelected = selectedCategory === genre;
             return (
               <button
-                key={bucket.category}
+                key={genre}
                 type="button"
                 role="tab"
                 aria-selected={isSelected}
-                onClick={() => setSelectedCategory(bucket.category)}
-                className={`min-h-[38px] px-4 rounded-full border text-xs font-bold whitespace-nowrap shrink-0 transition-all cursor-pointer inline-flex items-center gap-1.5 ${
+                onClick={() => setSelectedCategory(genre)}
+                className={`min-h-[40px] px-4 rounded-full border text-xs font-bold whitespace-nowrap shrink-0 transition-all cursor-pointer inline-flex items-center gap-1.5 ${
                   isSelected
-                    ? 'bg-gradient-to-r from-amber-400 to-fuchsia-500 border-amber-200 text-zinc-950 shadow-[0_0_16px_rgba(251,191,36,0.3)]'
+                    ? 'bg-gradient-to-r from-amber-400 to-yellow-500 border-amber-200 text-zinc-950 shadow-[0_0_16px_rgba(251,191,36,0.35)]'
                     : 'bg-white/[0.05] border-white/[0.1] text-zinc-300 hover:text-white hover:border-amber-400/40'
                 }`}
               >
-                <span>{bucket.category}</span>
-                {bucket.totalCount > 0 && (
-                  <span className="font-mono-num text-[10px] opacity-75">
-                    ({bucket.totalCount})
-                  </span>
-                )}
+                {genre === 'All' && <Layers className="w-3.5 h-3.5" />}
+                <span>{genre}</span>
               </button>
             );
           })}
         </div>
 
-        {/* 3. "Top Shorts" Featured Short Dramas + Auto-Filled TVMaze & Jikan Catalog */}
-        {selectedCategory === 'All' ? (
-          <div className="space-y-4">
-            {/* Top Shorts Shelf (8 Featured Short Dramas — Smooth Horizontal Carousel) */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-2 px-1">
-                <div className="flex items-center gap-2">
-                  <Flame className="w-5 h-5 text-amber-400" />
-                  <h2 className="text-lg sm:text-xl font-display font-bold text-white">
-                    Top Shorts
-                  </h2>
-                  <span className="text-[11px] font-mono-num text-amber-300/90 font-semibold">
-                    · 8 Featured
-                  </span>
+        {/* 3. Custom Admin Series + Modern Curated Catalog */}
+        <div className="space-y-5">
+          {playableSeriesGroups.length > 0 &&
+            (selectedCategory === 'All' ||
+              playableSeriesGroups.some(
+                (g) => g.category.toLowerCase() === selectedCategory.toLowerCase()
+              )) && (
+              <div className="space-y-2.5">
+                <div className="flex items-center gap-2 px-1">
+                  <span className="w-1.5 h-5 rounded-full bg-gradient-to-b from-amber-300 to-fuchsia-500 shrink-0" />
+                  <h3 className="text-base sm:text-lg font-display font-bold text-white">
+                    DramaWin Originals
+                  </h3>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      topShortsCarouselRef.current?.scrollBy({ left: -340, behavior: 'smooth' })
-                    }
-                    aria-label="Scroll Top Shorts left"
-                    className="w-8 h-8 rounded-full bg-white/[0.06] hover:bg-amber-400/20 border border-white/10 hover:border-amber-400/45 text-zinc-200 flex items-center justify-center transition cursor-pointer"
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      topShortsCarouselRef.current?.scrollBy({ left: 340, behavior: 'smooth' })
-                    }
-                    aria-label="Scroll Top Shorts right"
-                    className="w-8 h-8 rounded-full bg-white/[0.06] hover:bg-amber-400/20 border border-white/10 hover:border-amber-400/45 text-zinc-200 flex items-center justify-center transition cursor-pointer"
-                  >
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
+                <div className="flex gap-3 sm:gap-4 overflow-x-auto pb-2 snap-x snap-mandatory scroll-smooth">
+                  {playableSeriesGroups
+                    .filter(
+                      (g) =>
+                        selectedCategory === 'All' ||
+                        g.category.toLowerCase() === selectedCategory.toLowerCase()
+                    )
+                    .map((group) => (
+                      <VerticalPosterCard
+                        key={group.seriesId}
+                        group={group}
+                        scrollable
+                        onOpen={setSelectedSeriesId}
+                      />
+                    ))}
                 </div>
               </div>
+            )}
 
-              <div
-                ref={topShortsCarouselRef}
-                className="flex gap-3 sm:gap-4 overflow-x-auto no-scrollbar pb-2 snap-x snap-mandatory scroll-smooth"
-              >
-                {TOP_SHORTS_FEATURED.map((item) => (
-                  <FeaturedShortPosterCard
-                    key={item.id}
-                    item={item}
-                    matchedPosterUrl={featuredPosterByTitle.get(item.title.toLowerCase())}
-                    scrollable
-                  />
-                ))}
+          {/* Modern Curated Streaming Catalog */}
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+              <div className="flex items-center gap-2">
+                <span className="w-1.5 h-5 rounded-full bg-gradient-to-b from-amber-300 to-yellow-500 shrink-0" />
+                <h2 className="text-base sm:text-lg font-display font-bold text-white">
+                  {selectedCategory === 'All'
+                    ? 'Featured Dramas, Horror & Anime'
+                    : `${selectedCategory} Series & Shorts`}
+                </h2>
+                <span className="font-mono-num text-xs text-amber-300/90 font-semibold">
+                  ({modernShows.length})
+                </span>
               </div>
+              <span className="text-[11px] font-semibold text-zinc-400">
+                First 3m Free · 500 Coins Full Episode
+              </span>
             </div>
-
-            {/* Drama & Pre-Horror Category Rows */}
-            {preAdBuckets.map((bucket) => (
-              <div key={bucket.category} className="space-y-3">
-                <div className="flex items-center justify-between gap-2 px-1">
-                  <div className="flex items-center gap-2">
-                    <span className="w-1.5 h-5 rounded-full bg-gradient-to-b from-amber-300 to-fuchsia-500 shrink-0" />
-                    <h3 className="text-base sm:text-lg font-display font-bold text-white">
-                      {bucket.category}
-                    </h3>
-                    {bucket.totalCount > 0 && (
-                      <span className="font-mono-num text-xs text-zinc-500">
-                        ({bucket.totalCount})
-                      </span>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedCategory(bucket.category)}
-                    className="text-xs font-semibold text-amber-300 hover:text-amber-200 inline-flex items-center gap-0.5 cursor-pointer"
-                  >
-                    <span>See All</span>
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-
-                {externalLoading && bucket.groups.length === 0 && bucket.externalShows.length === 0 ? (
-                  <div className="flex gap-3 sm:gap-4 overflow-x-auto pb-2">
-                    {Array.from({ length: 4 }).map((_, idx) => (
-                      <div
-                        key={`skel-pre-${bucket.category}-${idx}`}
-                        className="aspect-[2/3] w-[152px] sm:w-[176px] shrink-0 rounded-2xl bg-white/[0.04] border border-white/[0.06] animate-pulse"
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="flex gap-3 sm:gap-4 overflow-x-auto pb-2 snap-x snap-mandatory scroll-smooth">
-                    {bucket.groups.map((group) => (
-                      <VerticalPosterCard
-                        key={group.seriesId}
-                        group={group}
-                        scrollable
-                        onOpen={setSelectedSeriesId}
-                      />
-                    ))}
-                    {bucket.externalShows.map((show) => (
-                      <ExternalCatalogPosterCard
-                        key={show.id}
-                        show={show}
-                        scrollable
-                        onSelect={setSelectedExternalShow}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-
-            {/* Horror, Romance, Anime & Remaining Genre Rows */}
-            {postAdBuckets.map((bucket) => (
-              <div key={bucket.category} className="space-y-3">
-                <div className="flex items-center justify-between gap-2 px-1">
-                  <div className="flex items-center gap-2">
-                    <span className="w-1.5 h-5 rounded-full bg-gradient-to-b from-amber-300 to-fuchsia-500 shrink-0" />
-                    <h3 className="text-base sm:text-lg font-display font-bold text-white">
-                      {bucket.category}
-                    </h3>
-                    {bucket.totalCount > 0 && (
-                      <span className="font-mono-num text-xs text-zinc-500">
-                        ({bucket.totalCount})
-                      </span>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedCategory(bucket.category)}
-                    className="text-xs font-semibold text-amber-300 hover:text-amber-200 inline-flex items-center gap-0.5 cursor-pointer"
-                  >
-                    <span>See All</span>
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-
-                {externalLoading && bucket.groups.length === 0 && bucket.externalShows.length === 0 ? (
-                  <div className="flex gap-3 sm:gap-4 overflow-x-auto pb-2">
-                    {Array.from({ length: 4 }).map((_, idx) => (
-                      <div
-                        key={`skel-post-${bucket.category}-${idx}`}
-                        className="aspect-[2/3] w-[152px] sm:w-[176px] shrink-0 rounded-2xl bg-white/[0.04] border border-white/[0.06] animate-pulse"
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="flex gap-3 sm:gap-4 overflow-x-auto pb-2 snap-x snap-mandatory scroll-smooth">
-                    {bucket.groups.map((group) => (
-                      <VerticalPosterCard
-                        key={group.seriesId}
-                        group={group}
-                        scrollable
-                        onOpen={setSelectedSeriesId}
-                      />
-                    ))}
-                    {bucket.externalShows.map((show) => (
-                      <ExternalCatalogPosterCard
-                        key={show.id}
-                        show={show}
-                        scrollable
-                        onSelect={setSelectedExternalShow}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="space-y-5">
-            {(() => {
-              const filteredShorts = TOP_SHORTS_FEATURED.filter(
-                (item) => item.genre.toLowerCase() === selectedCategory.toLowerCase()
-              );
-              if (filteredShorts.length === 0) return null;
-              return (
-                <div className="space-y-2.5">
-                  <div className="flex items-center gap-2 px-1">
-                    <Flame className="w-4 h-4 text-amber-400" />
-                    <h3 className="text-sm font-display font-bold text-amber-300 uppercase tracking-wider">
-                      Featured {selectedCategory} Shorts
-                    </h3>
-                  </div>
-                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
-                    {filteredShorts.map((item, idx) => {
-                      const isOddTrailingTwoCol =
-                        filteredShorts.length % 2 === 1 && idx === filteredShorts.length - 1;
-                      return (
-                        <FeaturedShortPosterCard
-                          key={`cat-${item.id}`}
-                          item={item}
-                          matchedPosterUrl={featuredPosterByTitle.get(item.title.toLowerCase())}
-                          className={
-                            isOddTrailingTwoCol
-                              ? 'col-span-2 md:col-span-1 aspect-[16/10] md:aspect-[2/3] w-full'
-                              : 'aspect-[2/3] w-full'
-                          }
-                        />
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })()}
 
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 sm:gap-4">
-              {(activeCategoryBucket?.groups || []).map((group) => (
-                <VerticalPosterCard
-                  key={group.seriesId}
-                  group={group}
-                  onOpen={setSelectedSeriesId}
-                />
-              ))}
-              {(activeCategoryBucket?.externalShows || []).map((show) => (
-                <ExternalCatalogPosterCard
-                  key={show.id}
+              {modernShows.map((show) => (
+                <ModernShowPosterCard
+                  key={`${selectedCategory}-${show.id}`}
                   show={show}
-                  onSelect={setSelectedExternalShow}
+                  isUnlocked={unlockedSet.has(show.id)}
+                  onWatch={handleWatchModernShow}
                 />
               ))}
             </div>
           </div>
-        )}
+        </div>
       </section>
 
       {/* Episode Selection Modal (Strictly filtered by exact seriesId) */}
@@ -1338,115 +1004,14 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
         </div>
       )}
 
-      {/* External Catalog Show Preview Modal (TVMaze & Jikan API) */}
-      {selectedExternalShow && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label={selectedExternalShow.title}
-          className="fixed inset-0 z-[56] bg-black/85 backdrop-blur-sm flex items-center justify-center px-3.5 py-4 pb-20 sm:p-6 overscroll-none"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) {
-              setSelectedExternalShow(null);
-            }
-          }}
-        >
-          <div className="w-full max-w-2xl max-h-[86dvh] bg-[#0B0B0F] border border-[#D4AF37]/45 rounded-2xl flex flex-col overflow-hidden shadow-[0_24px_64px_rgba(0,0,0,0.92)]">
-            <div className="px-4 sm:px-6 py-3.5 border-b border-white/[0.08] flex items-center justify-between gap-3 shrink-0 bg-[#0D0D13]">
-              <div className="min-w-0">
-                <p className="text-[11px] font-mono-num text-amber-300">
-                  {selectedExternalShow.category} · {selectedExternalShow.episodesLabel}
-                  {selectedExternalShow.ratingLabel ? ` · ${selectedExternalShow.ratingLabel}` : ''}
-                </p>
-                <h2 className="text-base sm:text-xl font-display font-bold text-white truncate">
-                  {selectedExternalShow.title}
-                </h2>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setSelectedExternalShow(null)}
-                aria-label="Close show preview"
-                className="min-h-[42px] min-w-[42px] rounded-xl border border-white/[0.12] flex items-center justify-center text-zinc-400 hover:text-white hover:border-amber-400/45 shrink-0 transition-colors cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-4">
-              {selectedExternalShow.trailerEmbedUrl ? (
-                <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black border border-white/[0.1]">
-                  <iframe
-                    src={selectedExternalShow.trailerEmbedUrl}
-                    title={`${selectedExternalShow.title} Official Trailer`}
-                    allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                    allowFullScreen
-                    referrerPolicy="strict-origin-when-cross-origin"
-                    className="w-full h-full border-0"
-                  />
-                </div>
-              ) : null}
-
-              <div className="flex flex-col sm:flex-row gap-4">
-                <div className="w-32 sm:w-36 aspect-[2/3] rounded-xl overflow-hidden border border-white/[0.1] bg-[#121218] shrink-0 mx-auto sm:mx-0">
-                  <img
-                    src={selectedExternalShow.posterUrl}
-                    alt={selectedExternalShow.title}
-                    referrerPolicy="no-referrer"
-                    className="w-full h-full object-cover"
-                  />
-                </div>
-
-                <div className="flex-1 min-w-0 space-y-3">
-                  <div className="flex flex-wrap gap-1.5">
-                    {selectedExternalShow.genres.map((g) => (
-                      <span
-                        key={g}
-                        className="px-2.5 py-0.5 rounded-full bg-amber-400/15 border border-amber-400/35 text-[11px] font-semibold text-amber-200"
-                      >
-                        {g}
-                      </span>
-                    ))}
-                    <span className="px-2.5 py-0.5 rounded-full bg-white/[0.06] border border-white/10 text-[11px] text-zinc-300">
-                      Source: {selectedExternalShow.source === 'jikan' ? 'Jikan' : 'TVMaze'}
-                    </span>
-                  </div>
-
-                  <p className="text-xs sm:text-sm text-zinc-300 leading-relaxed">
-                    {selectedExternalShow.synopsis}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="px-4 sm:px-6 py-3.5 border-t border-white/[0.08] bg-[#0D0D13] flex items-center justify-end gap-2.5 shrink-0">
-              <button
-                type="button"
-                onClick={() => setSelectedExternalShow(null)}
-                className="min-h-[42px] px-4 rounded-xl border border-white/15 text-xs font-semibold text-zinc-300 hover:text-white cursor-pointer"
-              >
-                Close
-              </button>
-              <a
-                href={selectedExternalShow.watchUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="min-h-[42px] px-5 rounded-xl gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center gap-1.5 hover:brightness-105 shadow-[0_6px_20px_rgba(212,175,55,0.35)]"
-              >
-                <span>Watch Full Series</span>
-                <ExternalLink className="w-3.5 h-3.5" />
-              </a>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Fullscreen Episode Watch Screen */}
       {activePlayerEpisode && (
         <EpisodeWatchScreen
           key={activePlayerEpisode.id}
           episode={
-            episodes.find((ep) => ep.id === activePlayerEpisode.id) || activePlayerEpisode
+            activePlayerEpisode.archiveIdentifier
+              ? activePlayerEpisode
+              : episodes.find((ep) => ep.id === activePlayerEpisode.id) || activePlayerEpisode
           }
           episodes={episodes}
           referralUserId={referralUserId}
@@ -1458,6 +1023,12 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
           resumePlaybackSignal={resumePlaybackSignal}
           hasNextEpisode={Boolean(nextEpisodeForActivePlayer)}
           nextEpisodeLabel={nextEpisodeForActivePlayer?.episodeLabel}
+          isArchiveLocked={Boolean(
+            activePlayerEpisode.archiveIdentifier &&
+              !unlockedSet.has(activePlayerEpisode.archiveIdentifier)
+          )}
+          onUnlockArchiveMovie={onUnlockArchiveMovie}
+          onGoToBoost={onGoToBoost}
           onNextEpisode={() => {
             if (!nextEpisodeForActivePlayer) return;
             setActivePlayerEpisode(nextEpisodeForActivePlayer);

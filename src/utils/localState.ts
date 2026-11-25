@@ -1113,3 +1113,26 @@ export function saveBoostTrackerState(
   return normalized;
 }
 
+const UNLOCKED_ARCHIVE_MOVIES_KEY = 'dramawin_unlocked_archive_movies_v1';
+
+export function loadUnlockedArchiveMovieIds(): string[] {
+  const parsed = safeReadJson<unknown>(UNLOCKED_ARCHIVE_MOVIES_KEY, []);
+  if (!Array.isArray(parsed)) return [];
+  return Array.from(
+    new Set(
+      parsed.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+    )
+  );
+}
+
+export function markArchiveMovieUnlocked(identifier: string): string[] {
+  const cleanId = identifier.trim();
+  const current = loadUnlockedArchiveMovieIds();
+  if (!cleanId) return current;
+  if (current.includes(cleanId)) return current;
+  const next = [...current, cleanId].slice(-500);
+  safeWriteJson(UNLOCKED_ARCHIVE_MOVIES_KEY, next);
+  return next;
+}
+
+
