@@ -2157,6 +2157,7 @@ function DramaWinApp() {
 
         {activeTab === 'boost' && (
           <BoostTab
+            trackingId={playerTrackingId}
             coins={currentPlayer.coins}
             weeklyCoins={currentPlayer.weeklyCoins}
             qualificationThreshold={qualificationThreshold}

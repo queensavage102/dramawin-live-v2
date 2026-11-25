@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ClipboardList,
   Clock,
@@ -6,6 +6,7 @@ import {
   Film,
   Flame,
   Gamepad2,
+  Globe,
   Loader2,
   Lock,
   ShoppingBag,
@@ -19,6 +20,7 @@ import {
   BOOST_DAILY_GAME_COIN_CAP,
   BOOST_FREE_GAME_PLAYS_PER_DAY,
   BoostTrackerState,
+  getOrCreatePlayerTrackingId,
 } from '../utils/localState';
 import { useSponsorVisibilityTimers } from '../utils/useSponsorVisibilityTimer';
 import {
@@ -32,33 +34,13 @@ const VERIFICATION_DURATION_MS = 20_000;
 const SPEED_BOOST_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
 const DAILY_MEGA_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
 const MARATHON_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
-const DRAMAWIN_UID_STORAGE_KEY = 'dramawin_uid';
-
-function getOrCreateDramawinUid(): string {
-  const generateRandomUid = () => {
-    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-      return `dw_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
-    }
-    return `dw_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36).slice(-4)}`;
-  };
-  if (typeof window === 'undefined') return generateRandomUid();
-  try {
-    const existing = window.localStorage.getItem(DRAMAWIN_UID_STORAGE_KEY);
-    if (existing && existing.trim().length >= 4) {
-      return existing.trim();
-    }
-    const created = generateRandomUid();
-    window.localStorage.setItem(DRAMAWIN_UID_STORAGE_KEY, created);
-    return created;
-  } catch {
-    return generateRandomUid();
-  }
-}
 
 type SponsorTimerKey = 'speed' | 'mega' | 'unlockPlay' | 'marathon';
 type MiniGameTab = 'trivia' | 'memory';
+type BoostSubTab = 'ads' | 'offers' | 'games';
 
 interface BoostTabProps {
+  trackingId?: string;
   coins: number;
   weeklyCoins: number;
   qualificationThreshold: number;
@@ -97,6 +79,7 @@ function formatCompactDuration(ms: number): string {
 }
 
 export const BoostTab: React.FC<BoostTabProps> = ({
+  trackingId,
   coins,
   weeklyCoins,
   qualificationThreshold,
@@ -114,10 +97,13 @@ export const BoostTab: React.FC<BoostTabProps> = ({
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [claimingMarathon, setClaimingMarathon] = useState(false);
   const [selectedGameTab, setSelectedGameTab] = useState<MiniGameTab>('trivia');
+  const [activeSubTab, setActiveSubTab] = useState<BoostSubTab>('ads');
   const [activeBoostTask, setActiveBoostTask] = useState<'marathon' | 'speed' | 'mega' | null>(null);
   const [timewallOpen, setTimewallOpen] = useState(false);
-  const [dramawinUid] = useState<string>(() => getOrCreateDramawinUid());
-  const timewallUrl = `https://timewall.io/?uid=${encodeURIComponent(dramawinUid)}`;
+  const fallbackTrackingId = useMemo(() => getOrCreatePlayerTrackingId(), []);
+  const resolvedTrackingId = trackingId && trackingId.trim() ? trackingId.trim() : fallbackTrackingId;
+  const encodedTrackingId = encodeURIComponent(resolvedTrackingId);
+  const timewallUrl = `https://timewall.io/?uid=${encodedTrackingId}`;
 
   useEffect(() => {
     if (!timewallOpen) return;
@@ -324,7 +310,7 @@ export const BoostTab: React.FC<BoostTabProps> = ({
   const memoryRewardDisplay = isDoubleNext ? 300 : 150;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 pb-20">
       {/* 1. Compact Header + Coin Balance */}
       <section className="obsidian-card rounded-2xl px-4 py-3.5 border border-[#D4AF37]/40 bg-gradient-to-r from-[#161209] via-[#100F14] to-[#0A0A0E] flex items-center justify-between gap-3">
         <div className="min-w-0">
@@ -350,8 +336,58 @@ export const BoostTab: React.FC<BoostTabProps> = ({
         </div>
       </section>
 
-      {/* 2. Slim Horizontal Task Rows (Quick Boosts + Paid Surveys) */}
-      <section aria-labelledby="active-tasks-heading" className="space-y-2">
+      {/* 3-Pill Segmented Sub-Tab Bar */}
+      <div
+        role="tablist"
+        aria-label="Boost categories"
+        className="flex items-center gap-1 p-1 rounded-full bg-[#0D0B12] border border-[#D4AF37]/30 shadow-[0_6px_20px_rgba(0,0,0,0.45)]"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeSubTab === 'ads'}
+          onClick={() => setActiveSubTab('ads')}
+          className={`flex-auto min-h-[44px] px-2 sm:px-3.5 py-2 rounded-full text-[11px] sm:text-xs font-extrabold inline-flex items-center justify-center gap-1 whitespace-nowrap transition-all cursor-pointer ${
+            activeSubTab === 'ads'
+              ? 'gold-gradient-bg text-[#181307] shadow-[0_0_14px_rgba(251,191,36,0.35)]'
+              : 'text-[#C4BDB0] hover:text-[#FCE7A2] hover:bg-white/[0.04]'
+          }`}
+        >
+          <span>⚡ Ad Tasks</span>
+        </button>
+
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeSubTab === 'offers'}
+          onClick={() => setActiveSubTab('offers')}
+          className={`flex-auto min-h-[44px] px-2 sm:px-3.5 py-2 rounded-full text-[11px] sm:text-xs font-extrabold inline-flex items-center justify-center gap-1 whitespace-nowrap transition-all cursor-pointer ${
+            activeSubTab === 'offers'
+              ? 'gold-gradient-bg text-[#181307] shadow-[0_0_14px_rgba(251,191,36,0.35)]'
+              : 'text-[#C4BDB0] hover:text-[#FCE7A2] hover:bg-white/[0.04]'
+          }`}
+        >
+          <span>🎁 Offers &amp; Surveys</span>
+        </button>
+
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeSubTab === 'games'}
+          onClick={() => setActiveSubTab('games')}
+          className={`flex-auto min-h-[44px] px-2 sm:px-3.5 py-2 rounded-full text-[11px] sm:text-xs font-extrabold inline-flex items-center justify-center gap-1 whitespace-nowrap transition-all cursor-pointer ${
+            activeSubTab === 'games'
+              ? 'gold-gradient-bg text-[#181307] shadow-[0_0_14px_rgba(251,191,36,0.35)]'
+              : 'text-[#C4BDB0] hover:text-[#FCE7A2] hover:bg-white/[0.04]'
+          }`}
+        >
+          <span>🎮 Mini-Games</span>
+        </button>
+      </div>
+
+      {/* Sub-Tab 1: Ad Tasks */}
+      {activeSubTab === 'ads' && (
+      <section role="tabpanel" aria-labelledby="active-tasks-heading" className="space-y-2">
         <div className="flex items-center justify-between px-0.5">
           <h2
             id="active-tasks-heading"
@@ -691,121 +727,145 @@ export const BoostTab: React.FC<BoostTabProps> = ({
               </button>
             )}
           </div>
+        </div>
+      </section>
+      )}
 
-          {/* Featured Partner Offers (OfferForge) */}
-          <div className="rounded-2xl border border-[#D4AF37]/30 bg-[#121015] p-3 space-y-2.5">
-            <div className="flex items-center justify-between gap-2 px-0.5">
-              <div className="flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-[#D4AF37]" />
-                <h3 className="text-xs sm:text-sm font-display font-bold text-[#F6F2E9]">
-                  Featured Partner Offers
-                </h3>
-              </div>
-              <span className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">
-                Sponsored
-              </span>
+      {/* Sub-Tab 2: Offers & Surveys */}
+      {activeSubTab === 'offers' && (
+      <section role="tabpanel" aria-label="Offers and Surveys" className="space-y-3">
+        {/* Quick Tasks & Paid Surveys — TimeWall */}
+        <button
+          type="button"
+          onClick={() => setTimewallOpen(true)}
+          className="w-full text-left p-[1.5px] rounded-xl bg-gradient-to-r from-emerald-400 via-[#D4AF37] to-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.25)] hover:brightness-105 active:scale-[0.99] transition-all cursor-pointer"
+        >
+          <div className="rounded-[10.5px] px-3 py-2.5 flex items-center justify-between gap-2 bg-gradient-to-r from-[#0B241B] via-[#101C1B] to-[#17140A]">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-500/30 to-amber-500/25 border border-emerald-400/50 flex items-center justify-center text-emerald-300 shrink-0 shadow-[0_0_12px_rgba(16,185,129,0.35)]">
+              <ClipboardList className="w-4 h-4" />
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {/* Card 1: Truworths Store Card */}
-              <div className="rounded-xl border border-white/[0.1] bg-[#18151C] p-3 flex flex-col justify-between gap-2.5">
-                <div className="space-y-1.5">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <div className="w-8 h-8 rounded-lg bg-[#D4AF37]/15 border border-[#D4AF37]/40 text-[#FCE7A2] flex items-center justify-center shrink-0">
-                        <ShoppingBag className="w-4 h-4" />
-                      </div>
-                      <h4 className="text-xs sm:text-sm font-bold text-white leading-tight">
-                        Truworths Store Card
-                      </h4>
-                    </div>
-                    <span className="px-1.5 py-0.5 rounded bg-white/[0.06] border border-white/10 text-[9px] uppercase tracking-wider text-zinc-400 shrink-0">
-                      Sponsored
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-[#C4BDB0] leading-relaxed">
-                    New cardholders get R1,000 in fashion vouchers when you open a Truworths account online.
-                  </p>
-                </div>
-
-                <a
-                  href="https://ofofa.co.za/?E=NhGtJQQVSB8Oyo1LSgUc8r%2fbzfuyE53&s1="
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="w-full min-h-[36px] px-3.5 rounded-xl gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center justify-center gap-1.5 shadow-[0_0_12px_rgba(251,191,36,0.3)] hover:brightness-105 active:scale-[0.98] transition-all cursor-pointer"
-                >
-                  <span>Apply Online</span>
-                  <ExternalLink className="w-3.5 h-3.5 shrink-0" />
-                </a>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-xs sm:text-sm font-extrabold text-white leading-tight">
+                  Quick Tasks &amp; Paid Surveys
+                </span>
               </div>
-
-              {/* Card 2: FASTA - Instant Online Cash */}
-              <div className="rounded-xl border border-white/[0.1] bg-[#18151C] p-3 flex flex-col justify-between gap-2.5">
-                <div className="space-y-1.5">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <div className="w-8 h-8 rounded-lg bg-[#D4AF37]/15 border border-[#D4AF37]/40 text-[#FCE7A2] flex items-center justify-center shrink-0">
-                        <Zap className="w-4 h-4" />
-                      </div>
-                      <h4 className="text-xs sm:text-sm font-bold text-white leading-tight">
-                        FASTA - Instant Online Cash
-                      </h4>
-                    </div>
-                    <span className="px-1.5 py-0.5 rounded bg-white/[0.06] border border-white/10 text-[9px] uppercase tracking-wider text-zinc-400 shrink-0">
-                      Sponsored
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-[#C4BDB0] leading-relaxed">
-                    Apply online in minutes for fast, flexible short-term cash up to R8,000 in South Africa.
-                  </p>
-                </div>
-
-                <a
-                  href="https://offerforge.co/?E=NhGtJQQVsB9zn8HZsgiBhMr%2fbzfuyE55&s1="
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="w-full min-h-[36px] px-3.5 rounded-xl gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center justify-center gap-1.5 shadow-[0_0_12px_rgba(251,191,36,0.3)] hover:brightness-105 active:scale-[0.98] transition-all cursor-pointer"
-                >
-                  <span>Apply Now</span>
-                  <ExternalLink className="w-3.5 h-3.5 shrink-0" />
-                </a>
-              </div>
+              <p className="text-[11px] text-emerald-200/80 font-medium">
+                TimeWall · Tap to open tasks
+              </p>
             </div>
+
+            <span className="px-3 py-1.5 rounded-full bg-gradient-to-r from-emerald-400 to-green-500 border border-emerald-200/70 text-zinc-950 text-xs font-extrabold inline-flex items-center justify-center gap-1 whitespace-nowrap shrink-0 shadow-[0_0_14px_rgba(16,185,129,0.45)]">
+              <span>Earn Coins</span>
+              <ExternalLink className="w-3 h-3" />
+            </span>
+          </div>
+        </button>
+
+        {/* Featured Partner Offers (OfferForge) */}
+        <div className="rounded-2xl border border-[#D4AF37]/30 bg-[#121015] p-3 space-y-2.5">
+          <div className="flex items-center justify-between gap-2 px-0.5">
+            <div className="flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-[#D4AF37]" />
+              <h3 className="text-xs sm:text-sm font-display font-bold text-[#F6F2E9]">
+                Featured Partner Offers
+              </h3>
+            </div>
+            <span className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">
+              Sponsored
+            </span>
           </div>
 
-          {/* Row 3: Quick Tasks & Paid Surveys — TimeWall */}
-          <button
-            type="button"
-            onClick={() => setTimewallOpen(true)}
-            className="w-full text-left p-[1.5px] rounded-xl bg-gradient-to-r from-emerald-400 via-[#D4AF37] to-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.25)] hover:brightness-105 active:scale-[0.99] transition-all cursor-pointer"
-          >
-            <div className="rounded-[10.5px] px-3 py-2.5 flex items-center justify-between gap-2 bg-gradient-to-r from-[#0B241B] via-[#101C1B] to-[#17140A]">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-500/30 to-amber-500/25 border border-emerald-400/50 flex items-center justify-center text-emerald-300 shrink-0 shadow-[0_0_12px_rgba(16,185,129,0.35)]">
-                <ClipboardList className="w-4 h-4" />
-              </div>
-
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-xs sm:text-sm font-extrabold text-white leading-tight">
-                    Quick Tasks &amp; Paid Surveys
-                  </span>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 items-stretch">
+            {/* Card 1: Truworths Store Card */}
+            <div className="rounded-xl border border-white/[0.1] bg-[#18151C] p-3 flex flex-col justify-between gap-2">
+              <div className="space-y-1.5 min-w-0">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-8 h-8 rounded-lg bg-[#D4AF37]/15 border border-[#D4AF37]/40 text-[#FCE7A2] flex items-center justify-center shrink-0">
+                    <ShoppingBag className="w-4 h-4" />
+                  </div>
+                  <h4 className="text-xs font-bold text-white leading-tight truncate">
+                    Truworths Store Card
+                  </h4>
                 </div>
-                <p className="text-[11px] text-emerald-200/80 font-medium">
-                  TimeWall · Tap to open tasks
+                <p className="text-[11px] text-[#C4BDB0] leading-snug line-clamp-2 min-h-[2.75em]">
+                  New cardholders get R1,000 in fashion vouchers when you open a Truworths account online.
                 </p>
               </div>
 
-              <span className="px-3 py-1.5 rounded-full bg-gradient-to-r from-emerald-400 to-green-500 border border-emerald-200/70 text-zinc-950 text-xs font-extrabold inline-flex items-center justify-center gap-1 whitespace-nowrap shrink-0 shadow-[0_0_14px_rgba(16,185,129,0.45)]">
-                <span>Earn Coins</span>
-                <ExternalLink className="w-3 h-3" />
-              </span>
+              <a
+                href={`https://ofofa.co.za/?E=NhGtJQQVSB8Oyo1LSgUc8r%2fbzfuyE53&s1=${encodedTrackingId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full min-h-[34px] px-3 rounded-xl gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center justify-center gap-1.5 shadow-[0_0_12px_rgba(251,191,36,0.3)] hover:brightness-105 active:scale-[0.98] transition-all cursor-pointer"
+              >
+                <span>Apply Online</span>
+                <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+              </a>
             </div>
-          </button>
+
+            {/* Card 2: FASTA - Instant Online Cash */}
+            <div className="rounded-xl border border-white/[0.1] bg-[#18151C] p-3 flex flex-col justify-between gap-2">
+              <div className="space-y-1.5 min-w-0">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-8 h-8 rounded-lg bg-[#D4AF37]/15 border border-[#D4AF37]/40 text-[#FCE7A2] flex items-center justify-center shrink-0">
+                    <Zap className="w-4 h-4" />
+                  </div>
+                  <h4 className="text-xs font-bold text-white leading-tight truncate">
+                    FASTA - Instant Online Cash
+                  </h4>
+                </div>
+                <p className="text-[11px] text-[#C4BDB0] leading-snug line-clamp-2 min-h-[2.75em]">
+                  Apply online in minutes for fast, flexible short-term cash up to R8,000 in South Africa.
+                </p>
+              </div>
+
+              <a
+                href={`https://offerforge.co/?E=NhGtJQQVsB9zn8HZsgiBhMr%2fbzfuyE55&s1=${encodedTrackingId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full min-h-[34px] px-3 rounded-xl gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center justify-center gap-1.5 shadow-[0_0_12px_rgba(251,191,36,0.3)] hover:brightness-105 active:scale-[0.98] transition-all cursor-pointer"
+              >
+                <span>Apply Now</span>
+                <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+              </a>
+            </div>
+
+            {/* Card 3: HostAfrica AI Website Builder */}
+            <div className="rounded-xl border border-white/[0.1] bg-[#18151C] p-3 flex flex-col justify-between gap-2">
+              <div className="space-y-1.5 min-w-0">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-8 h-8 rounded-lg bg-[#D4AF37]/15 border border-[#D4AF37]/40 text-[#FCE7A2] flex items-center justify-center shrink-0">
+                    <Globe className="w-4 h-4" />
+                  </div>
+                  <h4 className="text-xs font-bold text-white leading-tight truncate">
+                    HostAfrica AI Website Builder
+                  </h4>
+                </div>
+                <p className="text-[11px] text-[#C4BDB0] leading-snug line-clamp-2 min-h-[2.75em]">
+                  Build a custom business website in 1 minute with AI.
+                </p>
+              </div>
+
+              <a
+                href={`https://of0101.com/?E=8B1dlgfYqJEnyzbLCycpP8r%2fbzfuyE55&s1=${encodedTrackingId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full min-h-[34px] px-3 rounded-xl gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center justify-center gap-1.5 shadow-[0_0_12px_rgba(251,191,36,0.3)] hover:brightness-105 active:scale-[0.98] transition-all cursor-pointer"
+              >
+                <span>Try AI Builder</span>
+                <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+              </a>
+            </div>
+          </div>
         </div>
       </section>
+      )}
 
-      {/* 3. Directly Playable On-Screen Mini-Games Section */}
-      <section aria-labelledby="minigames-heading" className="obsidian-card rounded-2xl p-3.5 sm:p-4 border border-[#D4AF37]/40 space-y-3.5">
+      {/* Sub-Tab 3: Mini-Games */}
+      {activeSubTab === 'games' && (
+      <section role="tabpanel" aria-labelledby="minigames-heading" className="obsidian-card rounded-2xl p-3.5 sm:p-4 border border-[#D4AF37]/40 space-y-3.5">
         {/* Daily Game Coins Progress Tracker */}
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
@@ -957,11 +1017,15 @@ export const BoostTab: React.FC<BoostTabProps> = ({
           )}
         </div>
       </section>
+      )}
 
-      {/* 4. Bottom Adsterra 320x50px Banner Slot */}
-      <section aria-label="Sponsored banner" className="pt-1 flex flex-col items-center justify-center">
+      {/* 4. Bottom Adsterra 320x50px Banner Slot Cleanly Anchored Above Bottom Navigation Bar */}
+      <div
+        aria-label="Sponsored banner"
+        className="fixed bottom-16 left-0 right-0 z-30 bg-[#09090b]/95 backdrop-blur-md border-t border-white/[0.08] flex items-center justify-center"
+      >
         <BottomAdBanner />
-      </section>
+      </div>
 
       {/* TimeWall Quick Tasks & Paid Surveys Modal */}
       {timewallOpen && (
@@ -986,7 +1050,7 @@ export const BoostTab: React.FC<BoostTabProps> = ({
                     Quick Tasks &amp; Paid Surveys — TimeWall
                   </h3>
                   <p className="text-[10px] font-mono-num text-emerald-300/80 truncate">
-                    User ID: {dramawinUid}
+                    User ID: {resolvedTrackingId}
                   </p>
                 </div>
               </div>
