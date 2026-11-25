@@ -14,6 +14,10 @@ import { LuckySpinFloatingButton } from './components/LuckySpinFloatingButton';
 import { LuckySpinWheelModal, type SpinSliceSpec } from './components/LuckySpinWheelModal';
 import { MeTab } from './components/MeTab';
 import { MysteryRevealState, MysteryVaultCard } from './components/MysteryVaultCard';
+import {
+  HUMAN_VERIFIED_SESSION_KEY,
+  QuickSecurityCheck,
+} from './components/QuickSecurityCheck';
 import { RealisticGoldCoin } from './components/RealisticGoldCoin';
 import { SupportChatWidget } from './components/SupportChatWidget';
 import { TopHeader } from './components/TopHeader';
@@ -239,6 +243,14 @@ function DramaWinApp() {
   });
   const [confettiActive, setConfettiActive] = useState(false);
   const [splashDone, setSplashDone] = useState<boolean>(() => isAdminPath());
+  const [isHumanVerified, setIsHumanVerified] = useState<boolean>(() => {
+    if (isAdminPath()) return true;
+    try {
+      return window.sessionStorage.getItem(HUMAN_VERIFIED_SESSION_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [sponsorOffer, setSponsorOffer] = useState<{
     claimLabel: string;
     readyHeadline?: string;
@@ -600,7 +612,7 @@ function DramaWinApp() {
 
   // Subtle Daily Streak Reminder once per day on first visit if today's check-in is open
   useEffect(() => {
-    if (isAdminRoute) return;
+    if (isAdminRoute || !splashDone || !isHumanVerified) return;
     const uid = currentPlayer.uid;
     const todayKey = getTodayDateKey();
     const currentWeek = getCurrentWeekKey();
@@ -655,7 +667,7 @@ function DramaWinApp() {
     }, 1200);
 
     return () => window.clearTimeout(timer);
-  }, [isAdminRoute, currentPlayer.uid, privateProfile.weekKey, privateProfile.claimedDays, showToast]);
+  }, [isAdminRoute, splashDone, isHumanVerified, currentPlayer.uid, privateProfile.weekKey, privateProfile.claimedDays, showToast]);
 
   const qualificationThreshold =
     appConfig.qualificationThreshold || DEFAULT_QUALIFICATION_THRESHOLD;
@@ -1955,9 +1967,20 @@ function DramaWinApp() {
     );
   }
 
+  if (!splashDone) {
+    return (
+      <div className="min-h-screen bg-[#060608] text-[#F6F2E9]">
+        <VipSplashScreen onComplete={() => setSplashDone(true)} />
+      </div>
+    );
+  }
+
+  if (!isHumanVerified) {
+    return <QuickSecurityCheck onVerified={() => setIsHumanVerified(true)} />;
+  }
+
   return (
     <div className="min-h-screen bg-[#09090b] text-[#F6F2E9] pb-24">
-      {!splashDone && <VipSplashScreen onComplete={() => setSplashDone(true)} />}
 
       <ConfettiExplosion
         active={confettiActive}

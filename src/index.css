@@ -234,6 +234,44 @@
   animation: memoryCardMatchPop 0.55s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
+@keyframes securityEmeraldBurst {
+  0% {
+    transform: scale(0.55);
+    opacity: 0.95;
+  }
+  70% {
+    transform: scale(1.65);
+    opacity: 0.35;
+  }
+  100% {
+    transform: scale(2.05);
+    opacity: 0;
+  }
+}
+
+@keyframes securityWrongShake {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-5px);
+  }
+  45% {
+    transform: translateX(5px);
+  }
+  70% {
+    transform: translateX(-3px);
+  }
+}
+
+.security-emerald-burst {
+  animation: securityEmeraldBurst 0.65s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.security-wrong-shake {
+  animation: securityWrongShake 0.35s ease-out;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .mystery-box-shimmer,
   .mystery-box-halo,
@@ -244,7 +282,9 @@
   .vip-floating-coin,
   .vip-dust-particle,
   .vip-crown-halo,
-  .memory-card-matched-pop {
+  .memory-card-matched-pop,
+  .security-emerald-burst,
+  .security-wrong-shake {
     animation: none;
   }
 }
