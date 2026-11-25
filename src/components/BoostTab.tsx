@@ -32,6 +32,28 @@ const VERIFICATION_DURATION_MS = 20_000;
 const SPEED_BOOST_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
 const DAILY_MEGA_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
 const MARATHON_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
+const DRAMAWIN_UID_STORAGE_KEY = 'dramawin_uid';
+
+function getOrCreateDramawinUid(): string {
+  const generateRandomUid = () => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return `dw_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
+    }
+    return `dw_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36).slice(-4)}`;
+  };
+  if (typeof window === 'undefined') return generateRandomUid();
+  try {
+    const existing = window.localStorage.getItem(DRAMAWIN_UID_STORAGE_KEY);
+    if (existing && existing.trim().length >= 4) {
+      return existing.trim();
+    }
+    const created = generateRandomUid();
+    window.localStorage.setItem(DRAMAWIN_UID_STORAGE_KEY, created);
+    return created;
+  } catch {
+    return generateRandomUid();
+  }
+}
 
 type SponsorTimerKey = 'speed' | 'mega' | 'unlockPlay' | 'marathon';
 type MiniGameTab = 'trivia' | 'memory';
@@ -93,6 +115,20 @@ export const BoostTab: React.FC<BoostTabProps> = ({
   const [claimingMarathon, setClaimingMarathon] = useState(false);
   const [selectedGameTab, setSelectedGameTab] = useState<MiniGameTab>('trivia');
   const [activeBoostTask, setActiveBoostTask] = useState<'marathon' | 'speed' | 'mega' | null>(null);
+  const [timewallOpen, setTimewallOpen] = useState(false);
+  const [dramawinUid] = useState<string>(() => getOrCreateDramawinUid());
+  const timewallUrl = `https://timewall.io/?uid=${encodeURIComponent(dramawinUid)}`;
+
+  useEffect(() => {
+    if (!timewallOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setTimewallOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [timewallOpen]);
 
   useEffect(() => {
     if (!isSponsorOfferActive) {
@@ -737,36 +773,34 @@ export const BoostTab: React.FC<BoostTabProps> = ({
             </div>
           </div>
 
-          {/* Row 3: Paid Surveys (CPX Research — Highlighted Purple & Gold Coming Soon) */}
-          <div className="p-[1.5px] rounded-xl bg-gradient-to-r from-[#A855F7] via-[#FBBF24] to-[#EC4899] shadow-[0_0_20px_rgba(168,85,247,0.28)]">
-            <div className="rounded-[10.5px] px-3 py-2.5 flex items-center justify-between gap-2 bg-gradient-to-r from-[#23103D] via-[#1B122C] to-[#1D1508]">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-purple-500/35 to-amber-500/30 border border-[#FBBF24]/60 flex items-center justify-center text-[#FEF08A] shrink-0 shadow-[0_0_12px_rgba(168,85,247,0.4)]">
+          {/* Row 3: Quick Tasks & Paid Surveys — TimeWall */}
+          <button
+            type="button"
+            onClick={() => setTimewallOpen(true)}
+            className="w-full text-left p-[1.5px] rounded-xl bg-gradient-to-r from-emerald-400 via-[#D4AF37] to-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.25)] hover:brightness-105 active:scale-[0.99] transition-all cursor-pointer"
+          >
+            <div className="rounded-[10.5px] px-3 py-2.5 flex items-center justify-between gap-2 bg-gradient-to-r from-[#0B241B] via-[#101C1B] to-[#17140A]">
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-500/30 to-amber-500/25 border border-emerald-400/50 flex items-center justify-center text-emerald-300 shrink-0 shadow-[0_0_12px_rgba(16,185,129,0.35)]">
                 <ClipboardList className="w-4 h-4" />
               </div>
 
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-xs sm:text-sm font-extrabold text-white whitespace-nowrap">
-                    📋 Paid Surveys
-                  </span>
-                  <span className="font-mono-num text-[11px] font-extrabold text-[#181307] gold-gradient-bg px-2 py-0.5 rounded-full whitespace-nowrap">
-                    Up to +5,000 Coins
+                  <span className="text-xs sm:text-sm font-extrabold text-white leading-tight">
+                    Quick Tasks &amp; Paid Surveys
                   </span>
                 </div>
-                <p className="text-[11px] text-purple-200/80">
-                  CPX Research
+                <p className="text-[11px] text-emerald-200/80 font-medium">
+                  TimeWall · Tap to open tasks
                 </p>
               </div>
 
-              <span
-                aria-disabled="true"
-                className="px-3 py-1.5 rounded-full bg-gradient-to-r from-[#A855F7] via-[#EC4899] to-[#F59E0B] border border-[#FEF08A]/75 text-white text-xs font-extrabold inline-flex items-center justify-center gap-1 whitespace-nowrap shrink-0 shadow-[0_0_14px_rgba(192,132,252,0.6)] select-none"
-              >
-                <Sparkles className="w-3 h-3 text-[#FEF08A]" />
-                <span>Coming Soon</span>
+              <span className="px-3 py-1.5 rounded-full bg-gradient-to-r from-emerald-400 to-green-500 border border-emerald-200/70 text-zinc-950 text-xs font-extrabold inline-flex items-center justify-center gap-1 whitespace-nowrap shrink-0 shadow-[0_0_14px_rgba(16,185,129,0.45)]">
+                <span>Earn Coins</span>
+                <ExternalLink className="w-3 h-3" />
               </span>
             </div>
-          </div>
+          </button>
         </div>
       </section>
 
@@ -928,6 +962,57 @@ export const BoostTab: React.FC<BoostTabProps> = ({
       <section aria-label="Sponsored banner" className="pt-1 flex flex-col items-center justify-center">
         <BottomAdBanner />
       </section>
+
+      {/* TimeWall Quick Tasks & Paid Surveys Modal */}
+      {timewallOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="TimeWall Quick Tasks and Paid Surveys"
+          className="fixed inset-0 z-[2147483500] bg-black/85 backdrop-blur-md flex items-center justify-center sm:p-4"
+          onClick={() => setTimewallOpen(false)}
+        >
+          <div
+            className="w-full h-full sm:max-w-3xl sm:h-[88vh] sm:rounded-2xl bg-[#0D0E12] border border-emerald-400/40 shadow-2xl flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="shrink-0 px-3.5 sm:px-5 py-2.5 bg-[#101614] border-b border-emerald-400/25 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-8 h-8 rounded-lg bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 flex items-center justify-center shrink-0">
+                  <ClipboardList className="w-4 h-4" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-xs sm:text-sm font-display font-bold text-white truncate">
+                    Quick Tasks &amp; Paid Surveys — TimeWall
+                  </h3>
+                  <p className="text-[10px] font-mono-num text-emerald-300/80 truncate">
+                    User ID: {dramawinUid}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setTimewallOpen(false)}
+                aria-label="Close TimeWall modal"
+                className="min-h-[38px] px-3.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.15] border border-white/15 text-white text-xs font-bold inline-flex items-center gap-1.5 shrink-0 cursor-pointer transition-colors"
+              >
+                <X className="w-4 h-4" />
+                <span>Close</span>
+              </button>
+            </header>
+
+            <div className="flex-1 w-full bg-white relative">
+              <iframe
+                src={timewallUrl}
+                title="TimeWall Quick Tasks & Paid Surveys"
+                className="w-full h-full border-0"
+                allow="clipboard-read; clipboard-write"
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
