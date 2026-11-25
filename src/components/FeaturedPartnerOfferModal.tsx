@@ -9,6 +9,7 @@ interface FeaturedPartnerOfferModalProps {
   sponsorUrl?: string;
   claimLabel: string;
   readyHeadline?: string;
+  initialVisited?: boolean;
   onClaim: () => Promise<void> | void;
   onCancel?: () => void;
 }
@@ -18,6 +19,7 @@ export const FeaturedPartnerOfferModal: React.FC<FeaturedPartnerOfferModalProps>
   sponsorUrl,
   claimLabel,
   readyHeadline,
+  initialVisited = false,
   onClaim,
   onCancel,
 }) => {
@@ -42,17 +44,18 @@ export const FeaturedPartnerOfferModal: React.FC<FeaturedPartnerOfferModalProps>
   useEffect(() => {
     if (open) {
       setSubmitting(false);
-      setHasVisitedSponsor(false);
-      hasVisitedSponsorRef.current = false;
+      setHasVisitedSponsor(initialVisited);
+      hasVisitedSponsorRef.current = initialVisited;
       accumulatedAwayMsRef.current = 0;
-      awayStartAtRef.current = 0;
+      awayStartAtRef.current =
+        initialVisited && document.visibilityState === 'hidden' ? Date.now() : 0;
       setSecondsLeft(AD_COUNTDOWN_SECONDS);
       setAdProgress(0);
       setIsComplete(false);
     } else {
       stopTimers();
     }
-  }, [open]);
+  }, [open, initialVisited]);
 
   useEffect(() => {
     if (!open || isComplete) return;

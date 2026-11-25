@@ -254,6 +254,7 @@ function DramaWinApp() {
   const [sponsorOffer, setSponsorOffer] = useState<{
     claimLabel: string;
     readyHeadline?: string;
+    initialVisited?: boolean;
     rewardAction?: () => Promise<void>;
     onCancel?: () => void;
   } | null>(null);
@@ -294,12 +295,14 @@ function DramaWinApp() {
       options?: {
         claimLabel?: string;
         readyHeadline?: string;
+        initialVisited?: boolean;
         onCancel?: () => void;
       }
     ) => {
       setSponsorOffer({
         claimLabel: options?.claimLabel || 'Claim Reward',
         readyHeadline: options?.readyHeadline,
+        initialVisited: options?.initialVisited,
         rewardAction,
         onCancel: options?.onCancel,
       });
@@ -1993,6 +1996,7 @@ function DramaWinApp() {
         sponsorUrl={appConfig.sponsorAdUrl}
         claimLabel={sponsorOffer?.claimLabel || 'Claim Reward'}
         readyHeadline={sponsorOffer?.readyHeadline}
+        initialVisited={Boolean(sponsorOffer?.initialVisited)}
         onClaim={async () => {
           const action = sponsorOffer?.rewardAction;
           setSponsorOffer(null);

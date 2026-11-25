@@ -52,6 +52,7 @@ interface BoostTabProps {
     options?: {
       claimLabel?: string;
       readyHeadline?: string;
+      initialVisited?: boolean;
       onCancel?: () => void;
     }
   ) => void;
@@ -241,6 +242,7 @@ export const BoostTab: React.FC<BoostTabProps> = ({
         {
           claimLabel: `Verify Ad (${nextStep}/5)`,
           readyHeadline: `5-Ad Marathon • Ad ${nextStep}/5 Verified!`,
+          initialVisited: true,
           onCancel: () => setActiveBoostTask(null),
         }
       );
@@ -266,6 +268,7 @@ export const BoostTab: React.FC<BoostTabProps> = ({
         {
           claimLabel: 'Claim +300',
           readyHeadline: '2x Watch Speed Boost • +300 Coins Unlocked',
+          initialVisited: true,
           onCancel: () => setActiveBoostTask(null),
         }
       );
@@ -291,6 +294,7 @@ export const BoostTab: React.FC<BoostTabProps> = ({
         {
           claimLabel: 'Claim +500',
           readyHeadline: 'Daily Mega Boost • +500 Coins Unlocked',
+          initialVisited: true,
           onCancel: () => setActiveBoostTask(null),
         }
       );
@@ -504,14 +508,16 @@ export const BoostTab: React.FC<BoostTabProps> = ({
                   <span>Locked</span>
                 </button>
               ) : (
-                <button
-                  type="button"
+                <a
+                  href={MONETAG_LINK}
+                  target="_blank"
+                  rel="noopener noreferrer"
                   onClick={handleStartMarathonStep}
                   className="min-h-[38px] px-3.5 rounded-full gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 shadow-[0_0_16px_rgba(251,191,36,0.45)] border border-[#FFF3B0] hover:brightness-105 active:scale-[0.97] transition-all cursor-pointer"
                 >
                   <span>Watch Ad ({marathonAdsWatched + 1}/5)</span>
                   <ExternalLink className="w-3 h-3" />
-                </button>
+                </a>
               )}
             </div>
 
@@ -623,14 +629,16 @@ export const BoostTab: React.FC<BoostTabProps> = ({
                 <span>Locked</span>
               </button>
             ) : (
-              <button
-                type="button"
+              <a
+                href={MONETAG_LINK}
+                target="_blank"
+                rel="noopener noreferrer"
                 onClick={handleStartSpeedBoost}
                 className="min-h-[38px] px-4 rounded-full gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center justify-center gap-1 whitespace-nowrap shrink-0 shadow-[0_0_14px_rgba(251,191,36,0.4)] hover:brightness-105 active:scale-[0.97] transition-all cursor-pointer ml-auto"
               >
                 <span>Go</span>
                 <ExternalLink className="w-3 h-3" />
-              </button>
+              </a>
             )}
           </div>
 
@@ -717,14 +725,16 @@ export const BoostTab: React.FC<BoostTabProps> = ({
                 <span>Locked</span>
               </button>
             ) : (
-              <button
-                type="button"
+              <a
+                href={MONETAG_LINK}
+                target="_blank"
+                rel="noopener noreferrer"
                 onClick={handleStartMegaBoost}
                 className="min-h-[38px] px-4 rounded-full gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center justify-center gap-1 whitespace-nowrap shrink-0 shadow-[0_0_14px_rgba(251,191,36,0.4)] hover:brightness-105 active:scale-[0.97] transition-all cursor-pointer ml-auto"
               >
                 <span>Go</span>
                 <ExternalLink className="w-3 h-3" />
-              </button>
+              </a>
             )}
           </div>
         </div>
