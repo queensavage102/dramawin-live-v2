@@ -192,6 +192,7 @@ interface WatchVideoStageProps {
   isPreviewLocked?: boolean;
   previewReplayNonce?: number;
   seekRequest?: { time: number; nonce: number } | null;
+  ccSubtitles?: boolean;
   onTimeUpdate?: (currentTime: number, duration: number) => void;
   onPreviewLimitReached?: () => void;
   onPlayingChange?: (playing: boolean) => void;
@@ -211,6 +212,7 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
     isPreviewLocked = false,
     previewReplayNonce = 0,
     seekRequest = null,
+    ccSubtitles = true,
     onTimeUpdate,
     onPreviewLimitReached,
     onPlayingChange,
@@ -229,8 +231,9 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
           startSeconds: customStart,
           muted: false,
           autoplay: true,
+          ccSubtitles,
         }),
-      [rawVideoUrl, customStart]
+      [rawVideoUrl, customStart, ccSubtitles]
     );
 
     const resolvedDirectUrl = useResolvedMediaUrl(
@@ -963,12 +966,19 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
       onVideoEndedRef.current?.();
     }, [clearRecoveryTimers, clearStallPill]);
 
+    const isAnime = (episode.category || '').toLowerCase() === 'anime';
+    const scaleClass = ccSubtitles
+      ? 'scale-[1.45] translate-y-2'
+      : isAnime
+        ? 'scale-[1.85] -translate-y-4'
+        : 'scale-[1.75]';
+
     const iframeClassName = fitMode
       ? 'pointer-events-none absolute inset-0 z-0 w-full h-full border-0 block bg-transparent scale-100 transition-transform duration-300 ease-out'
-      : 'pointer-events-none absolute inset-0 z-0 w-full h-full border-0 block bg-transparent scale-[1.75] transition-transform duration-300 ease-out';
+      : `pointer-events-none absolute inset-0 z-0 w-full h-full border-0 block bg-transparent ${scaleClass} transition-transform duration-300 ease-out`;
 
     const directVideoClassName = `pointer-events-none absolute inset-0 z-0 w-full h-full bg-transparent transition-transform duration-300 ease-out ${
-      fitMode ? 'object-contain scale-100' : 'object-cover scale-[1.75]'
+      fitMode ? 'object-contain scale-100' : `object-cover ${scaleClass}`
     }`;
 
     const recoveryOverlay = (isRecovering || recoveryFailed) && (
@@ -1121,6 +1131,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
   const [seekRequest, setSeekRequest] = useState<{ time: number; nonce: number } | null>(null);
   const [partySwitcherOpen, setPartySwitcherOpen] = useState(false);
   const [inviteCopied, setInviteCopied] = useState(false);
+  const [ccSubtitlesOn, setCcSubtitlesOn] = useState(true);
 
   const handleCopyInviteLink = useCallback(() => {
     if (!watchPartyRoom) return;
@@ -1681,6 +1692,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
             isPreviewLocked={effectiveArchiveLocked}
             previewReplayNonce={previewReplayNonce}
             seekRequest={seekRequest}
+            ccSubtitles={ccSubtitlesOn}
             onTimeUpdate={handleStageTimeUpdate}
             onPreviewLimitReached={() => {
               if (!effectiveArchiveLocked) return;
@@ -1718,29 +1730,32 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
             ) : null}
           </div>
 
-          {episode.archiveIdentifier && (
-            <div className="pointer-events-none absolute top-[max(3.2rem,calc(env(safe-area-inset-top)+2.85rem))] left-3 z-30">
-              {isPrivateLobby ? (
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-400/20 backdrop-blur-md border border-amber-400/50 text-[10px] font-black text-amber-300 shadow">
-                  <span>VIP Private Screening · Full Unlocked</span>
-                </span>
-              ) : effectiveArchiveLocked ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    previewLockOpenRef.current = true;
-                    isVideoPlayingRef.current = false;
-                    setPreviewLockOpen(true);
-                  }}
-                  className="pointer-events-auto inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/75 hover:bg-black/90 backdrop-blur-md border border-[#D4AF37]/50 text-[10px] font-bold text-[#FCE7A2] shadow-lg cursor-pointer transition"
+          {!inWatchParty && (
+            <div className="pointer-events-none absolute top-[max(3.5rem,calc(env(safe-area-inset-top)+3.15rem))] left-3 right-3 sm:max-w-md z-30">
+              <div className="pointer-events-auto flex flex-col gap-1.5 px-4 py-2.5 rounded-2xl bg-slate-950/80 backdrop-blur-md border border-cyan-400/50 shadow-[0_0_24px_rgba(0,240,255,0.35)]">
+                <div className="flex items-center justify-between gap-3 text-xs font-extrabold text-[#FCE7A2]">
+                  <span className="inline-flex items-center gap-1.5 text-cyan-300">
+                    <Trophy className="w-4 h-4 text-[#FBBF24] shrink-0" />
+                    <span>Sunday Tournament Progress</span>
+                  </span>
+                  <span className="font-mono-num text-amber-200 font-bold">
+                    {playerWeeklyCoins.toLocaleString()} / {safeThreshold.toLocaleString()} ({weeklyPct.toFixed(1)}%)
+                  </span>
+                </div>
+                <div
+                  role="progressbar"
+                  aria-valuenow={Math.round(weeklyPct)}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-label="Sunday Tournament Progress"
+                  className="h-2 w-full rounded-full bg-white/20 overflow-hidden"
                 >
-                  <span>3m Free Preview · Unlock Full ({FULL_EPISODE_UNLOCK_COINS})</span>
-                </button>
-              ) : (
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-950/80 backdrop-blur-md border border-emerald-400/45 text-[10px] font-bold text-emerald-200 shadow-lg">
-                  <span>Full Episode Unlocked</span>
-                </span>
-              )}
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-amber-400 via-cyan-400 to-teal-300 shadow-[0_0_12px_rgba(0,240,255,0.8)] transition-[width] duration-300 ease-out"
+                    style={{ width: `${Math.min(100, Math.max(0, weeklyPct))}%` }}
+                  />
+                </div>
+              </div>
             </div>
           )}
 
@@ -1870,6 +1885,21 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
                       <span>Party 1.5x</span>
                     </button>
                   )}
+
+                  <button
+                    type="button"
+                    onClick={() => setCcSubtitlesOn((prev) => !prev)}
+                    aria-pressed={ccSubtitlesOn}
+                    aria-label={ccSubtitlesOn ? 'CC Subtitles On' : 'CC Subtitles Off'}
+                    className={`min-h-[34px] px-2.5 rounded-full backdrop-blur-md border text-[11px] font-bold inline-flex items-center gap-1 whitespace-nowrap shrink-0 transition cursor-pointer ${
+                      ccSubtitlesOn
+                        ? 'border-cyan-400 bg-cyan-950/70 text-cyan-200 shadow-[0_0_12px_rgba(0,240,255,0.4)]'
+                        : 'border-white/20 bg-black/65 text-zinc-400 hover:text-white'
+                    }`}
+                  >
+                    <span className="font-black">CC</span>
+                    <span>{ccSubtitlesOn ? 'ON' : 'OFF'}</span>
+                  </button>
 
                   <button
                     type="button"
@@ -2155,7 +2185,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
         </div>
 
         {/* 4. Custom Neon-Gold Interactive Scrub Bar cleanly above Bottom Ad Banner */}
-        <div className="shrink-0 relative z-20 w-full bg-[#0B0A10]/95 backdrop-blur-md border-t border-[#D4AF37]/30 px-2.5 sm:px-4 py-1.5 flex items-center gap-2">
+        <div className="shrink-0 relative z-20 w-full bg-[#0B0A10]/95 backdrop-blur-md border-t border-[#D4AF37]/30 px-2.5 sm:px-4 py-1 flex items-center gap-2">
           <button
             type="button"
             onClick={handleTogglePlayPause}

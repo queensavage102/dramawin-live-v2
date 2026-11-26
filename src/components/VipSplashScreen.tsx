@@ -8,11 +8,11 @@ interface VipSplashScreenProps {
 const SPLASH_DURATION_MS = 2500;
 
 const SplashPosterTile: React.FC<{ coverUrl: string }> = ({ coverUrl }) => (
-  <div className="relative w-24 sm:w-28 aspect-[2/3] shrink-0 rounded-xl overflow-hidden border border-white/20 shadow-[0_10px_28px_rgba(0,0,0,0.65)]">
+  <div className="relative w-28 sm:w-32 aspect-[2/3] shrink-0 rounded-xl overflow-hidden border border-cyan-400/30 shadow-[0_12px_32px_rgba(0,0,0,0.8)]">
     <img
       src={coverUrl}
       alt=""
-      className="w-full h-full object-cover brightness-110 saturate-115"
+      className="w-full h-full object-cover brightness-125 saturate-125"
     />
   </div>
 );
@@ -21,17 +21,17 @@ const LuxuryMetallicCrown: React.FC = () => (
   <div className="relative flex items-center justify-center">
     <div
       aria-hidden="true"
-      className="pointer-events-none absolute -inset-20 rounded-full bg-[radial-gradient(circle,rgba(252,231,162,0.38)_0%,rgba(212,175,55,0.16)_40%,transparent_72%)] blur-2xl"
+      className="pointer-events-none absolute -inset-20 rounded-full bg-[radial-gradient(circle,rgba(0,240,255,0.45)_0%,rgba(99,102,241,0.25)_40%,transparent_72%)] blur-2xl"
     />
     <div
       aria-hidden="true"
-      className="vip-crown-halo pointer-events-none absolute -inset-10 rounded-full bg-[radial-gradient(circle,rgba(255,241,176,0.58)_0%,rgba(212,175,55,0.24)_44%,transparent_74%)] blur-xl"
+      className="vip-crown-halo pointer-events-none absolute -inset-10 rounded-full bg-[radial-gradient(circle,rgba(255,241,176,0.6)_0%,rgba(0,240,255,0.3)_44%,transparent_74%)] blur-xl"
     />
     <svg
       width={96}
       height={96}
       viewBox="0 0 120 120"
-      className="relative z-10 w-[88px] h-[88px] sm:w-[104px] sm:h-[104px] drop-shadow-[0_0_28px_rgba(252,231,162,0.92)]"
+      className="relative z-10 w-[88px] h-[88px] sm:w-[104px] sm:h-[104px] drop-shadow-[0_0_32px_rgba(0,240,255,0.95)]"
       aria-hidden="true"
     >
       <defs>
@@ -169,21 +169,21 @@ export const VipSplashScreen: React.FC<VipSplashScreenProps> = ({ onComplete }) 
       role="status"
       aria-live="polite"
       aria-label="Loading DRAMA WIN"
-      className={`fixed inset-0 z-[100] bg-[#060608] text-[#F6F2E9] overflow-hidden flex flex-col items-center justify-center px-5 transition-opacity duration-200 ${
+      className={`fixed inset-0 z-[100] bg-gradient-to-br from-blue-600 via-indigo-900 to-cyan-500 text-[#F6F2E9] overflow-hidden flex flex-col items-center justify-center px-5 transition-opacity duration-200 ${
         fadingOut ? 'opacity-0 pointer-events-none' : 'opacity-100'
       }`}
     >
-      {/* Bright, Colorful Tilted (-12deg) Modern Drama, Horror & Anime Poster Wall */}
+      {/* Expanded Tilted (-12deg) Moving Poster Wall (scale-125 edge-to-edge) */}
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-[-24%] flex flex-col justify-center gap-3.5 -rotate-12 opacity-95 select-none overflow-hidden"
+        className="pointer-events-none absolute inset-[-35%] flex flex-col justify-center gap-4 -rotate-12 scale-125 opacity-100 brightness-125 saturate-125 select-none overflow-hidden"
       >
         {posterRows.map((row, rowIdx) => {
-          const doubled = [...row, ...row];
+          const doubled = [...row, ...row, ...row];
           return (
             <div
               key={`splash-row-${rowIdx}`}
-              className={`flex w-max gap-3 ${
+              className={`flex w-max gap-3.5 ${
                 rowIdx % 2 === 0 ? 'splash-marquee-left' : 'splash-marquee-right'
               }`}
             >
@@ -195,42 +195,35 @@ export const VipSplashScreen: React.FC<VipSplashScreenProps> = ({ onComplete }) 
         })}
       </div>
 
-      {/* Bright Dark-Vignette (rgba(0,0,0,0.35)) Keeping Poster Art Vivid Behind Gold Crown */}
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 bg-[rgba(0,0,0,0.35)]"
-      />
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_46%,rgba(0,0,0,0.12)_0%,rgba(0,0,0,0.32)_62%,rgba(0,0,0,0.56)_100%)]"
-      />
-
-      {/* Center Foreground: Gold Drama Win Crown Logo & Tagline */}
-      <div className="relative z-20 w-full max-w-md flex flex-col items-center text-center space-y-4 px-2">
+      {/* Sleek Translucent Frosted Glass Pill Wrapper */}
+      <div className="relative z-20 w-full max-w-sm rounded-3xl bg-slate-950/65 backdrop-blur-md border border-cyan-400/50 px-6 py-5 shadow-[0_0_30px_rgba(0,240,255,0.4)] flex flex-col items-center text-center space-y-3.5">
         <LuxuryMetallicCrown />
 
-        <div className="space-y-2.5">
-          <h1 className="font-display text-3xl sm:text-5xl font-bold tracking-tight gold-gradient-text leading-tight drop-shadow-[0_4px_24px_rgba(0,0,0,0.95)]">
+        <div className="space-y-1.5">
+          <h1
+            className="font-display text-3xl sm:text-4xl font-extrabold tracking-tight gold-gradient-text leading-tight drop-shadow-[0_2px_12px_rgba(0,240,255,0.6)]"
+            style={{ textShadow: '0 2px 10px rgba(0,0,0,0.9)' }}
+          >
             DRAMA WIN
           </h1>
-          <p className="text-sm sm:text-base text-[#FFF8E7] font-semibold tracking-wide leading-snug drop-shadow-[0_2px_14px_rgba(0,0,0,0.98)]">
+          <p className="text-xs sm:text-sm text-[#FFF8E7] font-semibold tracking-wide leading-snug drop-shadow-[0_1px_6px_rgba(0,0,0,0.9)]">
             Binge Horror, Romance &amp; Anime Free
           </p>
         </div>
       </div>
 
-      {/* Slim Gold Bottom Progress Bar */}
-      <div className="absolute inset-x-0 bottom-[max(1.75rem,env(safe-area-inset-bottom))] z-20 px-6 sm:px-10 flex justify-center">
+      {/* Thick Neon Progress Bar */}
+      <div className="absolute inset-x-0 bottom-[max(2rem,env(safe-area-inset-bottom))] z-20 px-6 sm:px-10 flex justify-center">
         <div
           role="progressbar"
           aria-valuenow={Math.round(progress)}
           aria-valuemin={0}
           aria-valuemax={100}
           aria-label="Loading DRAMA WIN"
-          className="h-1.5 w-full max-w-sm rounded-full bg-black/55 border border-[#D4AF37]/40 overflow-hidden shadow-inner"
+          className="h-4 w-full max-w-sm rounded-full border-2 border-white/85 bg-slate-900/60 overflow-hidden shadow-[0_0_20px_rgba(0,240,255,0.5)]"
         >
           <div
-            className="h-full gold-gradient-bg rounded-full shadow-[0_0_16px_rgba(243,211,122,0.9)]"
+            className="h-full rounded-full bg-gradient-to-r from-cyan-400 via-teal-300 to-amber-400 shadow-[0_0_16px_rgba(0,240,255,0.9)] transition-all duration-100"
             style={{ width: `${progress}%` }}
           />
         </div>

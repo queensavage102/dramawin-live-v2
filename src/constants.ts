@@ -1138,7 +1138,7 @@ export function extractDailymotionVideoId(rawUrl: string): string | null {
 
 export function getDailymotionEmbedUrl(
   rawUrl: string,
-  options?: { autoplay?: boolean; muted?: boolean; startSeconds?: number }
+  options?: { autoplay?: boolean; muted?: boolean; startSeconds?: number; ccSubtitles?: boolean }
 ): string | null {
   const videoId = extractDailymotionVideoId(rawUrl);
   if (!videoId) return null;
@@ -1149,6 +1149,9 @@ export function getDailymotionEmbedUrl(
   params.set('ui-logo', '0');
   params.set('queue-enable', 'false');
   params.set('subtitles-default', 'en');
+  if (options?.ccSubtitles) {
+    params.set('cc_load_policy', '1');
+  }
   params.set('quality', 'auto');
   params.set('playsinline', '1');
   params.set('sharing-enable', 'false');
@@ -1461,7 +1464,7 @@ export function describeVideoSourceLabel(rawInput?: string): string {
 
 export function resolveVideoSource(
   rawInput?: string,
-  options?: { startSeconds?: number; muted?: boolean; autoplay?: boolean }
+  options?: { startSeconds?: number; muted?: boolean; autoplay?: boolean; ccSubtitles?: boolean }
 ): ResolvedVideoSource {
   const cleaned = sanitizeMediaUrl(rawInput);
   if (!cleaned) {
