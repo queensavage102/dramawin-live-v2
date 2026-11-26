@@ -338,17 +338,23 @@ export async function fetchDailymotionShowsByGenre(
   let items: ModernShowItem[] = [];
 
   if (genre === 'All') {
-    const [horrorList, romanceList, animeList] = await Promise.all([
-      queryDailymotionGenre('Horror', 9, signal).catch(() => []),
-      queryDailymotionGenre('Romance', 8, signal).catch(() => []),
-      queryDailymotionGenre('Anime', 8, signal).catch(() => []),
+    const [horrorList, romanceList, dramaList, animeList] = await Promise.all([
+      queryDailymotionGenre('Horror', 7, signal).catch(() => []),
+      queryDailymotionGenre('Romance', 6, signal).catch(() => []),
+      queryDailymotionGenre('Drama', 6, signal).catch(() => []),
+      queryDailymotionGenre('Anime', 6, signal).catch(() => []),
     ]);
 
     const interleaved: ModernShowItem[] = [];
     const seenIds = new Set<string>();
-    const maxLen = Math.max(horrorList.length, romanceList.length, animeList.length);
+    const maxLen = Math.max(
+      horrorList.length,
+      romanceList.length,
+      dramaList.length,
+      animeList.length
+    );
     for (let i = 0; i < maxLen; i += 1) {
-      for (const bucket of [horrorList, romanceList, animeList]) {
+      for (const bucket of [horrorList, romanceList, dramaList, animeList]) {
         const candidate = bucket[i];
         if (candidate && !seenIds.has(candidate.id)) {
           seenIds.add(candidate.id);
@@ -392,7 +398,7 @@ export function getModernCatalogByGenre(
 export function buildModernPlayerEpisode(item: ModernShowItem): DramaEpisode {
   const embedUrl = item.dailymotionId
     ? `https://www.dailymotion.com/embed/video/${item.dailymotionId}?autoplay=1&ui-logo=0&queue-enable=false`
-    : `https://www.youtube-nocookie.com/embed/${item.youtubeId || ''}?controls=0&modestbranding=1&rel=0&iv_load_policy=3`;
+    : `https://www.youtube-nocookie.com/embed/${item.youtubeId || ''}?enablejsapi=1&controls=0&modestbranding=1&rel=0&iv_load_policy=3&playsinline=1`;
 
   return {
     id: `modern-${item.id}`,

@@ -7,6 +7,8 @@ import {
   Film,
   Maximize2,
   Minimize2,
+  Pause,
+  Play,
   RotateCcw,
   Scan,
   SkipForward,
@@ -113,7 +115,7 @@ const YOUTUBE_IFRAME_ALLOW =
 
 interface WatchVideoStageProps {
   episode: DramaEpisode;
-  zoomed: boolean;
+  fitMode: boolean;
   paused: boolean;
   muted: boolean;
   playbackRate: number;
@@ -130,7 +132,7 @@ interface WatchVideoStageProps {
 const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
   ({
     episode,
-    zoomed,
+    fitMode,
     paused,
     muted,
     playbackRate,
@@ -739,12 +741,12 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
       onVideoEndedRef.current?.();
     }, [clearRecoveryTimers, clearStallPill]);
 
-    const iframeClassName = zoomed
-      ? 'absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[max(100cqw,177.78cqh)] h-[max(100cqh,56.25cqw)] border-0 block pointer-events-auto bg-[#060608] scale-[1.22] transition-all duration-300 ease-out'
-      : 'absolute inset-0 w-full h-full border-0 block pointer-events-auto bg-[#060608] scale-[1.14] transition-all duration-300 ease-out';
+    const iframeClassName = fitMode
+      ? 'pointer-events-none absolute inset-0 w-full h-full border-0 block bg-[#060608] scale-100 transition-transform duration-300 ease-out'
+      : 'pointer-events-none absolute inset-0 w-full h-full border-0 block bg-[#060608] scale-[1.75] transition-transform duration-300 ease-out';
 
-    const directVideoClassName = `absolute inset-0 w-full h-full bg-[#060608] transition-all duration-300 ease-out ${
-      zoomed ? 'object-cover' : 'object-contain'
+    const directVideoClassName = `pointer-events-none absolute inset-0 w-full h-full bg-[#060608] transition-transform duration-300 ease-out ${
+      fitMode ? 'object-contain scale-100' : 'object-cover scale-[1.75]'
     }`;
 
     const recoveryOverlay = (isRecovering || recoveryFailed) && (
@@ -867,7 +869,9 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
   const [previewReplayNonce, setPreviewReplayNonce] = useState(0);
   const [flyingBurst, setFlyingBurst] = useState<{ id: number; amount: number } | null>(null);
   const [isExpandedFull, setIsExpandedFull] = useState(false);
-  const [isZoomed, setIsZoomed] = useState(false);
+  const [isFitMode, setIsFitMode] = useState(false);
+  const [userPaused, setUserPaused] = useState(false);
+  const [tapFeedback, setTapFeedback] = useState<'play' | 'pause' | null>(null);
   const [hudExpanded, setHudExpanded] = useState(false);
   const [videoReloadNonce, setVideoReloadNonce] = useState(0);
   const [isVideoStalledOver5s, setIsVideoStalledOver5s] = useState(false);
@@ -915,10 +919,29 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
   );
   const totalSeriesEps = Math.max(1, seriesEpisodes.length);
 
+  const tapFeedbackTimerRef = useRef<number | null>(null);
+
   const handlePlayingChange = useCallback((playing: boolean) => {
     if (!rewardModalOpenRef.current && !previewLockOpenRef.current) {
       isVideoPlayingRef.current = playing;
     }
+  }, []);
+
+  const handleTogglePlayPause = useCallback(() => {
+    if (rewardModalOpenRef.current || previewLockOpenRef.current) return;
+    setUserPaused((prev) => {
+      const nextPaused = !prev;
+      isVideoPlayingRef.current = !nextPaused;
+      setTapFeedback(nextPaused ? 'pause' : 'play');
+      if (tapFeedbackTimerRef.current !== null) {
+        window.clearTimeout(tapFeedbackTimerRef.current);
+      }
+      tapFeedbackTimerRef.current = window.setTimeout(() => {
+        tapFeedbackTimerRef.current = null;
+        setTapFeedback(null);
+      }, 650);
+      return nextPaused;
+    });
   }, []);
 
   const handleVideoEnded = useCallback(() => {
@@ -934,9 +957,17 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
     setPreviewLockOpen(false);
     setPreviewReplayNonce(0);
     setRingProgress(0);
-    setIsZoomed(false);
+    setIsFitMode(false);
+    setUserPaused(false);
+    setTapFeedback(null);
     setVideoReloadNonce(0);
     setIsVideoStalledOver5s(false);
+    return () => {
+      if (tapFeedbackTimerRef.current !== null) {
+        window.clearTimeout(tapFeedbackTimerRef.current);
+        tapFeedbackTimerRef.current = null;
+      }
+    };
   }, [episode.id]);
 
   // 3-minute free preview timer (covers YouTube embeds reliably alongside message listener)
@@ -1122,12 +1153,12 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
         ref={playerContainerRef}
         className="relative h-[100dvh] w-full bg-[#060608] flex flex-col overflow-hidden"
       >
-        {/* 1. True Full-Screen Edge-to-Edge Video Stage with Floating Translucent DramaWin HUD */}
-        <div className="relative w-full h-[calc(100vh-125px)] h-[calc(100dvh-125px)] flex-1 min-h-0 bg-[#060608] overflow-hidden [container-type:size]">
+        {/* 1. True Zero-Escape Full-Screen Video Stage (h-[calc(100vh-135px)]) */}
+        <div className="relative h-[calc(100vh-135px)] h-[calc(100dvh-135px)] w-full flex-1 min-h-0 bg-[#060608] overflow-hidden [container-type:size]">
           <WatchVideoStage
             episode={episode}
-            zoomed={isZoomed}
-            paused={rewardModalOpen || previewLockOpen}
+            fitMode={isFitMode}
+            paused={userPaused || rewardModalOpen || previewLockOpen}
             muted={muted}
             playbackRate={1}
             resumePlaybackSignal={resumePlaybackSignal}
@@ -1144,6 +1175,31 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
             onVideoEnded={handleVideoEnded}
             onStallStateChange={setIsVideoStalledOver5s}
           />
+
+          {/* Transparent Interactive Tap Overlay <div> with Centered Gold Play/Pause Button */}
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={handleTogglePlayPause}
+            onKeyDown={(e) => {
+              if (e.key === ' ' || e.key === 'Enter') {
+                e.preventDefault();
+                handleTogglePlayPause();
+              }
+            }}
+            aria-label={userPaused ? 'Play episode' : 'Pause episode'}
+            className="absolute inset-0 z-10 w-full h-full bg-transparent cursor-pointer flex items-center justify-center focus:outline-none"
+          >
+            {userPaused && !previewLockOpen && !rewardModalOpen ? (
+              <span className="w-16 h-16 rounded-full bg-black/75 backdrop-blur-md border-2 border-[#D4AF37] text-[#FCE7A2] flex items-center justify-center shadow-[0_0_28px_rgba(212,175,55,0.45)] transition-transform">
+                <Play className="w-7 h-7 fill-current ml-1" />
+              </span>
+            ) : tapFeedback === 'play' ? (
+              <span className="w-14 h-14 rounded-full bg-black/70 backdrop-blur-md border border-[#D4AF37]/80 text-[#FCE7A2] flex items-center justify-center shadow-[0_0_24px_rgba(212,175,55,0.35)] pointer-events-none">
+                <Pause className="w-6 h-6" />
+              </span>
+            ) : null}
+          </div>
 
           {episode.archiveIdentifier && (
             <div className="pointer-events-none absolute top-[max(3.6rem,calc(env(safe-area-inset-top)+3.25rem))] left-3 z-30">
@@ -1186,22 +1242,22 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
               <div className="flex items-center gap-1.5 shrink-0">
                 <button
                   type="button"
-                  onClick={() => setIsZoomed((prev) => !prev)}
-                  aria-pressed={isZoomed}
-                  aria-label={isZoomed ? 'Switch to Original Fit' : 'Switch to Zoom Cover'}
-                  title={isZoomed ? 'Zoomed — tap for Fit' : 'Fit — tap for Zoom'}
+                  onClick={() => setIsFitMode((prev) => !prev)}
+                  aria-pressed={isFitMode}
+                  aria-label={isFitMode ? 'Switch to Full 1.75x' : 'Switch to Fit scale-100'}
+                  title={isFitMode ? 'Fit (scale-100) — tap for Full' : 'Tap to Fit (scale-100)'}
                   className={`min-h-[34px] px-2.5 rounded-full backdrop-blur-md border text-[11px] font-bold inline-flex items-center gap-1 whitespace-nowrap shrink-0 transition cursor-pointer ${
-                    isZoomed
+                    isFitMode
                       ? 'border-[#FBBF24] bg-[#241A07]/90 text-[#FFF3B0] shadow-[0_0_10px_rgba(251,191,36,0.28)]'
                       : 'border-white/20 bg-black/65 text-[#FCE7A2] hover:border-[#D4AF37]/60'
                   }`}
                 >
-                  {isZoomed ? (
+                  {isFitMode ? (
                     <ZoomIn className="w-3.5 h-3.5 text-[#FBBF24]" />
                   ) : (
                     <Scan className="w-3.5 h-3.5 text-[#D4AF37]" />
                   )}
-                  <span>{isZoomed ? 'Zoom' : 'Fit'}</span>
+                  <span>{isFitMode ? 'Fill' : 'Fit'}</span>
                 </button>
 
                 <button

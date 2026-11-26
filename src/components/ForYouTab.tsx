@@ -9,6 +9,7 @@ import {
   Lock,
   Maximize2,
   Minimize2,
+  Pause,
   Play,
   RotateCcw,
   Scan,
@@ -57,14 +58,14 @@ interface ForYouFeedItem extends DramaEpisode {
 
 const FORYOU_YOUTUBE_ALLOW =
   'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen';
+const FORYOU_IFRAME_FILL_CLASS =
+  'pointer-events-none absolute inset-0 w-full h-full border-0 block bg-[#060608] scale-[1.75] transition-transform duration-300 ease-out';
 const FORYOU_IFRAME_FIT_CLASS =
-  'pointer-events-none absolute inset-0 w-full h-full border-0 block bg-[#060608] scale-[1.14] transition-all duration-300 ease-out';
-const FORYOU_IFRAME_ZOOM_CLASS =
-  'pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[max(100cqw,177.78cqh)] h-[max(100cqh,56.25cqw)] border-0 block bg-[#060608] scale-[1.22] transition-all duration-300 ease-out';
+  'pointer-events-none absolute inset-0 w-full h-full border-0 block bg-[#060608] scale-100 transition-transform duration-300 ease-out';
+const FORYOU_VIDEO_FILL_CLASS =
+  'pointer-events-none w-full h-full object-cover scale-[1.75] bg-[#060608] transition-transform duration-300 ease-out';
 const FORYOU_VIDEO_FIT_CLASS =
-  'pointer-events-none w-full h-full object-contain bg-[#060608] transition-all duration-300 ease-out';
-const FORYOU_VIDEO_ZOOM_CLASS =
-  'pointer-events-none w-full h-full object-cover bg-[#060608] transition-all duration-300 ease-out';
+  'pointer-events-none w-full h-full object-contain scale-100 bg-[#060608] transition-transform duration-300 ease-out';
 
 interface ForYouTabProps {
   episodes: DramaEpisode[];
@@ -155,7 +156,8 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
   );
   const [activeIndex, setActiveIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(true);
-  const [isZoomed, setIsZoomed] = useState(false);
+  const [isFitMode, setIsFitMode] = useState(false);
+  const [tapFeedback, setTapFeedback] = useState<'play' | 'pause' | null>(null);
   const [hudExpanded, setHudExpanded] = useState(false);
   const [isExpandedFull, setIsExpandedFull] = useState(false);
   const [ringProgress, setRingProgress] = useState(0);
@@ -388,7 +390,8 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
     elapsedMsRef.current = 0;
     previewElapsedMsRef.current = 0;
     setRingProgress(0);
-    setIsZoomed(false);
+    setIsFitMode(false);
+    setTapFeedback(null);
     return () => {
       clearRecoveryTimers();
       clearStallPill();
@@ -863,9 +866,30 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
     return () => window.clearInterval(interval);
   }, [currentEpisode?.id, isFeaturedPreviewSlide, isCurrentArchiveLocked]);
 
+  const tapFeedbackTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (tapFeedbackTimerRef.current !== null) {
+        window.clearTimeout(tapFeedbackTimerRef.current);
+      }
+    };
+  }, []);
+
   const handleTogglePlayPause = useCallback(() => {
-    if (previewLockOpenRef.current) return;
-    setIsPlaying((prev) => !prev);
+    if (previewLockOpenRef.current || rewardModalOpenRef.current) return;
+    setIsPlaying((prev) => {
+      const nextPlaying = !prev;
+      setTapFeedback(nextPlaying ? 'play' : 'pause');
+      if (tapFeedbackTimerRef.current !== null) {
+        window.clearTimeout(tapFeedbackTimerRef.current);
+      }
+      tapFeedbackTimerRef.current = window.setTimeout(() => {
+        tapFeedbackTimerRef.current = null;
+        setTapFeedback(null);
+      }, 650);
+      return nextPlaying;
+    });
   }, []);
 
   const handleToggleFullscreen = async () => {
@@ -1014,8 +1038,8 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
           isExpandedFull ? 'z-[75]' : 'z-[35]'
         }`}
       >
-        {/* 1. True Full-Screen Edge-to-Edge Video Stage with Floating Translucent DramaWin HUD */}
-        <div className="relative w-full h-[calc(100vh-125px)] h-[calc(100dvh-125px)] flex-1 min-h-0 bg-[#060608] overflow-hidden [container-type:size]">
+        {/* 1. True Zero-Escape Full-Screen Video Stage (h-[calc(100vh-135px)]) */}
+        <div className="relative h-[calc(100vh-135px)] h-[calc(100dvh-135px)] w-full flex-1 min-h-0 bg-[#060608] overflow-hidden [container-type:size]">
           {/* Video Frame / Featured Drama Preview Layer */}
           {currentEpisode.featuredDrama ? (
             <div className="relative w-full h-full overflow-hidden bg-[#060608]">
@@ -1074,7 +1098,7 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
               referrerPolicy="strict-origin-when-cross-origin"
               allow={FORYOU_YOUTUBE_ALLOW}
               allowFullScreen
-              className={isZoomed ? FORYOU_IFRAME_ZOOM_CLASS : FORYOU_IFRAME_FIT_CLASS}
+              className={isFitMode ? FORYOU_IFRAME_FIT_CLASS : FORYOU_IFRAME_FILL_CLASS}
             />
           ) : videoSource.kind === 'direct' && resolvedMediaUrl ? (
             <IsolatedHtml5Video
@@ -1099,7 +1123,7 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
               onEnded={() => {
                 if (currentEpisode) void onMarkEpisodeWatched?.(currentEpisode);
               }}
-              className={isZoomed ? FORYOU_VIDEO_ZOOM_CLASS : FORYOU_VIDEO_FIT_CLASS}
+              className={isFitMode ? FORYOU_VIDEO_FIT_CLASS : FORYOU_VIDEO_FILL_CLASS}
             />
           ) : (
             <div className="relative w-full h-full flex flex-col items-center justify-center p-6 text-center gap-3 bg-[#060608]">
@@ -1158,20 +1182,31 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
             </div>
           )}
 
-          {/* Center Play/Pause Tap Shield (active on playable video/trailer slides) */}
+          {/* Transparent Interactive Tap Overlay <div> with Centered Gold Play/Pause Button */}
           {!isFeaturedPreviewSlide && (
-            <button
-              type="button"
+            <div
+              role="button"
+              tabIndex={0}
               onClick={handleTogglePlayPause}
+              onKeyDown={(e) => {
+                if (e.key === ' ' || e.key === 'Enter') {
+                  e.preventDefault();
+                  handleTogglePlayPause();
+                }
+              }}
               aria-label={isPlaying ? 'Pause episode' : 'Play episode'}
               className="absolute inset-0 z-10 w-full h-full bg-transparent cursor-pointer flex items-center justify-center focus:outline-none"
             >
-              {!isPlaying && !previewLockOpen && videoSource.kind !== 'empty' && (
-                <span className="w-16 h-16 rounded-full bg-black/70 backdrop-blur-md border border-amber-400/50 text-amber-300 flex items-center justify-center shadow-[0_0_28px_rgba(0,0,0,0.8)]">
+              {!isPlaying && !previewLockOpen && !rewardModalOpen && videoSource.kind !== 'empty' ? (
+                <span className="w-16 h-16 rounded-full bg-black/75 backdrop-blur-md border-2 border-[#D4AF37] text-[#FCE7A2] flex items-center justify-center shadow-[0_0_28px_rgba(212,175,55,0.45)]">
                   <Play className="w-7 h-7 fill-current ml-1" />
                 </span>
-              )}
-            </button>
+              ) : tapFeedback === 'play' && videoSource.kind !== 'empty' ? (
+                <span className="w-14 h-14 rounded-full bg-black/70 backdrop-blur-md border border-[#D4AF37]/80 text-[#FCE7A2] flex items-center justify-center shadow-[0_0_24px_rgba(212,175,55,0.35)] pointer-events-none">
+                  <Pause className="w-6 h-6" />
+                </span>
+              ) : null}
+            </div>
           )}
 
           {/* Archive Preview Status or External Show Link (Bottom-Left) */}
@@ -1253,22 +1288,22 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
               <div className="flex items-center gap-1.5 shrink-0">
                 <button
                   type="button"
-                  onClick={() => setIsZoomed((prev) => !prev)}
-                  aria-pressed={isZoomed}
-                  aria-label={isZoomed ? 'Switch to Original Fit' : 'Switch to Zoom Cover'}
-                  title={isZoomed ? 'Zoomed — tap for Fit' : 'Fit — tap for Zoom'}
+                  onClick={() => setIsFitMode((prev) => !prev)}
+                  aria-pressed={isFitMode}
+                  aria-label={isFitMode ? 'Switch to Full 1.75x' : 'Switch to Fit scale-100'}
+                  title={isFitMode ? 'Fit (scale-100) — tap for Full' : 'Tap to Fit (scale-100)'}
                   className={`min-h-[34px] px-2.5 rounded-full backdrop-blur-md border text-[11px] font-bold inline-flex items-center gap-1 whitespace-nowrap shrink-0 transition cursor-pointer ${
-                    isZoomed
+                    isFitMode
                       ? 'border-[#FBBF24] bg-[#241A07]/90 text-[#FFF3B0] shadow-[0_0_10px_rgba(251,191,36,0.28)]'
                       : 'border-white/20 bg-black/65 text-[#FCE7A2] hover:border-[#D4AF37]/60'
                   }`}
                 >
-                  {isZoomed ? (
+                  {isFitMode ? (
                     <ZoomIn className="w-3.5 h-3.5 text-[#FBBF24]" />
                   ) : (
                     <Scan className="w-3.5 h-3.5 text-[#D4AF37]" />
                   )}
-                  <span>{isZoomed ? 'Zoom' : 'Fit'}</span>
+                  <span>{isFitMode ? 'Fill' : 'Fit'}</span>
                 </button>
 
                 <button
