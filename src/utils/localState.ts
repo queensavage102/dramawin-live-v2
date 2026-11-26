@@ -1024,6 +1024,20 @@ export interface BoostTrackerState {
   dailyMegaLastClaimAt: number;
   marathonAdsWatched: number;
   marathonLastClaimAt: number;
+  streakCheckInCount: number;
+  streakCheckInLastClaimAt: number;
+  spotlight1LastClaimAt: number;
+  spotlight2LastClaimAt: number;
+  spotlight3LastClaimAt: number;
+  hourlyMysteryBoxLastClaimAt: number;
+  dailyWatchDate: string;
+  dailyWatchSeconds: number;
+  episodesWatchDate: string;
+  completedEpisodeIdsToday: string[];
+  milestone1EpClaimed: boolean;
+  milestone3EpClaimed: boolean;
+  milestone5EpClaimed: boolean;
+  milestone10EpClaimed: boolean;
   dailyGameDate: string;
   dailyGameCoins: number;
   dailyGamePlaysUsed: number;
@@ -1044,6 +1058,20 @@ export function loadBoostTrackerState(
     dailyMegaLastClaimAt: 0,
     marathonAdsWatched: 0,
     marathonLastClaimAt: 0,
+    streakCheckInCount: 0,
+    streakCheckInLastClaimAt: 0,
+    spotlight1LastClaimAt: 0,
+    spotlight2LastClaimAt: 0,
+    spotlight3LastClaimAt: 0,
+    hourlyMysteryBoxLastClaimAt: 0,
+    dailyWatchDate: todayKey,
+    dailyWatchSeconds: 0,
+    episodesWatchDate: todayKey,
+    completedEpisodeIdsToday: [],
+    milestone1EpClaimed: false,
+    milestone3EpClaimed: false,
+    milestone5EpClaimed: false,
+    milestone10EpClaimed: false,
     dailyGameDate: todayKey,
     dailyGameCoins: 0,
     dailyGamePlaysUsed: 0,
@@ -1063,11 +1091,39 @@ export function loadBoostTrackerState(
   if (!parsed) return fallback;
 
   const isSameDay = parsed.dailyGameDate === todayKey;
+  const isSameWatchDay = parsed.dailyWatchDate === todayKey;
+  const isSameEpisodeDay = parsed.episodesWatchDate === todayKey;
+  const rawCompletedIds = isSameEpisodeDay && Array.isArray(parsed.completedEpisodeIdsToday)
+    ? Array.from(
+        new Set(
+          parsed.completedEpisodeIdsToday.filter(
+            (id): id is string => typeof id === 'string' && id.trim().length > 0
+          )
+        )
+      ).slice(0, 50)
+    : [];
+
   return {
     speedBoostLastClaimAt: Math.max(0, Number(parsed.speedBoostLastClaimAt) || 0),
     dailyMegaLastClaimAt: Math.max(0, Number(parsed.dailyMegaLastClaimAt) || 0),
     marathonAdsWatched: Math.min(5, Math.max(0, Math.floor(Number(parsed.marathonAdsWatched) || 0))),
     marathonLastClaimAt: Math.max(0, Number(parsed.marathonLastClaimAt) || 0),
+    streakCheckInCount: Math.min(7, Math.max(0, Math.floor(Number(parsed.streakCheckInCount) || 0))),
+    streakCheckInLastClaimAt: Math.max(0, Number(parsed.streakCheckInLastClaimAt) || 0),
+    spotlight1LastClaimAt: Math.max(0, Number(parsed.spotlight1LastClaimAt) || 0),
+    spotlight2LastClaimAt: Math.max(0, Number(parsed.spotlight2LastClaimAt) || 0),
+    spotlight3LastClaimAt: Math.max(0, Number(parsed.spotlight3LastClaimAt) || 0),
+    hourlyMysteryBoxLastClaimAt: Math.max(0, Number(parsed.hourlyMysteryBoxLastClaimAt) || 0),
+    dailyWatchDate: todayKey,
+    dailyWatchSeconds: isSameWatchDay
+      ? Math.max(0, Math.floor(Number(parsed.dailyWatchSeconds) || 0))
+      : 0,
+    episodesWatchDate: todayKey,
+    completedEpisodeIdsToday: rawCompletedIds,
+    milestone1EpClaimed: isSameEpisodeDay ? Boolean(parsed.milestone1EpClaimed) : false,
+    milestone3EpClaimed: isSameEpisodeDay ? Boolean(parsed.milestone3EpClaimed) : false,
+    milestone5EpClaimed: isSameEpisodeDay ? Boolean(parsed.milestone5EpClaimed) : false,
+    milestone10EpClaimed: isSameEpisodeDay ? Boolean(parsed.milestone10EpClaimed) : false,
     dailyGameDate: todayKey,
     dailyGameCoins: isSameDay
       ? Math.min(BOOST_DAILY_GAME_COIN_CAP, Math.max(0, Math.floor(Number(parsed.dailyGameCoins) || 0)))
@@ -1089,11 +1145,33 @@ export function saveBoostTrackerState(
   state: BoostTrackerState
 ): BoostTrackerState {
   const todayKey = getTodayDateKey();
+  const normalizedIds = Array.from(
+    new Set(
+      (state.completedEpisodeIdsToday || []).filter(
+        (id): id is string => typeof id === 'string' && id.trim().length > 0
+      )
+    )
+  ).slice(0, 50);
+
   const normalized: BoostTrackerState = {
     speedBoostLastClaimAt: Math.max(0, Number(state.speedBoostLastClaimAt) || 0),
     dailyMegaLastClaimAt: Math.max(0, Number(state.dailyMegaLastClaimAt) || 0),
     marathonAdsWatched: Math.min(5, Math.max(0, Math.floor(state.marathonAdsWatched || 0))),
     marathonLastClaimAt: Math.max(0, Number(state.marathonLastClaimAt) || 0),
+    streakCheckInCount: Math.min(7, Math.max(0, Math.floor(state.streakCheckInCount || 0))),
+    streakCheckInLastClaimAt: Math.max(0, Number(state.streakCheckInLastClaimAt) || 0),
+    spotlight1LastClaimAt: Math.max(0, Number(state.spotlight1LastClaimAt) || 0),
+    spotlight2LastClaimAt: Math.max(0, Number(state.spotlight2LastClaimAt) || 0),
+    spotlight3LastClaimAt: Math.max(0, Number(state.spotlight3LastClaimAt) || 0),
+    hourlyMysteryBoxLastClaimAt: Math.max(0, Number(state.hourlyMysteryBoxLastClaimAt) || 0),
+    dailyWatchDate: state.dailyWatchDate || todayKey,
+    dailyWatchSeconds: Math.max(0, Math.floor(state.dailyWatchSeconds || 0)),
+    episodesWatchDate: state.episodesWatchDate || todayKey,
+    completedEpisodeIdsToday: normalizedIds,
+    milestone1EpClaimed: Boolean(state.milestone1EpClaimed),
+    milestone3EpClaimed: Boolean(state.milestone3EpClaimed),
+    milestone5EpClaimed: Boolean(state.milestone5EpClaimed),
+    milestone10EpClaimed: Boolean(state.milestone10EpClaimed),
     dailyGameDate: state.dailyGameDate || todayKey,
     dailyGameCoins: Math.min(
       BOOST_DAILY_GAME_COIN_CAP,

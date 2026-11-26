@@ -440,6 +440,140 @@
         "claimedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["visitorUid", "referrerUid", "status", "rewardCoins", "createdAt"]
+    },
+    "WatchPartyRoom": {
+      "title": "WatchPartyRoom",
+      "description": "Live synchronized Watch Party lobby holding host playback state and Dailymotion video ID.",
+      "type": "object",
+      "properties": {
+        "roomId": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "hostUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "hostName": { "type": "string", "minLength": 2, "maxLength": 32 },
+        "episodeId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "episodeTitle": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "seriesTitle": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "episodeLabel": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "category": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "dailymotionId": { "type": "string", "maxLength": 32 },
+        "videoUrl": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "coverImage": { "type": "string", "maxLength": 2000 },
+        "archiveIdentifier": { "type": "string", "maxLength": 128 },
+        "isPlaying": { "type": "boolean" },
+        "currentTime": { "type": "number" },
+        "playbackUpdatedAtMs": { "type": "number" },
+        "status": { "type": "string", "enum": ["active", "ended"] },
+        "isPublic": { "type": "boolean" },
+        "isPrivate": { "type": "boolean" },
+        "maxCapacity": { "type": "number" },
+        "viewerCount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "roomId",
+        "hostUid",
+        "hostName",
+        "episodeId",
+        "episodeTitle",
+        "seriesTitle",
+        "episodeLabel",
+        "category",
+        "dailymotionId",
+        "videoUrl",
+        "isPlaying",
+        "currentTime",
+        "playbackUpdatedAtMs",
+        "status",
+        "isPublic",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "WatchPartyParticipant": {
+      "title": "WatchPartyParticipant",
+      "description": "Live Watch Party lobby member presence record (no PII).",
+      "type": "object",
+      "properties": {
+        "roomId": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "username": { "type": "string", "minLength": 2, "maxLength": 32 },
+        "role": { "type": "string", "enum": ["host", "guest"] },
+        "lastSeenMs": { "type": "number" },
+        "joinedAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["roomId", "uid", "username", "role", "lastSeenMs", "joinedAt", "updatedAt"]
+    },
+    "WatchPartyMessage": {
+      "title": "WatchPartyMessage",
+      "description": "Live Watch Party chat message or glowing Gold Highlighted Chat / Super-Reaction (100 Coins).",
+      "type": "object",
+      "properties": {
+        "roomId": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "username": { "type": "string", "minLength": 2, "maxLength": 32 },
+        "text": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "isSuper": { "type": "boolean" },
+        "superCost": { "type": "number" },
+        "emoji": { "type": "string", "maxLength": 16 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["roomId", "uid", "username", "text", "isSuper", "superCost", "createdAt"]
+    },
+    "WatchPartyReaction": {
+      "title": "WatchPartyReaction",
+      "description": "Ephemeral floating emoji reaction or paid Gold Super-Reaction in a Watch Party lobby.",
+      "type": "object",
+      "properties": {
+        "roomId": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "username": { "type": "string", "minLength": 2, "maxLength": 32 },
+        "emoji": { "type": "string", "enum": ["🔥", "😱", "❤️"] },
+        "isSuper": { "type": "boolean" },
+        "superCost": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["roomId", "uid", "username", "emoji", "isSuper", "superCost", "createdAt"]
     }
   },
   "firestore": {
@@ -490,6 +624,22 @@
     "/referrals/{visitorId}": {
       "schema": { "$ref": "#/entities/Referral" },
       "description": "Verified friend referral visits keyed by visiting friend's Firebase UID."
+    },
+    "/watchParties/{roomId}": {
+      "schema": { "$ref": "#/entities/WatchPartyRoom" },
+      "description": "Live Watch Party rooms storing host playback sync state and Dailymotion video ID."
+    },
+    "/watchParties/{roomId}/participants/{participantId}": {
+      "schema": { "$ref": "#/entities/WatchPartyParticipant" },
+      "description": "Active host and guest presence entries inside a Watch Party room."
+    },
+    "/watchParties/{roomId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/WatchPartyMessage" },
+      "description": "Live chat feed and Gold Highlighted Super-Reactions inside a Watch Party room."
+    },
+    "/watchParties/{roomId}/reactions/{reactionId}": {
+      "schema": { "$ref": "#/entities/WatchPartyReaction" },
+      "description": "Real-time floating emoji reactions and paid Gold Super-Reactions in a Watch Party room."
     }
   }
 }

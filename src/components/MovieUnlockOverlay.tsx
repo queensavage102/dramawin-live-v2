@@ -1,6 +1,19 @@
-import React, { useState } from 'react';
-import { Coins, Lock, RotateCcw, Sparkles, Unlock } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Coins,
+  ExternalLink,
+  Loader2,
+  Lock,
+  RotateCcw,
+  Sparkles,
+  Unlock,
+  X,
+} from 'lucide-react';
+import { MONETAG_LINK } from '../constants';
 import { FULL_EPISODE_UNLOCK_COINS } from '../utils/modernCatalog';
+import { useSponsorVisibilityTimers } from '../utils/useSponsorVisibilityTimer';
+
+const AD_UNLOCK_DURATION_MS = 15_000;
 
 interface MovieUnlockOverlayProps {
   open: boolean;
@@ -8,6 +21,7 @@ interface MovieUnlockOverlayProps {
   playerTotalCoins: number;
   unlockCost?: number;
   onUnlock: () => Promise<boolean>;
+  onUnlockWithAd?: () => Promise<boolean>;
   onReplayPreview?: () => void;
   onGoToBoost?: () => void;
   onClose?: () => void;
@@ -19,16 +33,42 @@ export const MovieUnlockOverlay: React.FC<MovieUnlockOverlayProps> = ({
   playerTotalCoins,
   unlockCost = FULL_EPISODE_UNLOCK_COINS,
   onUnlock,
+  onUnlockWithAd,
   onReplayPreview,
   onGoToBoost,
   onClose,
 }) => {
   const [unlocking, setUnlocking] = useState(false);
+  const onUnlockWithAdRef = useRef(onUnlockWithAd);
+
+  useEffect(() => {
+    onUnlockWithAdRef.current = onUnlockWithAd;
+  }, [onUnlockWithAd]);
+
+  const handleTimerComplete = useCallback(async () => {
+    if (onUnlockWithAdRef.current) {
+      await onUnlockWithAdRef.current();
+    }
+  }, []);
+
+  const {
+    timers,
+    startTimer,
+    cancelTimer,
+    resetAllTimers,
+  } = useSponsorVisibilityTimers<'adUnlock'>(handleTimerComplete);
+
+  useEffect(() => {
+    if (!open) {
+      resetAllTimers();
+    }
+  }, [open, resetAllTimers]);
 
   if (!open) return null;
 
   const canAfford = playerTotalCoins >= unlockCost;
   const shortfall = Math.max(0, unlockCost - playerTotalCoins);
+  const adTimer = timers.adUnlock;
 
   const handleUnlockClick = async () => {
     if (unlocking || !canAfford) return;
@@ -57,7 +97,7 @@ export const MovieUnlockOverlay: React.FC<MovieUnlockOverlayProps> = ({
             3-Minute Free Preview Ended
           </p>
           <h2 className="text-lg sm:text-xl font-display font-extrabold text-white leading-snug text-balance">
-            Spend {unlockCost.toLocaleString()} Coins to Unlock Full Episode
+            Unlock Full Episode
           </h2>
           <p className="text-xs text-zinc-400 line-clamp-2">{movieTitle}</p>
         </div>
@@ -70,37 +110,87 @@ export const MovieUnlockOverlay: React.FC<MovieUnlockOverlayProps> = ({
           </span>
         </div>
 
-        <div className="space-y-2">
+        <div className="space-y-2.5">
+          {/* Free 15s Monetag Direct Link Unlock */}
+          {onUnlockWithAd && (
+            adTimer ? (
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  disabled
+                  className="relative flex-1 overflow-hidden min-h-[46px] px-4 rounded-2xl bg-[#151109] border border-[#D4AF37]/80 text-[#FFF8E7] text-xs sm:text-sm font-extrabold font-mono-num inline-flex items-center justify-center gap-2 shadow-[0_0_18px_rgba(251,191,36,0.3)]"
+                >
+                  <span
+                    aria-hidden="true"
+                    className="absolute inset-y-0 left-0 gold-gradient-bg opacity-85 transition-[width] duration-150 ease-linear"
+                    style={{ width: `${adTimer.progressPct}%` }}
+                  />
+                  <span className="relative z-10 inline-flex items-center gap-2 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
+                    <Loader2 className="w-4 h-4 animate-spin text-[#FFF3B0]" />
+                    <span>
+                      {adTimer.isCompleting
+                        ? 'Unlocking Episode...'
+                        : `Verifying Ad... ${adTimer.secondsLeft}s`}
+                    </span>
+                  </span>
+                </button>
+                {!adTimer.isCompleting && (
+                  <button
+                    type="button"
+                    onClick={() => cancelTimer('adUnlock')}
+                    aria-label="Cancel ad verification timer"
+                    className="w-11 h-[46px] rounded-2xl bg-white/[0.08] hover:bg-rose-500/25 border border-white/15 text-zinc-300 hover:text-rose-200 flex items-center justify-center shrink-0 cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            ) : (
+              <a
+                href={MONETAG_LINK}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => startTimer('adUnlock', AD_UNLOCK_DURATION_MS)}
+                className="w-full min-h-[46px] px-4 rounded-2xl gold-gradient-bg text-[#181307] text-xs sm:text-sm font-extrabold inline-flex items-center justify-center gap-2 shadow-[0_10px_28px_rgba(212,175,55,0.42)] hover:brightness-105 active:scale-[0.98] cursor-pointer transition"
+              >
+                <Sparkles className="w-4 h-4 shrink-0" />
+                <span>Watch 15s Ad to Unlock Free</span>
+                <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+              </a>
+            )
+          )}
+
+          {/* Coin Unlock Option */}
           {canAfford ? (
             <button
               type="button"
-              disabled={unlocking}
+              disabled={unlocking || Boolean(adTimer)}
               onClick={() => void handleUnlockClick()}
-              className="w-full min-h-[46px] px-4 rounded-2xl gold-gradient-bg text-[#181307] text-xs sm:text-sm font-extrabold inline-flex items-center justify-center gap-2 shadow-[0_10px_28px_rgba(212,175,55,0.4)] hover:brightness-105 active:scale-[0.98] disabled:opacity-60 cursor-pointer transition"
+              className="w-full min-h-[44px] px-4 rounded-2xl bg-[#1A160B] hover:bg-[#241E0F] border border-[#D4AF37]/60 text-[#FCE7A2] text-xs sm:text-sm font-extrabold inline-flex items-center justify-center gap-2 disabled:opacity-60 cursor-pointer transition"
             >
-              <Unlock className="w-4 h-4 shrink-0" />
+              <Unlock className="w-4 h-4 shrink-0 text-[#FBBF24]" />
               <span>
                 {unlocking
                   ? 'Unlocking Full Episode...'
-                  : `Spend ${unlockCost.toLocaleString()} Coins to Unlock Full Episode`}
+                  : `Spend ${unlockCost.toLocaleString()} Coins to Unlock`}
               </span>
             </button>
           ) : (
             <div className="space-y-2">
               <div className="rounded-xl bg-amber-500/10 border border-amber-400/30 px-3 py-2 text-[11px] font-semibold text-amber-200">
-                You need{' '}
+                Or spend {unlockCost.toLocaleString()} Coins (need{' '}
                 <span className="font-mono-num font-extrabold">
-                  {shortfall.toLocaleString()} more Coins
-                </span>{' '}
-                to unlock this full episode.
+                  {shortfall.toLocaleString()} more
+                </span>
+                )
               </div>
               {onGoToBoost && (
                 <button
                   type="button"
                   onClick={onGoToBoost}
-                  className="w-full min-h-[44px] px-4 rounded-2xl gold-gradient-bg text-[#181307] text-xs sm:text-sm font-extrabold inline-flex items-center justify-center gap-1.5 shadow-[0_8px_24px_rgba(212,175,55,0.35)] hover:brightness-105 cursor-pointer transition"
+                  className="w-full min-h-[40px] px-4 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.12] text-[#FCE7A2] text-xs font-bold inline-flex items-center justify-center gap-1.5 cursor-pointer transition"
                 >
-                  <Sparkles className="w-4 h-4 shrink-0" />
+                  <Sparkles className="w-3.5 h-3.5 text-[#FBBF24]" />
                   <span>Earn Coins on Boost</span>
                 </button>
               )}

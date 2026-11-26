@@ -247,6 +247,72 @@ service cloud.firestore {
         && (!('claimedAt' in data) || data.claimedAt is timestamp);
     }
 
+    function isValidWatchPartyRoom(data) {
+      return data.keys().hasAll(['roomId', 'hostUid', 'hostName', 'episodeId', 'episodeTitle', 'seriesTitle', 'episodeLabel', 'category', 'dailymotionId', 'videoUrl', 'isPlaying', 'currentTime', 'playbackUpdatedAtMs', 'status', 'isPublic', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['roomId', 'hostUid', 'hostName', 'episodeId', 'episodeTitle', 'seriesTitle', 'episodeLabel', 'category', 'dailymotionId', 'videoUrl', 'coverImage', 'archiveIdentifier', 'isPlaying', 'currentTime', 'playbackUpdatedAtMs', 'status', 'isPublic', 'isPrivate', 'maxCapacity', 'viewerCount', 'createdAt', 'updatedAt'])
+        && data.roomId is string && data.roomId.size() >= 4 && data.roomId.size() <= 64 && data.roomId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.hostUid is string && data.hostUid.size() >= 1 && data.hostUid.size() <= 128 && data.hostUid.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.hostName is string && data.hostName.size() >= 2 && data.hostName.size() <= 32
+        && data.episodeId is string && data.episodeId.size() >= 1 && data.episodeId.size() <= 128
+        && data.episodeTitle is string && data.episodeTitle.size() >= 1 && data.episodeTitle.size() <= 120
+        && data.seriesTitle is string && data.seriesTitle.size() >= 1 && data.seriesTitle.size() <= 80
+        && data.episodeLabel is string && data.episodeLabel.size() >= 1 && data.episodeLabel.size() <= 32
+        && data.category is string && data.category.size() >= 1 && data.category.size() <= 32
+        && data.dailymotionId is string && data.dailymotionId.size() <= 32
+        && data.videoUrl is string && data.videoUrl.size() >= 1 && data.videoUrl.size() <= 500
+        && (!('coverImage' in data) || (data.coverImage is string && data.coverImage.size() <= 2000))
+        && (!('archiveIdentifier' in data) || (data.archiveIdentifier is string && data.archiveIdentifier.size() <= 128))
+        && data.isPlaying is bool
+        && data.currentTime is number && data.currentTime >= 0 && data.currentTime <= 86400
+        && data.playbackUpdatedAtMs is number && data.playbackUpdatedAtMs >= 0
+        && data.status in ['active', 'ended']
+        && data.isPublic is bool
+        && (!('isPrivate' in data) || (data.isPrivate is bool && data.isPrivate == !data.isPublic))
+        && (!('maxCapacity' in data) || (data.maxCapacity is number && ((data.isPublic == true && data.maxCapacity == 25) || (data.isPublic == false && data.maxCapacity == 8))))
+        && (!('viewerCount' in data) || (data.viewerCount is number && data.viewerCount >= 1 && data.viewerCount <= 25))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidWatchPartyParticipant(data) {
+      return data.keys().hasAll(['roomId', 'uid', 'username', 'role', 'lastSeenMs', 'joinedAt', 'updatedAt'])
+        && data.keys().hasOnly(['roomId', 'uid', 'username', 'role', 'lastSeenMs', 'joinedAt', 'updatedAt'])
+        && data.roomId is string && data.roomId.size() >= 4 && data.roomId.size() <= 64 && data.roomId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.username is string && data.username.size() >= 2 && data.username.size() <= 32
+        && data.role in ['host', 'guest']
+        && data.lastSeenMs is number && data.lastSeenMs >= 0
+        && data.joinedAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidWatchPartyMessage(data) {
+      return data.keys().hasAll(['roomId', 'uid', 'username', 'text', 'isSuper', 'superCost', 'createdAt'])
+        && data.keys().hasOnly(['roomId', 'uid', 'username', 'text', 'isSuper', 'superCost', 'emoji', 'createdAt'])
+        && data.roomId is string && data.roomId.size() >= 4 && data.roomId.size() <= 64 && data.roomId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.username is string && data.username.size() >= 2 && data.username.size() <= 32
+        && data.text is string && data.text.size() >= 1 && data.text.size() <= 240
+        && data.isSuper is bool
+        && data.superCost is number
+        && ((data.isSuper == false && data.superCost == 0) || (data.isSuper == true && data.superCost == 100))
+        && (!('emoji' in data) || (data.emoji is string && data.emoji.size() <= 16))
+        && data.createdAt is timestamp;
+    }
+
+    function isValidWatchPartyReaction(data) {
+      return data.keys().hasAll(['roomId', 'uid', 'username', 'emoji', 'isSuper', 'superCost', 'createdAt'])
+        && data.keys().hasOnly(['roomId', 'uid', 'username', 'emoji', 'isSuper', 'superCost', 'createdAt'])
+        && data.roomId is string && data.roomId.size() >= 4 && data.roomId.size() <= 64 && data.roomId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.username is string && data.username.size() >= 2 && data.username.size() <= 32
+        && data.emoji in ['🔥', '😱', '❤️']
+        && data.isSuper is bool
+        && data.superCost is number
+        && ((data.isSuper == false && data.superCost == 0) || (data.isSuper == true && data.superCost == 100))
+        && data.createdAt is timestamp;
+    }
+
     // Public leaderboard (no PII)
     match /leaderboard/{playerId} {
       allow get: if isSignedIn() && isValidId(playerId) && (resource == null || existing().isPublic == true);
@@ -269,10 +335,10 @@ service cloud.firestore {
         && (
           (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['coins', 'weeklyCoins', 'qualified', 'streakCount', 'sundayBonusZar', 'username', 'updatedAt'])) ||
           (isOwner(playerId)
-            && incoming().coins >= existing().coins - 250
-            && incoming().coins <= existing().coins + 2000
+            && incoming().coins >= existing().coins - 1000
+            && incoming().coins <= existing().coins + 20000
             && incoming().weeklyCoins >= existing().weeklyCoins
-            && incoming().weeklyCoins <= existing().weeklyCoins + 2000
+            && incoming().weeklyCoins <= existing().weeklyCoins + 20000
             && incoming().diff(existing()).affectedKeys().hasOnly(['coins', 'weeklyCoins', 'qualified', 'streakCount', 'updatedAt'])) ||
           (isOwner(playerId)
             && incoming().coins == 0
@@ -332,7 +398,7 @@ service cloud.firestore {
           && exists(/databases/$(database)/documents/playerPrivate/$(playerId))
           && (
             isAdmin() ||
-            (isOwner(playerId) && incoming().uid == request.auth.uid && incoming().amount >= -250 && incoming().amount <= 2000)
+            (isOwner(playerId) && incoming().uid == request.auth.uid && incoming().amount >= -1000 && incoming().amount <= 20000)
           );
         allow update, delete: if false;
       }
@@ -521,6 +587,133 @@ service cloud.firestore {
         && incoming().claimedAt == request.time
         && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'claimedAt']);
       allow delete: if isAdmin() && isValidId(visitorId);
+    }
+
+    // Live Synchronized Watch Party Lobbies (authenticated host/guests)
+    match /watchParties/{roomId} {
+      allow get: if isSignedIn() && isValidId(roomId);
+      allow list: if isSignedIn() && existing().isPublic == true && existing().status == 'active';
+      allow create: if isSignedIn()
+        && isValidId(roomId)
+        && isValidWatchPartyRoom(incoming())
+        && incoming().roomId == roomId
+        && incoming().hostUid == request.auth.uid
+        && incoming().status == 'active'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isSignedIn()
+        && isValidId(roomId)
+        && isValidWatchPartyRoom(incoming())
+        && existing().hostUid == request.auth.uid
+        && incoming().roomId == existing().roomId
+        && incoming().hostUid == existing().hostUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'episodeId',
+          'episodeTitle',
+          'seriesTitle',
+          'episodeLabel',
+          'category',
+          'dailymotionId',
+          'videoUrl',
+          'coverImage',
+          'archiveIdentifier',
+          'isPlaying',
+          'currentTime',
+          'playbackUpdatedAtMs',
+          'viewerCount',
+          'status',
+          'updatedAt'
+        ]);
+      allow delete: if isSignedIn() && isValidId(roomId) && (existing().hostUid == request.auth.uid || isAdmin());
+
+      // Active participants presence inside a Watch Party room
+      match /participants/{participantId} {
+        allow get: if isSignedIn() && isValidId(roomId) && isValidId(participantId);
+        allow list: if isSignedIn() && isValidId(roomId) && existing().roomId == roomId;
+        allow create: if isSignedIn()
+          && isValidId(roomId)
+          && isValidId(participantId)
+          && participantId == request.auth.uid
+          && isValidWatchPartyParticipant(incoming())
+          && incoming().roomId == roomId
+          && incoming().uid == request.auth.uid
+          && incoming().joinedAt == request.time
+          && incoming().updatedAt == request.time
+          && get(/databases/$(database)/documents/watchParties/$(roomId)).data.status == 'active'
+          && (
+            incoming().role == 'guest' ||
+            (incoming().role == 'host' && get(/databases/$(database)/documents/watchParties/$(roomId)).data.hostUid == request.auth.uid)
+          );
+        allow update: if isSignedIn()
+          && isValidId(roomId)
+          && isValidId(participantId)
+          && participantId == request.auth.uid
+          && existing().uid == request.auth.uid
+          && isValidWatchPartyParticipant(incoming())
+          && incoming().roomId == existing().roomId
+          && incoming().uid == existing().uid
+          && incoming().role == existing().role
+          && incoming().joinedAt == existing().joinedAt
+          && incoming().updatedAt == request.time
+          && get(/databases/$(database)/documents/watchParties/$(roomId)).data.status == 'active'
+          && incoming().diff(existing()).affectedKeys().hasOnly(['username', 'lastSeenMs', 'updatedAt']);
+        allow delete: if isSignedIn()
+          && isValidId(roomId)
+          && isValidId(participantId)
+          && (
+            existing().uid == request.auth.uid ||
+            get(/databases/$(database)/documents/watchParties/$(roomId)).data.hostUid == request.auth.uid ||
+            isAdmin()
+          );
+      }
+
+      // Live chat feed & Gold Highlighted Chat messages (100 Coins)
+      match /messages/{messageId} {
+        allow get: if isSignedIn() && isValidId(roomId) && isValidId(messageId);
+        allow list: if isSignedIn() && isValidId(roomId) && existing().roomId == roomId;
+        allow create: if isSignedIn()
+          && isValidId(roomId)
+          && isValidId(messageId)
+          && isValidWatchPartyMessage(incoming())
+          && incoming().roomId == roomId
+          && incoming().uid == request.auth.uid
+          && incoming().createdAt == request.time
+          && get(/databases/$(database)/documents/watchParties/$(roomId)).data.status == 'active';
+        allow update: if false;
+        allow delete: if isSignedIn()
+          && isValidId(roomId)
+          && isValidId(messageId)
+          && (
+            existing().uid == request.auth.uid ||
+            get(/databases/$(database)/documents/watchParties/$(roomId)).data.hostUid == request.auth.uid ||
+            isAdmin()
+          );
+      }
+
+      // Ephemeral floating reactions & Gold Super-Reactions (100 Coins)
+      match /reactions/{reactionId} {
+        allow get: if isSignedIn() && isValidId(roomId) && isValidId(reactionId);
+        allow list: if isSignedIn() && isValidId(roomId) && existing().roomId == roomId;
+        allow create: if isSignedIn()
+          && isValidId(roomId)
+          && isValidId(reactionId)
+          && isValidWatchPartyReaction(incoming())
+          && incoming().roomId == roomId
+          && incoming().uid == request.auth.uid
+          && incoming().createdAt == request.time
+          && get(/databases/$(database)/documents/watchParties/$(roomId)).data.status == 'active';
+        allow update: if false;
+        allow delete: if isSignedIn()
+          && isValidId(roomId)
+          && isValidId(reactionId)
+          && (
+            existing().uid == request.auth.uid ||
+            get(/databases/$(database)/documents/watchParties/$(roomId)).data.hostUid == request.auth.uid ||
+            isAdmin()
+          );
+      }
     }
   }
 }

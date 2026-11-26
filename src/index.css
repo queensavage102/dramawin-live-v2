@@ -314,6 +314,30 @@
   animation: securityWrongShake 0.35s ease-out;
 }
 
+@keyframes watchPartyFloatUp {
+  0% {
+    transform: translate3d(0, 0, 0) scale(0.75);
+    opacity: 0;
+  }
+  15% {
+    transform: translate3d(-6px, -28px, 0) scale(1.15);
+    opacity: 1;
+  }
+  55% {
+    transform: translate3d(8px, -110px, 0) scale(1.05);
+    opacity: 0.92;
+  }
+  100% {
+    transform: translate3d(-4px, -210px, 0) scale(0.9);
+    opacity: 0;
+  }
+}
+
+.watch-party-float {
+  animation: watchPartyFloatUp 2.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  will-change: transform, opacity;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .mystery-box-shimmer,
   .mystery-box-halo,
@@ -329,7 +353,8 @@
   .splash-marquee-right,
   .hero-ken-burns,
   .security-emerald-burst,
-  .security-wrong-shake {
+  .security-wrong-shake,
+  .watch-party-float {
     animation: none;
   }
 }

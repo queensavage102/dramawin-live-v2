@@ -9,6 +9,7 @@
 6. **Bounded Payloads**: Every string field enforces explicit `.size()` bounds; arrays (`claimedDays` <= 7, `watchedEpisodeIds` <= 100) are strictly bounded; coin balances are bounded (`0 <= coins <= 100000000`) and non-admin coin increments per write are capped (`<= 1000` per action) to prevent arbitrary client-side balance inflation.
 7. **Support & Prize Win PII Protection**: `/prize_wins/{winId}` and `/support_messages/{messageId}` are readable only by the owning player (`uid == request.auth.uid`) or verified admin (`isAdmin()`). On creation, `support_messages` must have `status == 'open'` and `uid == request.auth.uid`.
 8. **Admin-Only Mail Relay Lock**: `/mail/{mailId}` strictly enforces `to == ['gerinaicker04@gmail.com']` (size 1) on create so verified clients cannot use the Firebase Trigger Email extension as an open email relay to third-party recipients; only verified admins may read/list `/mail`.
+9. **Watch Party Host Authority & Room Integrity**: Only authenticated users may host/join `/watchParties/{roomId}`. Only the room's immutable `hostUid` may update playback sync (`isPlaying`, `currentTime`, `playbackUpdatedAtMs`), viewer count (`viewerCount` bounded `1..25`), switch episodes (`episodeId`, `dailymotionId`, `videoUrl`), or close (`status: 'ended'`) the room. Public rooms enforce `maxCapacity == 25` and Private rooms enforce `isPrivate == true && maxCapacity == 8`. Subcollection writes (`participants`, `messages`, `reactions`) require `uid == request.auth.uid` and verify the parent room's `status == 'active'`. Paid Super-Reactions and Gold Highlighted Chats strictly enforce `(isSuper == false && superCost == 0) || (isSuper == true && superCost == 100)`, and VIP Screening Pass coin deductions are bounded to `>= -1000` per write.
 
 ## 2. The "Dirty Dozen" Adversarial Payloads
 1. **Shadow Field Injection on Leaderboard Create**: `{ uid, username, coins: 0, ..., isAdmin: true }` -> `PERMISSION_DENIED` (blocked by `hasOnly`).
@@ -23,3 +24,6 @@
 10. **Unauthorized Sponsor URL Hijack**: Non-admin updates `/appConfig/global` `sponsorAdUrl` -> `PERMISSION_DENIED`.
 11. **Array Exhaustion**: `claimedDays` with 50 items or `watchedEpisodeIds` with 500 items -> `PERMISSION_DENIED`.
 12. **Wrong Admin Passcode**: Non-admin attempts to create `/admins/{uid}` with `passcode: 'wrong'` -> `PERMISSION_DENIED`.
+13. **Watch Party Guest Hijack**: Guest attempts to update `/watchParties/{roomId}` (`episodeId`, `isPlaying`, or `hostUid`) -> `PERMISSION_DENIED` (`existing().hostUid == request.auth.uid`).
+14. **Watch Party Forged Super-Reaction Cost**: User sends `/watchParties/{roomId}/messages/{msgId}` with `isSuper: true, superCost: 0` or `text` > 240 chars -> `PERMISSION_DENIED`.
+

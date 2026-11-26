@@ -85,9 +85,51 @@ interface ForYouTabProps {
   onStartSponsorReward?: (rewardAction?: () => Promise<void>) => void;
   onMarkEpisodeWatched?: (episode: DramaEpisode) => Promise<void>;
   onUnlockArchiveMovie?: (identifier: string, movieTitle: string) => Promise<boolean>;
+  onUnlockArchiveMovieWithAd?: (identifier: string, movieTitle: string) => Promise<boolean>;
+  onRecordWatchSeconds?: (deltaSeconds: number) => void;
+  onRecordEpisodeCompleted?: (episodeId: string) => void;
   onGoToBoost?: () => void;
   onOpenSpinWheel?: () => void;
   onSwitchToHome: () => void;
+}
+
+function formatPlaybackClock(rawSeconds: number): string {
+  const safe = Math.max(0, Math.floor(Number.isFinite(rawSeconds) ? rawSeconds : 0));
+  const hrs = Math.floor(safe / 3600);
+  const mins = Math.floor((safe % 3600) / 60);
+  const secs = safe % 60;
+  if (hrs > 0) {
+    return `${hrs}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  }
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
+function parseDailymotionMessage(data: unknown): Record<string, unknown> | null {
+  if (typeof data === 'string') {
+    const trimmed = data.trim();
+    if (!trimmed) return null;
+    if (trimmed.startsWith('{')) {
+      try {
+        return JSON.parse(trimmed) as Record<string, unknown>;
+      } catch {
+        return null;
+      }
+    }
+    if (trimmed.includes('=')) {
+      const params = new URLSearchParams(trimmed);
+      const out: Record<string, unknown> = {};
+      params.forEach((v, k) => {
+        const num = Number(v);
+        out[k] = v !== '' && Number.isFinite(num) && /^-?\d+(\.\d+)?$/.test(v) ? num : v;
+      });
+      return out;
+    }
+    return null;
+  }
+  if (data && typeof data === 'object') {
+    return data as Record<string, unknown>;
+  }
+  return null;
 }
 
 function postYouTubeCommand(
@@ -146,6 +188,9 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
   onStartSponsorReward,
   onMarkEpisodeWatched,
   onUnlockArchiveMovie,
+  onUnlockArchiveMovieWithAd,
+  onRecordWatchSeconds,
+  onRecordEpisodeCompleted,
   onGoToBoost,
   onOpenSpinWheel,
   onSwitchToHome,
@@ -169,6 +214,8 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
   const [isRecovering, setIsRecovering] = useState(false);
   const [recoveryFailed, setRecoveryFailed] = useState(false);
   const [isStalledOver5s, setIsStalledOver5s] = useState(false);
+  const [currentTimeSec, setCurrentTimeSec] = useState(0);
+  const [durationSec, setDurationSec] = useState(0);
 
   const playerContainerRef = useRef<HTMLElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -176,22 +223,42 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
   const touchStartYRef = useRef<number | null>(null);
   const elapsedMsRef = useRef(0);
   const previewElapsedMsRef = useRef(0);
+  const watchSecondsBufferRef = useRef(0);
   const isPlayingRef = useRef(true);
   const rewardModalOpenRef = useRef(false);
   const previewLockOpenRef = useRef(false);
   const isCurrentArchiveLockedRef = useRef(false);
   const onAwardRef = useRef(onAwardCoinPot);
+  const onMarkEpisodeWatchedRef = useRef(onMarkEpisodeWatched);
+  const onRecordWatchSecondsRef = useRef(onRecordWatchSeconds);
+  const onRecordEpisodeCompletedRef = useRef(onRecordEpisodeCompleted);
   const stallTimerRef = useRef<number | null>(null);
   const stallPillTimerRef = useRef<number | null>(null);
   const retryDelayTimerRef = useRef<number | null>(null);
   const savedTimeRef = useRef<number>(0);
+  const knownDurationRef = useRef<number>(0);
   const lastProgressTimeRef = useRef<number>(-1);
+  const lastRemoteTimeUpdateRef = useRef<number>(0);
+  const activeEpisodeWatchMsRef = useRef<number>(0);
+  const episodeCompletedFiredRef = useRef<boolean>(false);
 
   const unlockedSet = useMemo(() => new Set(unlockedMovieIds), [unlockedMovieIds]);
 
   useEffect(() => {
     onAwardRef.current = onAwardCoinPot;
   }, [onAwardCoinPot]);
+
+  useEffect(() => {
+    onMarkEpisodeWatchedRef.current = onMarkEpisodeWatched;
+  }, [onMarkEpisodeWatched]);
+
+  useEffect(() => {
+    onRecordWatchSecondsRef.current = onRecordWatchSeconds;
+  }, [onRecordWatchSeconds]);
+
+  useEffect(() => {
+    onRecordEpisodeCompletedRef.current = onRecordEpisodeCompleted;
+  }, [onRecordEpisodeCompleted]);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -377,7 +444,11 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
     clearRecoveryTimers();
     clearStallPill();
     savedTimeRef.current = 0;
+    knownDurationRef.current = 0;
     lastProgressTimeRef.current = -1;
+    lastRemoteTimeUpdateRef.current = 0;
+    activeEpisodeWatchMsRef.current = 0;
+    episodeCompletedFiredRef.current = false;
     setRetryCount(0);
     setIsRecovering(false);
     setRecoveryFailed(false);
@@ -390,6 +461,8 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
     elapsedMsRef.current = 0;
     previewElapsedMsRef.current = 0;
     setRingProgress(0);
+    setCurrentTimeSec(0);
+    setDurationSec(0);
     setIsFitMode(false);
     setTapFeedback(null);
     return () => {
@@ -472,9 +545,95 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
     }
   }, [clearStallPill]);
 
+  const markEpisodeFullyCompleted = useCallback(() => {
+    const ep = currentEpisodeRef.current;
+    if (!ep || episodeCompletedFiredRef.current) return;
+    episodeCompletedFiredRef.current = true;
+    void onMarkEpisodeWatchedRef.current?.(ep);
+    onRecordEpisodeCompletedRef.current?.(ep.id);
+  }, []);
+
+  const handleTimeProgress = useCallback(
+    (timeSec: number, durSec: number) => {
+      lastRemoteTimeUpdateRef.current = Date.now();
+      if (Number.isFinite(timeSec) && timeSec >= 0) {
+        setCurrentTimeSec(timeSec);
+      }
+      if (Number.isFinite(durSec) && durSec > 0) {
+        knownDurationRef.current = durSec;
+        setDurationSec(durSec);
+        if (durSec >= 15 && timeSec >= durSec * 0.85) {
+          markEpisodeFullyCompleted();
+        }
+      }
+    },
+    [markEpisodeFullyCompleted]
+  );
+
+  const handleScrubSeek = useCallback((rawTarget: number) => {
+    const target = Math.max(0, rawTarget);
+    if (isCurrentArchiveLockedRef.current && target >= PREVIEW_FREE_SECONDS) {
+      const clamped = PREVIEW_FREE_SECONDS - 1;
+      savedTimeRef.current = clamped;
+      setCurrentTimeSec(clamped);
+      previewElapsedMsRef.current = PREVIEW_FREE_SECONDS * 1000;
+      if (sourceKindRef.current === 'youtube') {
+        postYouTubeCommand(iframeRef.current, 'seekTo', [clamped, true]);
+        postYouTubeCommand(iframeRef.current, 'pauseVideo');
+      } else if (sourceKindRef.current === 'dailymotion') {
+        postDailymotionCommand(iframeRef.current, 'seek', [clamped]);
+        postDailymotionCommand(iframeRef.current, 'pause');
+      } else if (sourceKindRef.current === 'vimeo') {
+        postVimeoCommand(iframeRef.current, 'setCurrentTime', clamped);
+        postVimeoCommand(iframeRef.current, 'pause');
+      }
+      if (videoRef.current) {
+        try {
+          videoRef.current.currentTime = clamped;
+          videoRef.current.pause();
+        } catch {
+          // Ignore seek clamp error
+        }
+      }
+      clearRecoveryTimers();
+      clearStallPill();
+      previewLockOpenRef.current = true;
+      isPlayingRef.current = false;
+      setIsPlaying(false);
+      setPreviewLockOpen(true);
+      return;
+    }
+
+    savedTimeRef.current = target;
+    setCurrentTimeSec(target);
+    previewElapsedMsRef.current = Math.min(target, PREVIEW_FREE_SECONDS) * 1000;
+    if (sourceKindRef.current === 'youtube') {
+      postYouTubeCommand(iframeRef.current, 'seekTo', [target, true]);
+    } else if (sourceKindRef.current === 'dailymotion') {
+      postDailymotionCommand(iframeRef.current, 'seek', [target]);
+    } else if (sourceKindRef.current === 'vimeo') {
+      postVimeoCommand(iframeRef.current, 'setCurrentTime', target);
+    }
+    if (videoRef.current) {
+      try {
+        const maxDur =
+          Number.isFinite(videoRef.current.duration) && videoRef.current.duration > 0
+            ? videoRef.current.duration
+            : target;
+        videoRef.current.currentTime = Math.min(target, maxDur);
+      } catch {
+        // Ignore seek error
+      }
+    }
+  }, [clearRecoveryTimers, clearStallPill]);
+
   const handleVideoLoadedMetadata = useCallback((e: React.SyntheticEvent<HTMLVideoElement>) => {
     e.currentTarget.muted = mutedRef.current;
     e.currentTarget.volume = 1;
+    if (Number.isFinite(e.currentTarget.duration) && e.currentTarget.duration > 0) {
+      knownDurationRef.current = e.currentTarget.duration;
+      handleTimeProgress(e.currentTarget.currentTime || 0, e.currentTarget.duration);
+    }
     if (savedTimeRef.current > 1 && Number.isFinite(e.currentTarget.duration)) {
       const targetTime = Math.min(savedTimeRef.current, Math.max(0, e.currentTarget.duration - 1));
       try {
@@ -483,7 +642,7 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
         // Ignore seek errors before readyState
       }
     }
-  }, []);
+  }, [handleTimeProgress]);
 
   const handleVideoCanPlay = useCallback(() => {
     clearRecoveryTimers();
@@ -530,6 +689,13 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
   const handleVideoTimeUpdate = useCallback(
     (e: React.SyntheticEvent<HTMLVideoElement>) => {
       const nowTime = e.currentTarget.currentTime;
+      const vidDur =
+        Number.isFinite(e.currentTarget.duration) && e.currentTarget.duration > 0
+          ? e.currentTarget.duration
+          : knownDurationRef.current;
+      if (vidDur > 0) {
+        knownDurationRef.current = vidDur;
+      }
       if (isCurrentArchiveLockedRef.current && nowTime >= PREVIEW_FREE_SECONDS) {
         savedTimeRef.current = PREVIEW_FREE_SECONDS - 0.1;
         try {
@@ -546,8 +712,9 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
         setPreviewLockOpen(true);
         return;
       }
-      if (nowTime > 0) {
+      if (nowTime >= 0) {
         savedTimeRef.current = nowTime;
+        handleTimeProgress(nowTime, knownDurationRef.current);
       }
       if (nowTime > 0 && Math.abs(nowTime - lastProgressTimeRef.current) > 0.05) {
         lastProgressTimeRef.current = nowTime;
@@ -558,7 +725,7 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
         }
       }
     },
-    [clearRecoveryTimers, clearStallPill]
+    [clearRecoveryTimers, clearStallPill, handleTimeProgress]
   );
 
   const handleVideoSeekingGuard = useCallback(
@@ -695,12 +862,138 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
   }, [muted, videoSource.kind, resolvedMediaUrl, currentEpisode?.id]);
 
   useEffect(() => {
-    if (videoSource.kind !== 'youtube') return;
+    if (
+      videoSource.kind !== 'youtube' &&
+      videoSource.kind !== 'dailymotion' &&
+      videoSource.kind !== 'vimeo'
+    ) {
+      return;
+    }
     const handleMessage = (event: MessageEvent) => {
+      const origin = typeof event.origin === 'string' ? event.origin.toLowerCase() : '';
+
+      if (videoSource.kind === 'dailymotion') {
+        if (origin && !origin.includes('dailymotion.com')) return;
+        const dm = parseDailymotionMessage(event.data);
+        if (!dm) return;
+        const evName = typeof dm.event === 'string' ? dm.event.toLowerCase() : '';
+        const dmTime =
+          typeof dm.time === 'number'
+            ? dm.time
+            : typeof dm.currentTime === 'number'
+              ? dm.currentTime
+              : null;
+        const dmDur = typeof dm.duration === 'number' ? dm.duration : null;
+
+        if (dmDur !== null && Number.isFinite(dmDur) && dmDur > 0) {
+          knownDurationRef.current = dmDur;
+          handleTimeProgress(savedTimeRef.current, dmDur);
+        }
+
+        if (dmTime !== null && Number.isFinite(dmTime) && dmTime >= 0) {
+          if (isCurrentArchiveLockedRef.current && dmTime >= PREVIEW_FREE_SECONDS) {
+            savedTimeRef.current = PREVIEW_FREE_SECONDS - 1;
+            postDailymotionCommand(iframeRef.current, 'seek', [PREVIEW_FREE_SECONDS - 1]);
+            postDailymotionCommand(iframeRef.current, 'pause');
+            clearRecoveryTimers();
+            clearStallPill();
+            setIsPlaying(false);
+            isPlayingRef.current = false;
+            previewLockOpenRef.current = true;
+            setPreviewLockOpen(true);
+            return;
+          }
+          savedTimeRef.current = dmTime;
+          handleTimeProgress(dmTime, knownDurationRef.current);
+        }
+
+        if ((evName === 'playing' || evName === 'play') && !rewardModalOpenRef.current) {
+          clearRecoveryTimers();
+          clearStallPill();
+          setIsRecovering(false);
+          setRecoveryFailed(false);
+          setIsPlaying(true);
+          isPlayingRef.current = true;
+        } else if (evName === 'pause') {
+          clearRecoveryTimers();
+          clearStallPill();
+          setIsPlaying(false);
+          isPlayingRef.current = false;
+        } else if (evName === 'video_end' || evName === 'end') {
+          clearRecoveryTimers();
+          clearStallPill();
+          setIsPlaying(false);
+          isPlayingRef.current = false;
+          markEpisodeFullyCompleted();
+        } else if (evName === 'error') {
+          setIsPlaying(false);
+          scheduleStallPill();
+          triggerAutoRecover(false);
+        }
+        return;
+      }
+
+      if (videoSource.kind === 'vimeo') {
+        if (origin && !origin.includes('vimeo.com')) return;
+        let vimeoPayload: { event?: string; data?: { seconds?: number; duration?: number } } | null = null;
+        if (typeof event.data === 'string') {
+          try {
+            vimeoPayload = JSON.parse(event.data) as {
+              event?: string;
+              data?: { seconds?: number; duration?: number };
+            };
+          } catch {
+            return;
+          }
+        } else if (event.data && typeof event.data === 'object') {
+          vimeoPayload = event.data as {
+            event?: string;
+            data?: { seconds?: number; duration?: number };
+          };
+        }
+        if (!vimeoPayload) return;
+        if (vimeoPayload.event === 'timeupdate' || vimeoPayload.event === 'playProgress') {
+          const sec =
+            typeof vimeoPayload.data?.seconds === 'number'
+              ? vimeoPayload.data.seconds
+              : savedTimeRef.current;
+          const dur =
+            typeof vimeoPayload.data?.duration === 'number'
+              ? vimeoPayload.data.duration
+              : knownDurationRef.current;
+          if (dur > 0) knownDurationRef.current = dur;
+          if (isCurrentArchiveLockedRef.current && sec >= PREVIEW_FREE_SECONDS) {
+            savedTimeRef.current = PREVIEW_FREE_SECONDS - 1;
+            postVimeoCommand(iframeRef.current, 'setCurrentTime', PREVIEW_FREE_SECONDS - 1);
+            postVimeoCommand(iframeRef.current, 'pause');
+            setIsPlaying(false);
+            isPlayingRef.current = false;
+            previewLockOpenRef.current = true;
+            setPreviewLockOpen(true);
+            return;
+          }
+          savedTimeRef.current = sec;
+          handleTimeProgress(sec, knownDurationRef.current);
+        } else if (vimeoPayload.event === 'play' && !rewardModalOpenRef.current) {
+          clearRecoveryTimers();
+          clearStallPill();
+          setIsPlaying(true);
+          isPlayingRef.current = true;
+        } else if (vimeoPayload.event === 'pause') {
+          setIsPlaying(false);
+          isPlayingRef.current = false;
+        } else if (vimeoPayload.event === 'finish') {
+          setIsPlaying(false);
+          isPlayingRef.current = false;
+          markEpisodeFullyCompleted();
+        }
+        return;
+      }
+
       if (
-        typeof event.origin === 'string' &&
-        !event.origin.includes('youtube.com') &&
-        !event.origin.includes('youtube-nocookie.com')
+        origin &&
+        !origin.includes('youtube.com') &&
+        !origin.includes('youtube-nocookie.com')
       ) {
         return;
       }
@@ -722,13 +1015,13 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
         return;
       }
 
-      if (
-        payload.info &&
-        typeof payload.info === 'object' &&
-        typeof (payload.info as { currentTime?: unknown }).currentTime === 'number'
-      ) {
-        const ytTime = (payload.info as { currentTime: number }).currentTime;
-        if (Number.isFinite(ytTime) && ytTime > 0) {
+      if (payload.info && typeof payload.info === 'object') {
+        const infoObj = payload.info as { currentTime?: unknown; duration?: unknown };
+        if (typeof infoObj.duration === 'number' && Number.isFinite(infoObj.duration) && infoObj.duration > 0) {
+          knownDurationRef.current = infoObj.duration;
+        }
+        if (typeof infoObj.currentTime === 'number' && Number.isFinite(infoObj.currentTime) && infoObj.currentTime >= 0) {
+          const ytTime = infoObj.currentTime;
           if (isCurrentArchiveLockedRef.current && ytTime >= PREVIEW_FREE_SECONDS) {
             savedTimeRef.current = PREVIEW_FREE_SECONDS - 1;
             postYouTubeCommand(iframeRef.current, 'seekTo', [PREVIEW_FREE_SECONDS - 1, true]);
@@ -742,6 +1035,9 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
             return;
           }
           savedTimeRef.current = ytTime;
+          handleTimeProgress(ytTime, knownDurationRef.current);
+        } else if (knownDurationRef.current > 0) {
+          handleTimeProgress(savedTimeRef.current, knownDurationRef.current);
         }
       }
 
@@ -780,7 +1076,7 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
       } else if (playerState === 0 && currentEpisode) {
         clearRecoveryTimers();
         clearStallPill();
-        void onMarkEpisodeWatched?.(currentEpisode);
+        markEpisodeFullyCompleted();
       }
     };
 
@@ -790,7 +1086,8 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
     videoSource.kind,
     resolvedMediaUrl,
     currentEpisode,
-    onMarkEpisodeWatched,
+    handleTimeProgress,
+    markEpisodeFullyCompleted,
     triggerAutoRecover,
     clearRecoveryTimers,
     clearStallPill,
@@ -820,6 +1117,13 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
       }
 
       elapsedMsRef.current += delta;
+      watchSecondsBufferRef.current += delta;
+      if (watchSecondsBufferRef.current >= 5000) {
+        const wholeSeconds = Math.floor(watchSecondsBufferRef.current / 1000);
+        watchSecondsBufferRef.current -= wholeSeconds * 1000;
+        onRecordWatchSecondsRef.current?.(wholeSeconds);
+      }
+
       const pct = Math.min(100, (elapsedMsRef.current / cycleMs) * 100);
       setRingProgress(pct);
 
@@ -831,12 +1135,19 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
       }
     }, 100);
 
-    return () => window.clearInterval(interval);
+    return () => {
+      window.clearInterval(interval);
+      if (watchSecondsBufferRef.current >= 1000) {
+        const wholeSeconds = Math.floor(watchSecondsBufferRef.current / 1000);
+        watchSecondsBufferRef.current -= wholeSeconds * 1000;
+        onRecordWatchSecondsRef.current?.(wholeSeconds);
+      }
+    };
   }, [currentEpisode?.id, isFeaturedPreviewSlide]);
 
-  // 3-minute free preview timer for YouTube / embedded streams
+  // 3-minute free preview timer, fallback scrub clock & full-episode completion watch clock
   useEffect(() => {
-    if (!currentEpisode || isFeaturedPreviewSlide || !isCurrentArchiveLocked) return;
+    if (!currentEpisode || isFeaturedPreviewSlide) return;
     const limitMs = PREVIEW_FREE_SECONDS * 1000;
     let lastTick = Date.now();
 
@@ -854,6 +1165,19 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
         return;
       }
 
+      activeEpisodeWatchMsRef.current += delta;
+      if (!isCurrentArchiveLocked && activeEpisodeWatchMsRef.current >= 240_000) {
+        markEpisodeFullyCompleted();
+      }
+
+      if (now - lastRemoteTimeUpdateRef.current > 1100) {
+        setCurrentTimeSec((prev) => {
+          const next = prev + delta / 1000;
+          return isCurrentArchiveLocked ? Math.min(PREVIEW_FREE_SECONDS, next) : next;
+        });
+      }
+
+      if (!isCurrentArchiveLocked) return;
       previewElapsedMsRef.current += delta;
       if (previewElapsedMsRef.current >= limitMs && !previewLockOpenRef.current) {
         previewLockOpenRef.current = true;
@@ -861,10 +1185,10 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
         setIsPlaying(false);
         isPlayingRef.current = false;
       }
-    }, 100);
+    }, 200);
 
     return () => window.clearInterval(interval);
-  }, [currentEpisode?.id, isFeaturedPreviewSlide, isCurrentArchiveLocked]);
+  }, [currentEpisode?.id, isFeaturedPreviewSlide, isCurrentArchiveLocked, markEpisodeFullyCompleted]);
 
   const tapFeedbackTimerRef = useRef<number | null>(null);
 
@@ -1017,6 +1341,19 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
   const weeklyPct = Math.min(100, Math.max(0, (playerWeeklyCoins / safeThreshold) * 100));
   const isQualified = playerWeeklyCoins >= safeThreshold;
 
+  const effectiveDurationSec =
+    durationSec > 0
+      ? durationSec
+      : Math.max(isCurrentArchiveLocked ? PREVIEW_FREE_SECONDS : 600, Math.ceil(currentTimeSec));
+  const scrubFillPct =
+    effectiveDurationSec > 0
+      ? Math.min(100, Math.max(0, (currentTimeSec / effectiveDurationSec) * 100))
+      : 0;
+  const previewGatePct =
+    isCurrentArchiveLocked && effectiveDurationSec > 0
+      ? Math.min(100, Math.max(0, (PREVIEW_FREE_SECONDS / effectiveDurationSec) * 100))
+      : null;
+
   return (
     <>
       <section
@@ -1038,8 +1375,8 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
           isExpandedFull ? 'z-[75]' : 'z-[35]'
         }`}
       >
-        {/* 1. True Zero-Escape Full-Screen Video Stage (h-[calc(100vh-135px)]) */}
-        <div className="relative h-[calc(100vh-135px)] h-[calc(100dvh-135px)] w-full flex-1 min-h-0 bg-[#060608] overflow-hidden [container-type:size]">
+        {/* 1. True Zero-Escape Full-Screen Video Stage */}
+        <div className="relative w-full flex-1 min-h-0 bg-[#060608] overflow-hidden [container-type:size]">
           {/* Video Frame / Featured Drama Preview Layer */}
           {currentEpisode.featuredDrama ? (
             <div className="relative w-full h-full overflow-hidden bg-[#060608]">
@@ -1121,7 +1458,7 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
               onError={handleVideoError}
               onPause={handleVideoPause}
               onEnded={() => {
-                if (currentEpisode) void onMarkEpisodeWatched?.(currentEpisode);
+                markEpisodeFullyCompleted();
               }}
               className={isFitMode ? FORYOU_VIDEO_FIT_CLASS : FORYOU_VIDEO_FILL_CLASS}
             />
@@ -1527,7 +1864,7 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
             </div>
           )}
 
-          {/* 3-Minute Free Preview -> Spend 500 Coins Lock Overlay */}
+          {/* 3-Minute Free Preview -> 15s Monetag Direct Link or Spend 500 Coins Lock Overlay */}
           <MovieUnlockOverlay
             open={previewLockOpen && isCurrentArchiveLocked}
             movieTitle={currentEpisode.title}
@@ -1544,9 +1881,27 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
               }
               return ok;
             }}
+            onUnlockWithAd={
+              onUnlockArchiveMovieWithAd && currentArchiveId
+                ? async () => {
+                    const ok = await onUnlockArchiveMovieWithAd(
+                      currentArchiveId,
+                      currentEpisode.title
+                    );
+                    if (ok) {
+                      previewLockOpenRef.current = false;
+                      setPreviewLockOpen(false);
+                      isPlayingRef.current = true;
+                      setIsPlaying(true);
+                    }
+                    return ok;
+                  }
+                : undefined
+            }
             onReplayPreview={() => {
               previewElapsedMsRef.current = 0;
               previewLockOpenRef.current = false;
+              setCurrentTimeSec(0);
               setPreviewLockOpen(false);
               savedTimeRef.current = 0;
               if (videoSource.kind === 'youtube') {
@@ -1555,6 +1910,9 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
               } else if (videoSource.kind === 'dailymotion') {
                 postDailymotionCommand(iframeRef.current, 'seek', [0]);
                 postDailymotionCommand(iframeRef.current, 'play');
+              } else if (videoSource.kind === 'vimeo') {
+                postVimeoCommand(iframeRef.current, 'setCurrentTime', 0);
+                postVimeoCommand(iframeRef.current, 'play');
               }
               if (videoRef.current) {
                 try {
@@ -1574,7 +1932,95 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
           />
         </div>
 
-        {/* 4. Pinned Bottom 320x50px Adsterra/Monetag Banner & 18+ Disclaimer Flush Above Bottom Nav Bar */}
+        {/* 4. Custom Neon-Gold Interactive Scrub Bar cleanly above Bottom Ad Banner */}
+        {!isFeaturedPreviewSlide && (
+          <div className="shrink-0 relative z-20 w-full bg-[#0B0A10]/95 backdrop-blur-md border-t border-[#D4AF37]/30 px-2.5 sm:px-4 py-1.5 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleTogglePlayPause}
+              aria-label={isPlaying ? 'Pause episode' : 'Play episode'}
+              className="w-7 h-7 rounded-full bg-black/75 border border-[#D4AF37]/60 text-[#FCE7A2] flex items-center justify-center shrink-0 cursor-pointer hover:border-[#FBBF24] transition"
+            >
+              {isPlaying ? (
+                <Pause className="w-3.5 h-3.5" />
+              ) : (
+                <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
+              )}
+            </button>
+
+            <span className="font-mono-num text-[10px] sm:text-[11px] font-bold text-[#FCE7A2] tabular-nums shrink-0">
+              {formatPlaybackClock(currentTimeSec)}
+            </span>
+
+            <div className="relative flex-1 flex items-center h-6">
+              <div className="pointer-events-none relative w-full h-1.5 rounded-full bg-white/15 overflow-hidden">
+                <div
+                  className="h-full rounded-full gold-gradient-bg shadow-[0_0_10px_rgba(251,191,36,0.75)] transition-[width] duration-150 ease-linear"
+                  style={{ width: `${scrubFillPct}%` }}
+                />
+                {previewGatePct !== null && (
+                  <span
+                    aria-hidden="true"
+                    title="03:00 Free Preview Gate"
+                    className="absolute inset-y-0 w-0.5 bg-rose-400 shadow-[0_0_6px_rgba(251,113,133,0.9)]"
+                    style={{ left: `${previewGatePct}%` }}
+                  />
+                )}
+              </div>
+              <input
+                type="range"
+                aria-label="Seek episode playback"
+                min={0}
+                max={effectiveDurationSec}
+                step={1}
+                value={Math.min(effectiveDurationSec, Math.floor(currentTimeSec))}
+                onChange={(e) => handleScrubSeek(Number(e.target.value))}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+              />
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3 h-3 rounded-full bg-[#FCE7A2] border border-[#181307] shadow-[0_0_10px_rgba(251,191,36,0.95)]"
+                style={{ left: `${scrubFillPct}%` }}
+              />
+            </div>
+
+            <span className="font-mono-num text-[10px] sm:text-[11px] font-semibold text-zinc-400 tabular-nums shrink-0">
+              {formatPlaybackClock(effectiveDurationSec)}
+            </span>
+
+            {currentArchiveId && isCurrentArchiveLocked ? (
+              <button
+                type="button"
+                onClick={() => {
+                  previewLockOpenRef.current = true;
+                  setPreviewLockOpen(true);
+                  setIsPlaying(false);
+                  isPlayingRef.current = false;
+                }}
+                className="min-h-[28px] px-2.5 rounded-full gold-gradient-bg text-[#181307] text-[10px] sm:text-[11px] font-extrabold inline-flex items-center gap-1 whitespace-nowrap shrink-0 shadow-[0_0_12px_rgba(251,191,36,0.4)] cursor-pointer"
+              >
+                <Lock className="w-3 h-3 shrink-0" />
+                <span>Unlock Full ({FULL_EPISODE_UNLOCK_COINS})</span>
+              </button>
+            ) : feedEpisodes.length > 1 ? (
+              <button
+                type="button"
+                onClick={handleNext}
+                className="min-h-[28px] px-2.5 rounded-full gold-gradient-bg text-[#181307] text-[10px] sm:text-[11px] font-extrabold inline-flex items-center gap-1 whitespace-nowrap shrink-0 shadow-[0_0_12px_rgba(251,191,36,0.4)] cursor-pointer"
+              >
+                <span>Next Ep</span>
+                <SkipForward className="w-3 h-3 fill-current shrink-0" />
+              </button>
+            ) : currentArchiveId ? (
+              <span className="min-h-[26px] px-2 rounded-full bg-emerald-950/85 border border-emerald-400/45 text-emerald-200 text-[10px] font-bold inline-flex items-center gap-1 whitespace-nowrap shrink-0">
+                <Unlock className="w-3 h-3 shrink-0" />
+                <span>Unlocked</span>
+              </span>
+            ) : null}
+          </div>
+        )}
+
+        {/* 5. Pinned Bottom 320x50px Adsterra/Monetag Banner & 18+ Disclaimer Flush Above Bottom Nav Bar */}
         <footer
           className={`shrink-0 relative z-20 bg-[#09090b] border-t border-[#D4AF37]/30 px-3 py-1 flex flex-col items-center justify-center ${
             isExpandedFull ? 'mb-0' : 'mb-16'

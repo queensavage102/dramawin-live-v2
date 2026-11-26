@@ -458,7 +458,7 @@ export async function awardPlayerCoins(
   const newCoins = Math.max(0, player.coins + roundedDelta);
   const weeklyGain = Math.max(
     0,
-    Math.min(5000, Math.round(weeklyBonusDelta !== undefined ? weeklyBonusDelta : Math.max(0, walletDelta)))
+    Math.min(20000, Math.round(weeklyBonusDelta !== undefined ? weeklyBonusDelta : Math.max(0, walletDelta)))
   );
   const newWeekly = player.weeklyCoins + weeklyGain;
   const qualified = newWeekly >= qualificationThreshold;
@@ -725,7 +725,7 @@ export async function awardWatchPotCoins(
   episodeId?: string
 ): Promise<void> {
   const todayKey = getTodayDateKey();
-  const safeReward = Math.max(100, Math.min(600, Math.round(rewardCoins || 300)));
+  const safeReward = Math.max(100, Math.min(2000, Math.round(rewardCoins || 1000)));
   const nextWatched = episodeId
     ? mergeWatchedEpisodeId(privateState.watchedEpisodeIds || [], episodeId)
     : undefined;
@@ -887,7 +887,7 @@ export async function awardBoostCoins(
   title: string
 ): Promise<void> {
   const todayKey = getTodayDateKey();
-  const safeReward = Math.max(1, Math.min(2000, Math.round(rewardCoins)));
+  const safeReward = Math.max(1, Math.min(20000, Math.round(rewardCoins)));
   await awardPlayerCoins(
     player,
     privateState,

@@ -5,6 +5,13 @@ export const MONETAG_LINK = 'https://uplcm.com/4/12320047';
 export const DEFAULT_SPONSOR_URL = MONETAG_LINK;
 export const PUBLIC_APP_SHARE_ORIGIN = 'https://drama-win-tornement.vercel.app';
 export const REFERRAL_REWARD_COINS = 1000;
+export const WATCH_PARTY_COINS_MULTIPLIER = 1.5;
+export const WATCH_PARTY_SUPER_COST = 100;
+export const WATCH_PARTY_ENTRY_COIN_COST = 1000;
+export const WATCH_PARTY_ENTRY_AD_COUNT = 3;
+export const WATCH_PARTY_PUBLIC_CAPACITY = 25;
+export const WATCH_PARTY_PRIVATE_CAPACITY = 8;
+export const WATCH_PARTY_EMOJIS = ['🔥', '😱', '❤️'] as const;
 
 export function buildPersonalInviteLink(userId: string): string {
   const cleanId = encodeURIComponent((userId || '').trim());
@@ -13,6 +20,15 @@ export function buildPersonalInviteLink(userId: string): string {
       ? window.location.origin
       : PUBLIC_APP_SHARE_ORIGIN;
   return cleanId ? `${origin}/?ref=${cleanId}` : origin;
+}
+
+export function buildWatchPartyInviteLink(roomId: string): string {
+  const cleanRoom = encodeURIComponent((roomId || '').trim().toUpperCase());
+  const origin =
+    typeof window !== 'undefined' && window.location?.origin
+      ? window.location.origin
+      : PUBLIC_APP_SHARE_ORIGIN;
+  return cleanRoom ? `${origin}/?lobby=${cleanRoom}` : origin;
 }
 
 export const ADMIN_PASSCODE = 'Gideon_123';
@@ -27,9 +43,9 @@ export const BANNER_AD_COINS = 25;
 export const BANNER_COOLDOWN_MS = 15000;
 export const VIDEO_MIN_WATCH_SECONDS = 30;
 export const COIN_POT_CYCLE_SECONDS = 60;
-export const COIN_POT_BASE_REWARD = 300;
+export const COIN_POT_BASE_REWARD = 1000;
 export const COIN_POT_MIN_COINS = 100;
-export const COIN_POT_MAX_COINS = 300;
+export const COIN_POT_MAX_COINS = 2000;
 export const DEFAULT_VIDEO_START_SECONDS = 28;
 export const MYSTERY_ENTRY_COST = 250;
 export const MYSTERY_CYCLE_BOXES = 12;
@@ -1129,13 +1145,15 @@ export function getDailymotionEmbedUrl(
 
   const params = new URLSearchParams();
   params.set('autoplay', options?.autoplay === false ? '0' : '1');
+  params.set('mute', options?.muted ? '1' : '0');
   params.set('ui-logo', '0');
   params.set('queue-enable', 'false');
-  params.set('mute', options?.muted ? '1' : '0');
+  params.set('subtitles-default', 'en');
   params.set('quality', 'auto');
   params.set('playsinline', '1');
   params.set('sharing-enable', 'false');
   params.set('api', 'postMessage');
+  params.set('ui-start-screen-info', 'false');
   if (
     typeof options?.startSeconds === 'number' &&
     Number.isFinite(options.startSeconds) &&

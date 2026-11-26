@@ -10,6 +10,7 @@ import {
   Play,
   Sparkles,
   Unlock,
+  Users,
   X,
 } from 'lucide-react';
 import {
@@ -25,7 +26,8 @@ import {
   sanitizePosterUrl,
   toSeriesId,
 } from '../constants';
-import { DramaEpisode, DramaSeries, PlayerPrivate } from '../types';
+import { episodeFromWatchPartyRoom } from '../services/watchPartyService';
+import { DramaEpisode, DramaSeries, PlayerPrivate, WatchPartyRoom } from '../types';
 import {
   MODERN_GENRES,
   ModernGenre,
@@ -54,6 +56,16 @@ interface SeriesFoldersSectionProps {
   qualificationThreshold: number;
   muted: boolean;
   resumePlaybackSignal?: number;
+  watchPartyRoom?: WatchPartyRoom | null;
+  watchPartyRole?: 'host' | 'guest';
+  watchPartyViewerCount?: number;
+  watchPartyUsername?: string;
+  onOpenWatchPartyLobby?: (currentEpisode?: DramaEpisode | null) => void;
+  onLeaveWatchParty?: () => void;
+  onSyncHostPlayback?: (playback: { isPlaying: boolean; currentTime: number }) => void;
+  onSwitchWatchPartyEpisode?: (episode: DramaEpisode) => Promise<void>;
+  onDeductSuperReactionCoins?: (cost: number, title: string) => Promise<boolean>;
+  onNotifyWatchParty?: (message: string, tone?: 'gold' | 'neutral' | 'error') => void;
   onToggleMute: () => void;
   onAwardCoinPot: (episode: DramaEpisode, amount: number) => Promise<void>;
   onClaimGiftBoxCoins?: () => Promise<void>;
@@ -65,6 +77,11 @@ interface SeriesFoldersSectionProps {
   onClaimHeroBonus?: () => Promise<void>;
   onMarkEpisodeWatched?: (episode: DramaEpisode) => Promise<void>;
   onUnlockArchiveMovie?: (identifier: string, movieTitle: string) => Promise<boolean>;
+  onUnlockArchiveMovieWithAd?: (identifier: string, movieTitle: string) => Promise<boolean>;
+  onRecordWatchSeconds?: (deltaSeconds: number) => void;
+  onRecordEpisodeCompleted?: (episodeId: string) => void;
+  onPlayerOpenChange?: (isOpen: boolean) => void;
+  closePlayerSignal?: number;
   onGoToBoost?: () => void;
 }
 
@@ -319,6 +336,16 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
   qualificationThreshold,
   muted,
   resumePlaybackSignal,
+  watchPartyRoom = null,
+  watchPartyRole = 'guest',
+  watchPartyViewerCount = 1,
+  watchPartyUsername = 'Player',
+  onOpenWatchPartyLobby,
+  onLeaveWatchParty,
+  onSyncHostPlayback,
+  onSwitchWatchPartyEpisode,
+  onDeductSuperReactionCoins,
+  onNotifyWatchParty,
   onToggleMute,
   onAwardCoinPot,
   onClaimGiftBoxCoins,
@@ -327,6 +354,11 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
   onClaimHeroBonus,
   onMarkEpisodeWatched,
   onUnlockArchiveMovie,
+  onUnlockArchiveMovieWithAd,
+  onRecordWatchSeconds,
+  onRecordEpisodeCompleted,
+  onPlayerOpenChange,
+  closePlayerSignal = 0,
   onGoToBoost,
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<ModernGenre>('All');
@@ -339,6 +371,30 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
   const heroTouchStartX = useRef<number | null>(null);
 
   const unlockedSet = useMemo(() => new Set(unlockedMovieIds), [unlockedMovieIds]);
+
+  const effectivePlayerEpisode = useMemo(() => {
+    if (watchPartyRoom && watchPartyRoom.status === 'active') {
+      return episodeFromWatchPartyRoom(watchPartyRoom);
+    }
+    return activePlayerEpisode;
+  }, [watchPartyRoom, activePlayerEpisode]);
+
+  useEffect(() => {
+    onPlayerOpenChange?.(Boolean(effectivePlayerEpisode));
+  }, [effectivePlayerEpisode, onPlayerOpenChange]);
+
+  const prevCloseSignalRef = useRef(closePlayerSignal);
+
+  useEffect(() => {
+    if (closePlayerSignal > prevCloseSignalRef.current) {
+      prevCloseSignalRef.current = closePlayerSignal;
+      setActivePlayerEpisode(null);
+      setSelectedSeriesId(null);
+      onLeaveWatchParty?.();
+    } else {
+      prevCloseSignalRef.current = closePlayerSignal;
+    }
+  }, [closePlayerSignal, onLeaveWatchParty]);
 
   useEffect(() => {
     const cached = getCachedDailymotionShowsByGenre(selectedCategory);
@@ -572,7 +628,7 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
     };
   }, [seriesGroups, selectedSeriesId, episodes]);
 
-  const isModalOpen = Boolean(activeSeriesGroup || activePlayerEpisode);
+  const isModalOpen = Boolean(activeSeriesGroup || effectivePlayerEpisode);
   useEffect(() => {
     if (!isModalOpen || typeof document === 'undefined') return;
     const htmlEl = document.documentElement;
@@ -814,6 +870,38 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
         {/* Install DramaWin App (PWA) Widget below Hero Carousel */}
         <InstallAppWidget storageKey="dramawin_install_home_dismissed_v1" />
 
+        {/* Live Watch Party 1.5x Coins Lobby Launcher */}
+        {onOpenWatchPartyLobby && (
+          <div className="rounded-2xl bg-gradient-to-r from-[#1c1507] via-[#13121a] to-[#0f1715] border border-[#D4AF37]/40 px-3.5 py-2.5 flex items-center justify-between gap-3 shadow-[0_8px_24px_rgba(0,0,0,0.45)]">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="w-9 h-9 rounded-xl gold-gradient-bg text-[#181307] flex items-center justify-center shrink-0 shadow-[0_0_14px_rgba(212,175,55,0.4)]">
+                <Users className="w-4 h-4" />
+              </span>
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <p className="text-xs sm:text-sm font-extrabold text-white truncate">
+                    Watch Party Lobby
+                  </p>
+                  <span className="px-1.5 py-0.5 rounded bg-amber-400/20 border border-amber-400/45 text-[9px] font-black text-amber-300 uppercase shrink-0">
+                    1.5x Coins
+                  </span>
+                </div>
+                <p className="text-[11px] text-zinc-400 truncate">
+                  Watch in sync with friends, live chat &amp; Gold Super-Reactions
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => onOpenWatchPartyLobby(null)}
+              className="min-h-[36px] px-3.5 rounded-xl gold-gradient-bg text-[#181307] text-xs font-black whitespace-nowrap shrink-0 shadow hover:brightness-105 cursor-pointer"
+            >
+              Host / Join
+            </button>
+          </div>
+        )}
+
         {/* 2. Top Genre Filter Pills (All, Horror, Romance, Drama, Anime) */}
         <div
           role="tablist"
@@ -1014,7 +1102,7 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
                             {episode.episodeLabel}
                           </span>
                           <span className="font-mono-num font-bold text-amber-200 shrink-0">
-                            +300 / +600 Coins
+                            +1,000 / +2,000 Coins
                           </span>
                         </div>
 
@@ -1047,13 +1135,19 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
       )}
 
       {/* Fullscreen Episode Watch Screen */}
-      {activePlayerEpisode && (
+      {effectivePlayerEpisode && (
         <EpisodeWatchScreen
-          key={activePlayerEpisode.id}
+          key={
+            watchPartyRoom && watchPartyRoom.status === 'active'
+              ? `party-${watchPartyRoom.roomId}`
+              : effectivePlayerEpisode.id
+          }
           episode={
-            activePlayerEpisode.archiveIdentifier
-              ? activePlayerEpisode
-              : episodes.find((ep) => ep.id === activePlayerEpisode.id) || activePlayerEpisode
+            effectivePlayerEpisode.archiveIdentifier ||
+            (watchPartyRoom && watchPartyRoom.status === 'active')
+              ? effectivePlayerEpisode
+              : episodes.find((ep) => ep.id === effectivePlayerEpisode.id) ||
+                effectivePlayerEpisode
           }
           episodes={episodes}
           referralUserId={referralUserId}
@@ -1066,10 +1160,23 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
           hasNextEpisode={Boolean(nextEpisodeForActivePlayer)}
           nextEpisodeLabel={nextEpisodeForActivePlayer?.episodeLabel}
           isArchiveLocked={Boolean(
-            activePlayerEpisode.archiveIdentifier &&
-              !unlockedSet.has(activePlayerEpisode.archiveIdentifier)
+            effectivePlayerEpisode.archiveIdentifier &&
+              !unlockedSet.has(effectivePlayerEpisode.archiveIdentifier)
           )}
+          watchPartyRoom={watchPartyRoom}
+          watchPartyRole={watchPartyRole}
+          watchPartyViewerCount={watchPartyViewerCount}
+          watchPartyUsername={watchPartyUsername}
+          onOpenWatchPartyLobby={onOpenWatchPartyLobby}
+          onLeaveWatchParty={onLeaveWatchParty}
+          onSyncHostPlayback={onSyncHostPlayback}
+          onSwitchWatchPartyEpisode={onSwitchWatchPartyEpisode}
+          onDeductSuperReactionCoins={onDeductSuperReactionCoins}
+          onNotifyWatchParty={onNotifyWatchParty}
           onUnlockArchiveMovie={onUnlockArchiveMovie}
+          onUnlockArchiveMovieWithAd={onUnlockArchiveMovieWithAd}
+          onRecordWatchSeconds={onRecordWatchSeconds}
+          onRecordEpisodeCompleted={onRecordEpisodeCompleted}
           onGoToBoost={onGoToBoost}
           onNextEpisode={() => {
             if (!nextEpisodeForActivePlayer) return;
@@ -1090,7 +1197,12 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
           onAwardCoinPot={onAwardCoinPot}
           onStartSponsorReward={onStartSponsorReward}
           onMarkEpisodeWatched={onMarkEpisodeWatched}
-          onClose={() => setActivePlayerEpisode(null)}
+          onClose={() => {
+            setActivePlayerEpisode(null);
+            if (watchPartyRoom) {
+              onLeaveWatchParty?.();
+            }
+          }}
         />
       )}
     </>

@@ -131,6 +131,7 @@ export type TransactionCategory =
   | 'whatsapp-share'
   | 'spin-wheel'
   | 'boost'
+  | 'watch-party'
   | 'admin-adjustment';
 
 export interface CoinTransaction {
@@ -173,4 +174,64 @@ export interface PrizeWinRecord {
   status: 'recorded' | 'paid';
   createdAt?: Timestamp;
   createdAtMs?: number;
+}
+
+export type WatchPartyEmoji = '🔥' | '😱' | '❤️';
+
+export interface WatchPartyRoom {
+  roomId: string;
+  hostUid: string;
+  hostName: string;
+  episodeId: string;
+  episodeTitle: string;
+  seriesTitle: string;
+  episodeLabel: string;
+  category: string;
+  dailymotionId: string;
+  videoUrl: string;
+  coverImage?: string;
+  archiveIdentifier?: string;
+  isPlaying: boolean;
+  currentTime: number;
+  playbackUpdatedAtMs: number;
+  status: 'active' | 'ended';
+  isPublic: boolean;
+  isPrivate?: boolean;
+  maxCapacity?: number;
+  viewerCount?: number;
+  createdAt?: Timestamp;
+  updatedAt?: Timestamp;
+}
+
+export interface WatchPartyParticipant {
+  roomId: string;
+  uid: string;
+  username: string;
+  role: 'host' | 'guest';
+  lastSeenMs: number;
+  joinedAt?: Timestamp;
+  updatedAt?: Timestamp;
+}
+
+export interface WatchPartyMessage {
+  id: string;
+  roomId: string;
+  uid: string;
+  username: string;
+  text: string;
+  isSuper: boolean;
+  superCost: number;
+  emoji?: string;
+  createdAt?: Timestamp;
+}
+
+export interface WatchPartyReaction {
+  id: string;
+  roomId: string;
+  uid: string;
+  username: string;
+  emoji: WatchPartyEmoji;
+  isSuper: boolean;
+  superCost: number;
+  createdAt?: Timestamp;
 }

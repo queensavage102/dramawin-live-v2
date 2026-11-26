@@ -1,5 +1,5 @@
 import React from 'react';
-import { DramaEpisode, DramaSeries, PlayerPrivate } from '../types';
+import { DramaEpisode, DramaSeries, PlayerPrivate, WatchPartyRoom } from '../types';
 import { SeriesFoldersSection } from './SeriesFoldersSection';
 
 interface WatchTabProps {
@@ -16,6 +16,16 @@ interface WatchTabProps {
   qualificationThreshold: number;
   muted: boolean;
   resumePlaybackSignal?: number;
+  watchPartyRoom?: WatchPartyRoom | null;
+  watchPartyRole?: 'host' | 'guest';
+  watchPartyViewerCount?: number;
+  watchPartyUsername?: string;
+  onOpenWatchPartyLobby?: (currentEpisode?: DramaEpisode | null) => void;
+  onLeaveWatchParty?: () => void;
+  onSyncHostPlayback?: (playback: { isPlaying: boolean; currentTime: number }) => void;
+  onSwitchWatchPartyEpisode?: (episode: DramaEpisode) => Promise<void>;
+  onDeductSuperReactionCoins?: (cost: number, title: string) => Promise<boolean>;
+  onNotifyWatchParty?: (message: string, tone?: 'gold' | 'neutral' | 'error') => void;
   onToggleMute: () => void;
   onAwardCoinPot: (episode: DramaEpisode, amount: number) => Promise<void>;
   onClaimGiftBoxCoins?: () => Promise<void>;
@@ -27,6 +37,11 @@ interface WatchTabProps {
   onClaimHeroBonus?: () => Promise<void>;
   onMarkEpisodeWatched?: (episode: DramaEpisode) => Promise<void>;
   onUnlockArchiveMovie?: (identifier: string, movieTitle: string) => Promise<boolean>;
+  onUnlockArchiveMovieWithAd?: (identifier: string, movieTitle: string) => Promise<boolean>;
+  onRecordWatchSeconds?: (deltaSeconds: number) => void;
+  onRecordEpisodeCompleted?: (episodeId: string) => void;
+  onPlayerOpenChange?: (isOpen: boolean) => void;
+  closePlayerSignal?: number;
   onGoToBoost?: () => void;
 }
 
@@ -44,6 +59,16 @@ export const WatchTab: React.FC<WatchTabProps> = ({
   qualificationThreshold,
   muted,
   resumePlaybackSignal,
+  watchPartyRoom,
+  watchPartyRole,
+  watchPartyViewerCount,
+  watchPartyUsername,
+  onOpenWatchPartyLobby,
+  onLeaveWatchParty,
+  onSyncHostPlayback,
+  onSwitchWatchPartyEpisode,
+  onDeductSuperReactionCoins,
+  onNotifyWatchParty,
   onToggleMute,
   onAwardCoinPot,
   onClaimGiftBoxCoins,
@@ -52,6 +77,11 @@ export const WatchTab: React.FC<WatchTabProps> = ({
   onClaimHeroBonus,
   onMarkEpisodeWatched,
   onUnlockArchiveMovie,
+  onUnlockArchiveMovieWithAd,
+  onRecordWatchSeconds,
+  onRecordEpisodeCompleted,
+  onPlayerOpenChange,
+  closePlayerSignal,
   onGoToBoost,
 }) => {
   return (
@@ -69,6 +99,16 @@ export const WatchTab: React.FC<WatchTabProps> = ({
       qualificationThreshold={qualificationThreshold}
       muted={muted}
       resumePlaybackSignal={resumePlaybackSignal}
+      watchPartyRoom={watchPartyRoom}
+      watchPartyRole={watchPartyRole}
+      watchPartyViewerCount={watchPartyViewerCount}
+      watchPartyUsername={watchPartyUsername}
+      onOpenWatchPartyLobby={onOpenWatchPartyLobby}
+      onLeaveWatchParty={onLeaveWatchParty}
+      onSyncHostPlayback={onSyncHostPlayback}
+      onSwitchWatchPartyEpisode={onSwitchWatchPartyEpisode}
+      onDeductSuperReactionCoins={onDeductSuperReactionCoins}
+      onNotifyWatchParty={onNotifyWatchParty}
       onToggleMute={onToggleMute}
       onAwardCoinPot={onAwardCoinPot}
       onClaimGiftBoxCoins={onClaimGiftBoxCoins}
@@ -77,6 +117,11 @@ export const WatchTab: React.FC<WatchTabProps> = ({
       onClaimHeroBonus={onClaimHeroBonus}
       onMarkEpisodeWatched={onMarkEpisodeWatched}
       onUnlockArchiveMovie={onUnlockArchiveMovie}
+      onUnlockArchiveMovieWithAd={onUnlockArchiveMovieWithAd}
+      onRecordWatchSeconds={onRecordWatchSeconds}
+      onRecordEpisodeCompleted={onRecordEpisodeCompleted}
+      onPlayerOpenChange={onPlayerOpenChange}
+      closePlayerSignal={closePlayerSignal}
       onGoToBoost={onGoToBoost}
     />
   );

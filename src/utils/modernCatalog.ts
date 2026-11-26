@@ -16,7 +16,7 @@ import goldenAlibiCover from '../assets/images/drama_golden_alibi_1794573506492.
 import obsidianHeirCover from '../assets/images/drama_obsidian_heir_1794573505731.jpg';
 import silentDynastyCover from '../assets/images/drama_silent_dynasty_1794573508735.jpg';
 import velvetCrownCover from '../assets/images/drama_velvet_crown_1794573505264.jpg';
-import { DEFAULT_SPONSOR_URL } from '../constants';
+import { COIN_POT_BASE_REWARD, DEFAULT_SPONSOR_URL } from '../constants';
 import { DramaEpisode } from '../types';
 
 export const MODERN_GENRES = [
@@ -270,6 +270,7 @@ interface DailymotionVideoRaw {
   id?: string;
   title?: string;
   thumbnail_720_url?: string;
+  language?: string;
 }
 
 interface DailymotionSearchResponse {
@@ -278,14 +279,64 @@ interface DailymotionSearchResponse {
 
 const dailymotionGenreCache = new Map<ModernGenre, ModernShowItem[]>();
 
+const NON_ENGLISH_SCRIPT_REGEX =
+  /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af\u0400-\u04ff\u0600-\u06ff\u0900-\u097f\u0e00-\u0e7f]/;
+const NON_ENGLISH_TAG_REGEX =
+  /\b(raw|no\s*sub|unsubbed|vostfr|sub\s*espa[nñ]ol|espa[nñ]ol|castellano|indo\s*sub|sub\s*indo|leg\s*pt|dublado|vf|fran[cç]ais|deutsch|italiano|chinese|mandarin|cantonese|tagalog|hindi|urdu|tamil|telugu|viet|khmer|bahasa|pinoy|sub\s*chi|chi\s*sub|eng\s*sub\s*raw)\b/i;
+
+export function isEnglishCatalogTitle(title?: string): boolean {
+  const clean = (title || '').trim();
+  if (!clean) return false;
+  if (NON_ENGLISH_SCRIPT_REGEX.test(clean)) return false;
+  if (NON_ENGLISH_TAG_REGEX.test(clean)) return false;
+  return true;
+}
+
+function isValidEnglishCatalogUpload(raw: DailymotionVideoRaw, title: string): boolean {
+  if (!isEnglishCatalogTitle(title)) {
+    return false;
+  }
+  const lang = typeof raw.language === 'string' ? raw.language.trim().toLowerCase() : '';
+  if (lang && !lang.startsWith('en')) {
+    return false;
+  }
+  return true;
+}
+
+function mapDailymotionRawToShow(
+  raw: DailymotionVideoRaw,
+  genre: Exclude<ModernGenre, 'All'>
+): ModernShowItem | null {
+  const id = typeof raw.id === 'string' ? raw.id.trim() : '';
+  const title = typeof raw.title === 'string' ? raw.title.trim() : '';
+  const thumb =
+    typeof raw.thumbnail_720_url === 'string' ? raw.thumbnail_720_url.trim() : '';
+  if (!id || !title || !thumb) return null;
+  if (!isValidEnglishCatalogUpload(raw, title)) return null;
+
+  return {
+    id: `dm-${id}`,
+    title,
+    genre,
+    episodesLabel: genre === 'Anime' ? 'HD Anime' : `${genre} HD`,
+    tagline: `Full HD ${genre} · Watch & Earn`,
+    description: `Stream "${title}" in HD inside DramaWin and earn coin rewards while watching.`,
+    coverUrl: thumb.replace(/^http:\/\//i, 'https://'),
+    dailymotionId: id,
+  };
+}
+
 async function queryDailymotionGenre(
   genre: Exclude<ModernGenre, 'All'>,
   limit: number,
   signal?: AbortSignal
 ): Promise<ModernShowItem[]> {
-  const url = `https://api.dailymotion.com/videos?search=${encodeURIComponent(
-    `${genre} short film`
-  )}&fields=id,title,thumbnail_720_url&limit=${limit}&family_filter=1&flags=no_live`;
+  const searchQuery =
+    genre === 'Anime'
+      ? 'anime+english+sub+episode'
+      : encodeURIComponent(`${genre} short film english`);
+  const fetchLimit = Math.min(50, limit * 3);
+  const url = `https://api.dailymotion.com/videos?search=${searchQuery}&fields=id,title,thumbnail_720_url,language&limit=${fetchLimit}&family_filter=1&flags=no_live`;
 
   const response = await fetch(url, { signal });
   if (!response.ok) {
@@ -298,25 +349,47 @@ async function queryDailymotionGenre(
   const items: ModernShowItem[] = [];
 
   for (const raw of list) {
-    const id = typeof raw.id === 'string' ? raw.id.trim() : '';
-    const title = typeof raw.title === 'string' ? raw.title.trim() : '';
-    const thumb =
-      typeof raw.thumbnail_720_url === 'string' ? raw.thumbnail_720_url.trim() : '';
-    if (!id || !title || !thumb || seen.has(id)) continue;
-    seen.add(id);
-
-    items.push({
-      id: `dm-${id}`,
-      title,
-      genre,
-      episodesLabel: genre === 'Anime' ? 'HD Anime' : `${genre} HD`,
-      tagline: `Full HD ${genre} · Watch & Earn`,
-      description: `Stream "${title}" in HD inside DramaWin and earn coin rewards while watching.`,
-      coverUrl: thumb.replace(/^http:\/\//i, 'https://'),
-      dailymotionId: id,
-    });
+    const mapped = mapDailymotionRawToShow(raw, genre);
+    if (!mapped || !mapped.dailymotionId || seen.has(mapped.dailymotionId)) continue;
+    seen.add(mapped.dailymotionId);
+    items.push(mapped);
+    if (items.length >= limit) break;
   }
 
+  return items;
+}
+
+export async function searchDailymotionShows(
+  searchText: string,
+  signal?: AbortSignal
+): Promise<ModernShowItem[]> {
+  const clean = searchText.trim();
+  if (clean.length < 2) return [];
+  const url = `https://api.dailymotion.com/videos?search=${encodeURIComponent(clean)}+english&fields=id,title,thumbnail_720_url,language&limit=15&family_filter=1&flags=no_live`;
+  const response = await fetch(url, { signal });
+  if (!response.ok) return [];
+  const payload = (await response.json()) as DailymotionSearchResponse;
+  const list = Array.isArray(payload?.list) ? payload.list : [];
+
+  const seen = new Set<string>();
+  const items: ModernShowItem[] = [];
+  for (const raw of list) {
+    const rawTitle = typeof raw.title === 'string' ? raw.title : '';
+    const lowerTitle = rawTitle.toLowerCase();
+    const inferredGenre: Exclude<ModernGenre, 'All'> =
+      /anime|manga|ninja|otaku|shonen/i.test(lowerTitle)
+        ? 'Anime'
+        : /horror|ghost|scary|demon|haunt|zombie|vampire|slasher/i.test(lowerTitle)
+          ? 'Horror'
+          : /romance|love|kiss|wedding|bride|billionaire|ceo|husband/i.test(lowerTitle)
+            ? 'Romance'
+            : 'Drama';
+    const mapped = mapDailymotionRawToShow(raw, inferredGenre);
+    if (!mapped || !mapped.dailymotionId || seen.has(mapped.dailymotionId)) continue;
+    seen.add(mapped.dailymotionId);
+    items.push(mapped);
+    if (items.length >= 15) break;
+  }
   return items;
 }
 
@@ -377,16 +450,18 @@ export function getModernCatalogByGenre(
   genre: ModernGenre,
   extraShows: ModernShowItem[] = []
 ): ModernShowItem[] {
-  const featured =
+  const featured = (
     genre === 'All'
       ? MODERN_CURATED_CATALOG
-      : MODERN_CURATED_CATALOG.filter((item) => item.genre === genre);
+      : MODERN_CURATED_CATALOG.filter((item) => item.genre === genre)
+  ).filter((item) => isEnglishCatalogTitle(item.title));
 
   if (!extraShows.length) return featured;
 
   const seen = new Set(featured.map((item) => item.id));
   const merged = [...featured];
   for (const extra of extraShows) {
+    if (!isEnglishCatalogTitle(extra.title)) continue;
     if (!seen.has(extra.id)) {
       seen.add(extra.id);
       merged.push(extra);
@@ -397,7 +472,7 @@ export function getModernCatalogByGenre(
 
 export function buildModernPlayerEpisode(item: ModernShowItem): DramaEpisode {
   const embedUrl = item.dailymotionId
-    ? `https://www.dailymotion.com/embed/video/${item.dailymotionId}?autoplay=1&ui-logo=0&queue-enable=false`
+    ? `https://www.dailymotion.com/embed/video/${item.dailymotionId}?autoplay=1&mute=0&ui-logo=0&queue-enable=false&subtitles-default=en&playsinline=1&api=postMessage&ui-start-screen-info=false`
     : `https://www.youtube-nocookie.com/embed/${item.youtubeId || ''}?enablejsapi=1&controls=0&modestbranding=1&rel=0&iv_load_policy=3&playsinline=1`;
 
   return {
@@ -408,7 +483,7 @@ export function buildModernPlayerEpisode(item: ModernShowItem): DramaEpisode {
     category: item.genre,
     episodeLabel: item.episodesLabel,
     duration: 'Watch & Earn',
-    rewardCoins: 300,
+    rewardCoins: COIN_POT_BASE_REWARD,
     coverImage: item.coverUrl,
     posterUrl: item.coverUrl,
     thumbnailUrl: item.coverUrl,

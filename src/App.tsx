@@ -18,7 +18,9 @@ import { MysteryRevealState, MysteryVaultCard } from './components/MysteryVaultC
 import { RealisticGoldCoin } from './components/RealisticGoldCoin';
 import { SupportChatWidget } from './components/SupportChatWidget';
 import { TopHeader } from './components/TopHeader';
+import { PendingLobbyGateAction, VipScreeningPassModal } from './components/VipScreeningPassModal';
 import { VipSplashScreen } from './components/VipSplashScreen';
+import { WatchPartyLobbyModal } from './components/WatchPartyLobbyModal';
 import { WatchTab } from './components/WatchTab';
 import {
   ADMIN_PASSCODE,
@@ -28,6 +30,8 @@ import {
   MYSTERY_CYCLE_BOXES,
   REFERRAL_REWARD_COINS,
   STREAK_DAYS,
+  WATCH_PARTY_ENTRY_AD_COUNT,
+  WATCH_PARTY_ENTRY_COIN_COST,
   buildPersonalInviteLink,
   getCurrentWeekKey,
   getMondayStartTimestampSAST,
@@ -69,6 +73,21 @@ import {
   updateMysteryAndRolloverConfig,
   updateSponsorAdUrl,
 } from './services/dramawinService';
+import {
+  createWatchPartyRoom,
+  endWatchPartyRoom,
+  fetchWatchPartyRoom,
+  heartbeatWatchPartyParticipant,
+  isWatchPartyRoomFull,
+  joinWatchPartyRoom,
+  leaveWatchPartyRoom,
+  normalizeRoomCode,
+  subscribeWatchPartyParticipants,
+  subscribeWatchPartyRoom,
+  switchWatchPartyEpisode,
+  syncWatchPartyPlayback,
+  syncWatchPartyViewerCount,
+} from './services/watchPartyService';
 import { FULL_EPISODE_UNLOCK_COINS } from './utils/modernCatalog';
 import {
   AppConfig,
@@ -80,6 +99,7 @@ import {
   PlayerPrivate,
   PrizeWinRecord,
   ToastNotice,
+  WatchPartyRoom,
   WeekDayKey,
 } from './types';
 import {
@@ -173,6 +193,19 @@ function extractReferralIdFromLocation(): string | null {
   return null;
 }
 
+function extractWatchPartyIdFromLocation(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const url = new URL(window.location.href);
+    const partyParam = normalizeRoomCode(
+      url.searchParams.get('lobby') || url.searchParams.get('party') || ''
+    );
+    return partyParam.length >= 4 ? partyParam : null;
+  } catch {
+    return null;
+  }
+}
+
 function DramaWinApp() {
   const {
     episodes,
@@ -226,6 +259,8 @@ function DramaWinApp() {
   });
 
   const [activeTab, setActiveTab] = useState<AppTab>('watch');
+  const [watchPlayerOpen, setWatchPlayerOpen] = useState(false);
+  const [homeReturnNonce, setHomeReturnNonce] = useState(0);
   const [giftVaultModalOpen, setGiftVaultModalOpen] = useState(false);
   const [legalModalOpen, setLegalModalOpen] = useState(false);
   const [referralsJoinedCount, setReferralsJoinedCount] = useState(0);
@@ -255,6 +290,21 @@ function DramaWinApp() {
     onCancel?: () => void;
   } | null>(null);
   const [resumePlaybackSignal, setResumePlaybackSignal] = useState(0);
+  const [watchPartyModalOpen, setWatchPartyModalOpen] = useState(false);
+  const [watchPartyModalInitialEpisode, setWatchPartyModalInitialEpisode] =
+    useState<DramaEpisode | null>(null);
+  const [activeWatchPartyRoom, setActiveWatchPartyRoom] = useState<WatchPartyRoom | null>(null);
+  const [activeWatchPartyRole, setActiveWatchPartyRole] = useState<'host' | 'guest'>('guest');
+  const [watchPartyViewerCount, setWatchPartyViewerCount] = useState(1);
+  const [pendingLobbyGate, setPendingLobbyGate] = useState<PendingLobbyGateAction | null>(null);
+  const [vipPassAdsCompleted, setVipPassAdsCompleted] = useState(0);
+  const [vipPassProcessing, setVipPassProcessing] = useState(false);
+
+  useEffect(() => {
+    if (activeTab !== 'watch') {
+      setWatchPlayerOpen(false);
+    }
+  }, [activeTab]);
 
   const streakReminderShownRef = useRef<string | null>(null);
   const purgedStrayFirestoreRef = useRef<boolean>(false);
@@ -262,8 +312,20 @@ function DramaWinApp() {
   const cloudOpenedBoxesRef = useRef<number[]>(cloudOpenedBoxes);
   const toastTimerRef = useRef<number | null>(null);
   const capturedReferrerRef = useRef<string | null>(extractReferralIdFromLocation());
+  const capturedPartyCodeRef = useRef<string | null>(extractWatchPartyIdFromLocation());
+  const autoJoinedPartyRef = useRef<boolean>(false);
   const recordedIncomingRefSentRef = useRef<boolean>(false);
   const claimingReferralIdsRef = useRef<Set<string>>(new Set());
+  const activeWatchPartyRoomRef = useRef<WatchPartyRoom | null>(activeWatchPartyRoom);
+  const activeWatchPartyRoleRef = useRef<'host' | 'guest'>(activeWatchPartyRole);
+
+  useEffect(() => {
+    activeWatchPartyRoomRef.current = activeWatchPartyRoom;
+  }, [activeWatchPartyRoom]);
+
+  useEffect(() => {
+    activeWatchPartyRoleRef.current = activeWatchPartyRole;
+  }, [activeWatchPartyRole]);
 
   useEffect(() => {
     cloudOpenedBoxesRef.current = cloudOpenedBoxes;
@@ -967,7 +1029,7 @@ function DramaWinApp() {
         muted: mutedNow,
       } = latestStateRef.current;
 
-      const safeAmount = Math.max(100, Math.min(600, Math.round(amount)));
+      const safeAmount = Math.max(100, Math.min(2000, Math.round(amount)));
       const threshold = cfgNow.qualificationThreshold || DEFAULT_QUALIFICATION_THRESHOLD;
       const nextWatched = mergeWatchedEpisodeId(privNow.watchedEpisodeIds || [], episode.id);
 
@@ -1091,6 +1153,25 @@ function DramaWinApp() {
     [showToast]
   );
 
+  const handleUnlockArchiveMovieWithAd = useCallback(
+    async (identifier: string, movieTitle: string): Promise<boolean> => {
+      const cleanId = identifier.trim();
+      if (!cleanId) return false;
+      const mutedNow = latestStateRef.current.muted;
+      setUnlockedMovieIds(markArchiveMovieUnlocked(cleanId));
+      playCoinChime(mutedNow);
+      showToast(
+        `Full Episode Unlocked Free! (${movieTitle})`,
+        undefined,
+        'gold',
+        undefined,
+        3200
+      );
+      return true;
+    },
+    [showToast]
+  );
+
   const handleClaimHeroBonus = useCallback(async (): Promise<void> => {
     const {
       isCloudMode: cloudNow,
@@ -1189,7 +1270,7 @@ function DramaWinApp() {
         muted: mutedNow,
       } = latestStateRef.current;
 
-      const safeCoins = Math.max(1, Math.min(2000, Math.round(rewardCoins)));
+      const safeCoins = Math.max(1, Math.min(20000, Math.round(rewardCoins)));
       const threshold = cfgNow.qualificationThreshold || DEFAULT_QUALIFICATION_THRESHOLD;
 
       if (cloudNow) {
@@ -1278,7 +1359,7 @@ function DramaWinApp() {
     playCoinChime(latestStateRef.current.muted);
     showToast(
       nextCount >= 5
-        ? '5 / 5 Sponsor Ads Verified! Tap Claim +2,000 Coins!'
+        ? '5 / 5 Sponsor Ads Verified! Tap Claim +5,000 Coins!'
         : `Sponsor Ad Verified (${nextCount} / 5 Complete)`,
       undefined,
       'gold',
@@ -1302,7 +1383,7 @@ function DramaWinApp() {
       return;
     }
 
-    await grantBoostCoins(2000, '🎬 5-Ad Marathon Streak (+2,000 Coins)');
+    await grantBoostCoins(5000, '🎬 5-Ad Marathon Streak (+5,000 Coins)');
 
     const refreshed = loadBoostTrackerState(uid, todayKey);
     setBoostState(
@@ -1313,6 +1394,166 @@ function DramaWinApp() {
       })
     );
   }, [grantBoostCoins, showToast]);
+
+  const handleClaimSpotlightOffer = useCallback(
+    async (slot: 1 | 2 | 3, rewardCoins: number, title: string): Promise<void> => {
+      const uid = latestStateRef.current.currentPlayer.uid;
+      const todayKey = getTodayDateKey();
+      const latest = loadBoostTrackerState(uid, todayKey);
+      const now = Date.now();
+      const cooldownMs = 60 * 60 * 1000;
+
+      const lastAt =
+        slot === 1
+          ? latest.spotlight1LastClaimAt
+          : slot === 2
+            ? latest.spotlight2LastClaimAt
+            : latest.spotlight3LastClaimAt;
+
+      if (lastAt > 0 && now - lastAt < cooldownMs) {
+        showToast('Sponsor Spotlight reward already claimed! Please wait for cooldown.', undefined, 'neutral', undefined, 2600);
+        return;
+      }
+
+      await grantBoostCoins(rewardCoins, title);
+
+      const refreshed = loadBoostTrackerState(uid, todayKey);
+      const updatedState: BoostTrackerState =
+        slot === 1
+          ? { ...refreshed, spotlight1LastClaimAt: now }
+          : slot === 2
+            ? { ...refreshed, spotlight2LastClaimAt: now }
+            : { ...refreshed, spotlight3LastClaimAt: now };
+      setBoostState(saveBoostTrackerState(uid, updatedState));
+    },
+    [grantBoostCoins, showToast]
+  );
+
+  const handleClaimHourlyMysteryBox = useCallback(async (): Promise<void> => {
+    const uid = latestStateRef.current.currentPlayer.uid;
+    const todayKey = getTodayDateKey();
+    const latest = loadBoostTrackerState(uid, todayKey);
+    const now = Date.now();
+    const cooldownMs = 60 * 60 * 1000;
+
+    if (
+      latest.hourlyMysteryBoxLastClaimAt > 0 &&
+      now - latest.hourlyMysteryBoxLastClaimAt < cooldownMs
+    ) {
+      showToast('Hourly Mystery Coin Box is still recharging!', undefined, 'neutral', undefined, 2600);
+      return;
+    }
+
+    await grantBoostCoins(
+      500,
+      '🎁 Hourly Mystery Coin Box (+500 Coins)',
+      '+500 Coins Dropped from Mystery Coin Box!'
+    );
+
+    const refreshed = loadBoostTrackerState(uid, todayKey);
+    setBoostState(
+      saveBoostTrackerState(uid, {
+        ...refreshed,
+        hourlyMysteryBoxLastClaimAt: now,
+      })
+    );
+  }, [grantBoostCoins, showToast]);
+
+  const handleRecordWatchSeconds = useCallback((deltaSeconds: number) => {
+    const safeDelta = Math.max(0, Math.round(deltaSeconds));
+    if (safeDelta <= 0) return;
+    const uid = latestStateRef.current.currentPlayer.uid;
+    const todayKey = getTodayDateKey();
+    const latest = loadBoostTrackerState(uid, todayKey);
+    setBoostState(
+      saveBoostTrackerState(uid, {
+        ...latest,
+        dailyWatchDate: todayKey,
+        dailyWatchSeconds: latest.dailyWatchSeconds + safeDelta,
+      })
+    );
+  }, []);
+
+  const handleRecordEpisodeCompleted = useCallback((episodeId: string) => {
+    const cleanId = (episodeId || '').trim();
+    if (!cleanId) return;
+    const uid = latestStateRef.current.currentPlayer.uid;
+    const todayKey = getTodayDateKey();
+    const latest = loadBoostTrackerState(uid, todayKey);
+    if (latest.completedEpisodeIdsToday.includes(cleanId)) return;
+    const updatedIds = [...latest.completedEpisodeIdsToday, cleanId].slice(0, 50);
+    setBoostState(
+      saveBoostTrackerState(uid, {
+        ...latest,
+        episodesWatchDate: todayKey,
+        completedEpisodeIdsToday: updatedIds,
+      })
+    );
+  }, []);
+
+  const handleClaimWatchMilestone = useCallback(
+    async (tierEpisodes: 1 | 3 | 5 | 10): Promise<void> => {
+      const uid = latestStateRef.current.currentPlayer.uid;
+      const todayKey = getTodayDateKey();
+      const latest = loadBoostTrackerState(uid, todayKey);
+      const completedCount = latest.completedEpisodeIdsToday.length;
+
+      if (completedCount < tierEpisodes) {
+        showToast(
+          `Complete ${tierEpisodes} full ${tierEpisodes === 1 ? 'episode' : 'episodes'} today to unlock this milestone!`,
+          undefined,
+          'neutral',
+          undefined,
+          2800
+        );
+        return;
+      }
+
+      const alreadyClaimed =
+        (tierEpisodes === 1 && latest.milestone1EpClaimed) ||
+        (tierEpisodes === 3 && latest.milestone3EpClaimed) ||
+        (tierEpisodes === 5 && latest.milestone5EpClaimed) ||
+        (tierEpisodes === 10 && latest.milestone10EpClaimed);
+
+      if (alreadyClaimed) {
+        showToast(
+          `Watch ${tierEpisodes} full ${tierEpisodes === 1 ? 'episode' : 'episodes'} milestone already claimed today!`,
+          undefined,
+          'neutral',
+          undefined,
+          2600
+        );
+        return;
+      }
+
+      const rewardCoins =
+        tierEpisodes === 1
+          ? 1000
+          : tierEpisodes === 3
+            ? 3500
+            : tierEpisodes === 5
+              ? 7500
+              : 20000;
+      await grantBoostCoins(
+        rewardCoins,
+        `🎬 Watch ${tierEpisodes} Full ${tierEpisodes === 1 ? 'Episode' : 'Episodes'} Milestone (+${rewardCoins.toLocaleString()} Coins)`,
+        `+${rewardCoins.toLocaleString()} Coins Claimed! ${tierEpisodes} Full ${tierEpisodes === 1 ? 'Episode' : 'Episodes'} Completed`
+      );
+
+      const refreshed = loadBoostTrackerState(uid, todayKey);
+      setBoostState(
+        saveBoostTrackerState(uid, {
+          ...refreshed,
+          episodesWatchDate: todayKey,
+          milestone1EpClaimed: refreshed.milestone1EpClaimed || tierEpisodes === 1,
+          milestone3EpClaimed: refreshed.milestone3EpClaimed || tierEpisodes === 3,
+          milestone5EpClaimed: refreshed.milestone5EpClaimed || tierEpisodes === 5,
+          milestone10EpClaimed: refreshed.milestone10EpClaimed || tierEpisodes === 10,
+        })
+      );
+    },
+    [grantBoostCoins, showToast]
+  );
 
   const handleConsumeGamePlay = useCallback((): boolean => {
     const uid = latestStateRef.current.currentPlayer.uid;
@@ -1477,14 +1718,22 @@ function DramaWinApp() {
     await grantBoostCoins(300, '🎁 Video Player Claim Gift Box (+300 Coins)');
   }, [grantBoostCoins]);
 
-  // Clean referral query/path from browser address bar on entry
+  // Clean referral & party query params from browser address bar on entry
   useEffect(() => {
-    if (typeof window === 'undefined' || isAdminRoute || !capturedReferrerRef.current) return;
+    if (
+      typeof window === 'undefined' ||
+      isAdminRoute ||
+      (!capturedReferrerRef.current && !capturedPartyCodeRef.current)
+    ) {
+      return;
+    }
     try {
       const url = new URL(window.location.href);
       if (
         url.searchParams.has('ref') ||
         url.searchParams.has('invite') ||
+        url.searchParams.has('lobby') ||
+        url.searchParams.has('party') ||
         (url.pathname && url.pathname !== '/')
       ) {
         window.history.replaceState({}, '', '/');
@@ -1566,6 +1815,391 @@ function DramaWinApp() {
       unsub();
     };
   }, [isAdminRoute, firebaseUser?.uid, grantBoostCoins]);
+
+  // Watch Party handlers & real-time Firestore sync
+  const handleNotifyWatchParty = useCallback(
+    (message: string, tone: 'gold' | 'neutral' | 'error' = 'neutral') => {
+      showToast(message, undefined, tone, undefined, 2800);
+    },
+    [showToast]
+  );
+
+  const handleOpenWatchPartyLobby = useCallback((initialEpisode?: DramaEpisode | null) => {
+    setWatchPartyModalInitialEpisode(initialEpisode || null);
+    setWatchPartyModalOpen(true);
+  }, []);
+
+  const handleEnterWatchPartyRoom = useCallback(
+    (room: WatchPartyRoom, role: 'host' | 'guest') => {
+      setActiveTab('watch');
+      setActiveWatchPartyRole(role);
+      setActiveWatchPartyRoom(room);
+      void joinWatchPartyRoom(
+        room.roomId,
+        latestStateRef.current.currentPlayer.username,
+        role
+      ).catch(() => {});
+    },
+    []
+  );
+
+  const handleLeaveWatchParty = useCallback(() => {
+    const room = activeWatchPartyRoomRef.current;
+    if (!room) return;
+    const role = activeWatchPartyRoleRef.current;
+    const roomId = room.roomId;
+    setActiveWatchPartyRoom(null);
+    setWatchPartyViewerCount(1);
+    void leaveWatchPartyRoom(roomId);
+    if (role === 'host') {
+      void endWatchPartyRoom(roomId);
+    }
+  }, []);
+
+  const handleSyncHostPlayback = useCallback(
+    (playback: { isPlaying: boolean; currentTime: number }) => {
+      const room = activeWatchPartyRoomRef.current;
+      if (!room || activeWatchPartyRoleRef.current !== 'host') return;
+      void syncWatchPartyPlayback(room.roomId, playback);
+    },
+    []
+  );
+
+  const handleSwitchWatchPartyEpisode = useCallback(
+    async (episode: DramaEpisode): Promise<void> => {
+      const room = activeWatchPartyRoomRef.current;
+      if (!room || activeWatchPartyRoleRef.current !== 'host') return;
+      await switchWatchPartyEpisode(room.roomId, episode);
+      showToast(
+        `Switched Watch Party to "${episode.title}"!`,
+        undefined,
+        'gold',
+        undefined,
+        3000
+      );
+    },
+    [showToast]
+  );
+
+  const handleSpendWatchPartyCoins = useCallback(
+    async (cost: number, title: string): Promise<boolean> => {
+      const {
+        isCloudMode: cloudNow,
+        currentPlayer: playerNow,
+        privateProfile: privNow,
+        appConfig: cfgNow,
+        muted: mutedNow,
+      } = latestStateRef.current;
+
+      const safeCost = Math.max(1, Math.min(1000, Math.round(cost)));
+      if (playerNow.coins < safeCost) {
+        showToast(
+          `You need ${safeCost.toLocaleString()} Coins for ${
+            safeCost >= WATCH_PARTY_ENTRY_COIN_COST
+              ? 'the VIP Screening Pass'
+              : 'Gold Super-Reactions & Highlighted Chat'
+          }.`,
+          undefined,
+          'error',
+          undefined,
+          2800
+        );
+        return false;
+      }
+
+      const threshold = cfgNow.qualificationThreshold || DEFAULT_QUALIFICATION_THRESHOLD;
+      if (cloudNow) {
+        try {
+          await awardPlayerCoins(
+            playerNow,
+            privNow,
+            -safeCost,
+            threshold,
+            { lastActivityDate: getTodayDateKey() },
+            undefined,
+            0,
+            {
+              category: 'watch-party',
+              title: title.slice(0, 100),
+            }
+          );
+        } catch (err) {
+          showToast(
+            err instanceof Error ? err.message : 'Unable to spend Coins right now.',
+            undefined,
+            'error',
+            undefined,
+            2800
+          );
+          return false;
+        }
+      } else {
+        const res = applyLocalCoinMutation({
+          player: playerNow,
+          privateProfile: privNow,
+          walletDelta: -safeCost,
+          qualificationThreshold: threshold,
+          txMeta: {
+            category: 'watch-party',
+            title: title.slice(0, 100),
+          },
+        });
+        setGuestPlayer(res.player);
+        setGuestPrivate(res.privateProfile);
+        setLocalTransactions(res.transactions);
+        setLocalLeaderboard(loadLocalLeaderboard(res.player));
+      }
+
+      playCoinChime(mutedNow);
+      return true;
+    },
+    [showToast]
+  );
+
+  const executeApprovedLobbyAction = useCallback(
+    async (action: PendingLobbyGateAction): Promise<void> => {
+      setVipPassProcessing(true);
+      try {
+        if (action.kind === 'create') {
+          const created = await createWatchPartyRoom({
+            episode: action.episode,
+            hostName: latestStateRef.current.currentPlayer.username,
+            isPublic: action.isPublic,
+          });
+          handleEnterWatchPartyRoom(created, 'host');
+          setPendingLobbyGate(null);
+          setVipPassAdsCompleted(0);
+          setWatchPartyModalOpen(false);
+          showToast(
+            `Watch Lobby ${created.roomId} is live! 1.5x Coins active.`,
+            undefined,
+            'gold',
+            undefined,
+            3200
+          );
+        } else {
+          const role: 'host' | 'guest' =
+            auth.currentUser?.uid && action.room.hostUid === auth.currentUser.uid
+              ? 'host'
+              : 'guest';
+          handleEnterWatchPartyRoom(action.room, role);
+          setPendingLobbyGate(null);
+          setVipPassAdsCompleted(0);
+          setWatchPartyModalOpen(false);
+          showToast(
+            `Joined ${action.room.hostName}'s Watch Lobby! 1.5x Coins active.`,
+            undefined,
+            'gold',
+            undefined,
+            3200
+          );
+        }
+      } catch (err) {
+        showToast(
+          err instanceof Error ? err.message : 'Unable to enter Watch Lobby right now.',
+          undefined,
+          'error',
+          undefined,
+          3000
+        );
+      } finally {
+        setVipPassProcessing(false);
+      }
+    },
+    [handleEnterWatchPartyRoom, showToast]
+  );
+
+  const handleRequestCreateWatchLobby = useCallback(
+    (episode: DramaEpisode, isPublic: boolean) => {
+      setWatchPartyModalOpen(false);
+      setVipPassAdsCompleted(0);
+      setPendingLobbyGate({ kind: 'create', episode, isPublic });
+    },
+    []
+  );
+
+  const handleRequestJoinWatchLobby = useCallback(
+    async (room: WatchPartyRoom) => {
+      setWatchPartyModalOpen(false);
+      if (
+        activeWatchPartyRoomRef.current?.roomId === room.roomId ||
+        (auth.currentUser?.uid && room.hostUid === auth.currentUser.uid)
+      ) {
+        const role: 'host' | 'guest' =
+          auth.currentUser?.uid && room.hostUid === auth.currentUser.uid ? 'host' : 'guest';
+        handleEnterWatchPartyRoom(room, role);
+        return;
+      }
+      const capacityCheck = await isWatchPartyRoomFull(room);
+      if (capacityCheck.full) {
+        showToast(
+          `Watch Lobby is full (${capacityCheck.viewerCount}/${capacityCheck.capacity} watching).`,
+          undefined,
+          'error',
+          undefined,
+          3200
+        );
+        return;
+      }
+      setVipPassAdsCompleted(0);
+      setPendingLobbyGate({ kind: 'join', room });
+    },
+    [handleEnterWatchPartyRoom, showToast]
+  );
+
+  const handlePayVipPassWithCoins = useCallback(async (): Promise<void> => {
+    const action = pendingLobbyGate;
+    if (!action) return;
+    const label =
+      action.kind === 'create'
+        ? `🎟️ VIP Screening Pass · Host "${action.episode.title}"`
+        : `🎟️ VIP Screening Pass · Join Lobby ${action.room.roomId}`;
+    const paid = await handleSpendWatchPartyCoins(WATCH_PARTY_ENTRY_COIN_COST, label);
+    if (paid) {
+      await executeApprovedLobbyAction(action);
+    }
+  }, [pendingLobbyGate, handleSpendWatchPartyCoins, executeApprovedLobbyAction]);
+
+  const handleWatchVipPassSponsorAd = useCallback(() => {
+    const action = pendingLobbyGate;
+    if (!action) return;
+    const nextCompleted = Math.min(WATCH_PARTY_ENTRY_AD_COUNT, vipPassAdsCompleted + 1);
+    startSponsorRewardFlow(
+      async () => {
+        setVipPassAdsCompleted(nextCompleted);
+        if (nextCompleted >= WATCH_PARTY_ENTRY_AD_COUNT) {
+          await executeApprovedLobbyAction(action);
+        } else {
+          showToast(
+            `VIP Pass Ad ${nextCompleted} / ${WATCH_PARTY_ENTRY_AD_COUNT} verified!`,
+            undefined,
+            'gold',
+            undefined,
+            2800
+          );
+        }
+      },
+      {
+        claimLabel:
+          nextCompleted >= WATCH_PARTY_ENTRY_AD_COUNT
+            ? `Unlock VIP Pass (${nextCompleted}/${WATCH_PARTY_ENTRY_AD_COUNT})`
+            : `Verify Ad (${nextCompleted}/${WATCH_PARTY_ENTRY_AD_COUNT})`,
+        readyHeadline:
+          nextCompleted >= WATCH_PARTY_ENTRY_AD_COUNT
+            ? `VIP Screening Pass Ready (${nextCompleted}/${WATCH_PARTY_ENTRY_AD_COUNT})!`
+            : `Sponsor Ad ${nextCompleted}/${WATCH_PARTY_ENTRY_AD_COUNT} Complete!`,
+      }
+    );
+  }, [
+    pendingLobbyGate,
+    vipPassAdsCompleted,
+    startSponsorRewardFlow,
+    executeApprovedLobbyAction,
+    showToast,
+  ]);
+
+  // Auto-prompt Watch Lobby deep-link (?lobby=ROOM_ID or legacy ?party=ROOM_ID)
+  useEffect(() => {
+    if (isAdminRoute || !splashDone || autoJoinedPartyRef.current) return;
+    const code = capturedPartyCodeRef.current;
+    if (!code) return;
+    autoJoinedPartyRef.current = true;
+
+    void fetchWatchPartyRoom(code)
+      .then(async (room) => {
+        if (!room) {
+          showToast(
+            `Watch Lobby "${code}" was not found or has ended.`,
+            undefined,
+            'neutral',
+            undefined,
+            3200
+          );
+          return;
+        }
+        if (auth.currentUser?.uid && room.hostUid === auth.currentUser.uid) {
+          handleEnterWatchPartyRoom(room, 'host');
+          showToast(
+            `Returned to your Watch Lobby ${room.roomId}! 1.5x Coins active.`,
+            undefined,
+            'gold',
+            undefined,
+            3200
+          );
+          return;
+        }
+        const capacityCheck = await isWatchPartyRoomFull(room);
+        if (capacityCheck.full) {
+          showToast(
+            `Watch Lobby "${room.roomId}" is full (${capacityCheck.viewerCount}/${capacityCheck.capacity} watching).`,
+            undefined,
+            'error',
+            undefined,
+            3500
+          );
+          return;
+        }
+        setVipPassAdsCompleted(0);
+        setPendingLobbyGate({ kind: 'join', room, fromInviteLink: true });
+        showToast(
+          `Invited to Lobby ${room.roomId}! Unlock VIP Screening Pass to join.`,
+          undefined,
+          'gold',
+          undefined,
+          3500
+        );
+      })
+      .catch(() => {
+        showToast('Unable to load invited Watch Lobby right now.', undefined, 'error', undefined, 2800);
+      });
+  }, [isAdminRoute, splashDone, handleEnterWatchPartyRoom, showToast]);
+
+  // Real-time room + participant presence listeners while inside an active Watch Party
+  const activePartyRoomId = activeWatchPartyRoom?.roomId || null;
+  useEffect(() => {
+    if (!activePartyRoomId) return;
+
+    const unsubRoom = subscribeWatchPartyRoom(
+      activePartyRoomId,
+      (nextRoom) => {
+        if (!nextRoom || nextRoom.status !== 'active') {
+          if (activeWatchPartyRoleRef.current === 'guest') {
+            showToast('Watch Party ended by Host.', undefined, 'neutral', undefined, 3000);
+          }
+          setActiveWatchPartyRoom(null);
+          setWatchPartyViewerCount(1);
+          return;
+        }
+        setActiveWatchPartyRoom(nextRoom);
+      },
+      () => {}
+    );
+
+    const unsubParticipants = subscribeWatchPartyParticipants(
+      activePartyRoomId,
+      (parts) => {
+        const count = Math.max(1, parts.length);
+        setWatchPartyViewerCount(count);
+        if (activeWatchPartyRoleRef.current === 'host') {
+          void syncWatchPartyViewerCount(activePartyRoomId, count);
+        }
+      },
+      () => {}
+    );
+
+    const heartbeat = window.setInterval(() => {
+      void heartbeatWatchPartyParticipant(
+        activePartyRoomId,
+        latestStateRef.current.currentPlayer.username
+      );
+    }, 25000);
+
+    return () => {
+      unsubRoom();
+      unsubParticipants();
+      window.clearInterval(heartbeat);
+    };
+  }, [activePartyRoomId, showToast]);
 
   // Lucky Spin Wheel opens manually via floating glowing Spin button on For You page
 
@@ -2202,6 +2836,16 @@ function DramaWinApp() {
             qualificationThreshold={qualificationThreshold}
             muted={muted}
             resumePlaybackSignal={resumePlaybackSignal}
+            watchPartyRoom={activeWatchPartyRoom}
+            watchPartyRole={activeWatchPartyRole}
+            watchPartyViewerCount={watchPartyViewerCount}
+            watchPartyUsername={currentPlayer.username}
+            onOpenWatchPartyLobby={handleOpenWatchPartyLobby}
+            onLeaveWatchParty={handleLeaveWatchParty}
+            onSyncHostPlayback={handleSyncHostPlayback}
+            onSwitchWatchPartyEpisode={handleSwitchWatchPartyEpisode}
+            onDeductSuperReactionCoins={handleSpendWatchPartyCoins}
+            onNotifyWatchParty={handleNotifyWatchParty}
             onToggleMute={handleToggleMute}
             onAwardCoinPot={handleAwardCoinPot}
             onClaimGiftBoxCoins={handleClaimPlayerGiftBox}
@@ -2210,6 +2854,11 @@ function DramaWinApp() {
             onClaimHeroBonus={handleClaimHeroBonus}
             onMarkEpisodeWatched={handleMarkEpisodeWatched}
             onUnlockArchiveMovie={handleUnlockArchiveMovie}
+            onUnlockArchiveMovieWithAd={handleUnlockArchiveMovieWithAd}
+            onRecordWatchSeconds={handleRecordWatchSeconds}
+            onRecordEpisodeCompleted={handleRecordEpisodeCompleted}
+            onPlayerOpenChange={setWatchPlayerOpen}
+            closePlayerSignal={homeReturnNonce}
             onGoToBoost={() => setActiveTab('boost')}
           />
         )}
@@ -2233,6 +2882,9 @@ function DramaWinApp() {
             onStartSponsorReward={startSponsorRewardFlow}
             onMarkEpisodeWatched={handleMarkEpisodeWatched}
             onUnlockArchiveMovie={handleUnlockArchiveMovie}
+            onUnlockArchiveMovieWithAd={handleUnlockArchiveMovieWithAd}
+            onRecordWatchSeconds={handleRecordWatchSeconds}
+            onRecordEpisodeCompleted={handleRecordEpisodeCompleted}
             onGoToBoost={() => setActiveTab('boost')}
             onOpenSpinWheel={() => setSpinModalOpen(true)}
             onSwitchToHome={() => setActiveTab('watch')}
@@ -2252,6 +2904,9 @@ function DramaWinApp() {
             onClaimAdBoost={handleClaimAdBoost}
             onAdvanceMarathonAd={handleAdvanceMarathonAd}
             onClaimMarathonReward={handleClaimMarathonReward}
+            onClaimSpotlightOffer={handleClaimSpotlightOffer}
+            onClaimHourlyMysteryBox={handleClaimHourlyMysteryBox}
+            onClaimWatchMilestone={handleClaimWatchMilestone}
             onConsumeGamePlay={handleConsumeGamePlay}
             onUnlockSponsorGamePlay={handleUnlockSponsorGamePlay}
             onClaimMiniGameWin={handleClaimMiniGameWin}
@@ -2333,7 +2988,7 @@ function DramaWinApp() {
       </main>
 
       {/* Floating Glowing SPIN Wheel Icon on Home Screen (above AI Assistant button & sticky ad banner) */}
-      {activeTab === 'watch' && splashDone && !sponsorOffer && !spinModalOpen && (
+      {activeTab === 'watch' && !watchPlayerOpen && splashDone && !sponsorOffer && !spinModalOpen && (
         <div className="fixed bottom-52 right-3 z-50 pointer-events-none">
           <LuckySpinFloatingButton onClick={() => setSpinModalOpen(true)} />
         </div>
@@ -2348,10 +3003,11 @@ function DramaWinApp() {
         qualificationThreshold={qualificationThreshold}
         poolPrizeZar={appConfig.poolPrizeZar || DEFAULT_POOL_PRIZE_ZAR}
         firebaseEmail={firebaseUser?.email || null}
+        hideFloatingButton={activeTab === 'foryou' || (activeTab === 'watch' && watchPlayerOpen)}
       />
 
       {/* Sticky Adsterra 320x50px Banner Cleanly Anchored at bottom-16 Above Bottom Navigation Bar */}
-      {activeTab !== 'foryou' && (
+      {activeTab !== 'foryou' && !(activeTab === 'watch' && watchPlayerOpen) && (
         <div
           aria-label="Sponsored banner"
           className="fixed bottom-16 left-0 right-0 z-30 bg-[#09090b]/95 backdrop-blur-md border-t border-white/[0.08] flex items-center justify-center"
@@ -2361,7 +3017,15 @@ function DramaWinApp() {
       )}
 
       {/* Fixed 5-Tab Bottom Navigation Bar */}
-      <BottomNavBar activeTab={activeTab} onSelectTab={setActiveTab} />
+      <BottomNavBar
+        activeTab={activeTab}
+        onSelectTab={(tab) => {
+          setActiveTab(tab);
+          if (tab === 'watch') {
+            setHomeReturnNonce((prev) => prev + 1);
+          }
+        }}
+      />
 
       {/* Exclusive Gift Box Vault Modal (Header Gift Box icon opens ONLY this, never Daily Sign-In) */}
       {giftVaultModalOpen && (
@@ -2397,6 +3061,35 @@ function DramaWinApp() {
           </div>
         </div>
       )}
+
+      {/* Live Watch Party Lobby Modal */}
+      <WatchPartyLobbyModal
+        open={watchPartyModalOpen && !pendingLobbyGate && !sponsorOffer}
+        episodes={episodes}
+        initialEpisode={watchPartyModalInitialEpisode}
+        activeRoom={activeWatchPartyRoom}
+        onRequestCreateRoom={handleRequestCreateWatchLobby}
+        onRequestJoinRoom={handleRequestJoinWatchLobby}
+        onNotify={handleNotifyWatchParty}
+        onClose={() => setWatchPartyModalOpen(false)}
+      />
+
+      {/* VIP Screening Pass (3 Anti-Cheat Sponsor Ads or 1,000 Coins Entry Gate) */}
+      <VipScreeningPassModal
+        open={Boolean(pendingLobbyGate) && !sponsorOffer}
+        pendingAction={pendingLobbyGate}
+        adsCompleted={vipPassAdsCompleted}
+        playerTotalCoins={currentPlayer.coins}
+        processing={vipPassProcessing}
+        onPayWithCoins={handlePayVipPassWithCoins}
+        onWatchSponsorAd={handleWatchVipPassSponsorAd}
+        onClose={() => {
+          if (!vipPassProcessing) {
+            setPendingLobbyGate(null);
+            setVipPassAdsCompleted(0);
+          }
+        }}
+      />
 
       {/* Privacy Policy & Affiliate Disclosure Modal */}
       {legalModalOpen && (

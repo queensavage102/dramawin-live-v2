@@ -116,7 +116,7 @@ function buildConversationalReply(
     q.includes('how does this work') ||
     q.includes('how do i play')
   ) {
-    return `You already have ${ctx.coins.toLocaleString()} Coins, ${firstName}! Here are the best ways to stack more fast:\n\n• Watch Episodes: Fill the 60s Coin Pot (+300 Coins) or double it to +600 Coins with AD Double Rewards.\n• Lucky Spin Wheel: Spin daily to win up to +1,000 Coins or a Free Respin.\n• Mystery Vault: Hunt through ${MYSTERY_CYCLE_BOXES} glowing boxes for the hidden +1,000 Coins gift!\n• Daily Streak: Visit the Rewards tab once a day to claim your streak bonus.`;
+    return `You already have ${ctx.coins.toLocaleString()} Coins, ${firstName}! Here are the best ways to stack more fast:\n\n• Watch Episodes: Fill the 60s Coin Pot (+1,000 Coins) or double it to +2,000 Coins with AD Double Rewards.\n• Lucky Spin Wheel: Spin daily to win up to +1,000 Coins or a Free Respin.\n• Mystery Vault: Hunt through ${MYSTERY_CYCLE_BOXES} glowing boxes for the hidden +1,000 Coins gift!\n• Daily Streak: Visit the Rewards tab once a day to claim your streak bonus.`;
   }
 
   if (
