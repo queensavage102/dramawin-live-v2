@@ -814,8 +814,8 @@ export function extractYouTubeMedia(rawUrl: string): YouTubeMediaInfo {
 
   // Allow pasting a raw YouTube Playlist ID directly (e.g. PL...)
   if (/^(PL|UU|LL|OL|RD|FL)[a-zA-Z0-9_-]{4,120}$/.test(trimmed)) {
-    const embedUrl = `https://www.youtube-nocookie.com/embed/videoseries?list=${encodeURIComponent(trimmed)}&autoplay=1&rel=0&modestbranding=1&playsinline=1&enablejsapi=1`;
-    const previewEmbedUrl = `https://www.youtube-nocookie.com/embed/videoseries?list=${encodeURIComponent(trimmed)}&rel=0&modestbranding=1&playsinline=1&enablejsapi=1`;
+    const embedUrl = `https://www.youtube-nocookie.com/embed/videoseries?list=${encodeURIComponent(trimmed)}&autoplay=1&controls=0&rel=0&modestbranding=1&iv_load_policy=3&playsinline=1&enablejsapi=1`;
+    const previewEmbedUrl = `https://www.youtube-nocookie.com/embed/videoseries?list=${encodeURIComponent(trimmed)}&controls=0&rel=0&modestbranding=1&iv_load_policy=3&playsinline=1&enablejsapi=1`;
     return {
       videoId: null,
       playlistId: trimmed,
@@ -829,8 +829,8 @@ export function extractYouTubeMedia(rawUrl: string): YouTubeMediaInfo {
 
   // Allow pasting a bare 11-char YouTube Video ID directly
   if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) {
-    const embedUrl = `https://www.youtube-nocookie.com/embed/${trimmed}?autoplay=1&rel=0&modestbranding=1&playsinline=1&enablejsapi=1`;
-    const previewEmbedUrl = `https://www.youtube-nocookie.com/embed/${trimmed}?rel=0&modestbranding=1&playsinline=1&enablejsapi=1`;
+    const embedUrl = `https://www.youtube-nocookie.com/embed/${trimmed}?autoplay=1&controls=0&rel=0&modestbranding=1&iv_load_policy=3&playsinline=1&enablejsapi=1`;
+    const previewEmbedUrl = `https://www.youtube-nocookie.com/embed/${trimmed}?controls=0&rel=0&modestbranding=1&iv_load_policy=3&playsinline=1&enablejsapi=1`;
     return {
       videoId: trimmed,
       playlistId: null,
@@ -901,12 +901,12 @@ export function extractYouTubeMedia(rawUrl: string): YouTubeMediaInfo {
 
     if (videoId) {
       // Convert directly into valid youtube-nocookie.com/embed/{VIDEO_ID}
-      embedUrl = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&rel=0&modestbranding=1&playsinline=1&enablejsapi=1`;
-      previewEmbedUrl = `https://www.youtube-nocookie.com/embed/${videoId}?rel=0&modestbranding=1&playsinline=1&enablejsapi=1`;
+      embedUrl = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&controls=0&rel=0&modestbranding=1&iv_load_policy=3&playsinline=1&enablejsapi=1`;
+      previewEmbedUrl = `https://www.youtube-nocookie.com/embed/${videoId}?controls=0&rel=0&modestbranding=1&iv_load_policy=3&playsinline=1&enablejsapi=1`;
       watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
     } else if (playlistId) {
-      embedUrl = `https://www.youtube-nocookie.com/embed/videoseries?list=${encodeURIComponent(playlistId)}&autoplay=1&rel=0&modestbranding=1&playsinline=1&enablejsapi=1`;
-      previewEmbedUrl = `https://www.youtube-nocookie.com/embed/videoseries?list=${encodeURIComponent(playlistId)}&rel=0&modestbranding=1&playsinline=1&enablejsapi=1`;
+      embedUrl = `https://www.youtube-nocookie.com/embed/videoseries?list=${encodeURIComponent(playlistId)}&autoplay=1&controls=0&rel=0&modestbranding=1&iv_load_policy=3&playsinline=1&enablejsapi=1`;
+      previewEmbedUrl = `https://www.youtube-nocookie.com/embed/videoseries?list=${encodeURIComponent(playlistId)}&controls=0&rel=0&modestbranding=1&iv_load_policy=3&playsinline=1&enablejsapi=1`;
       watchUrl = `https://www.youtube.com/playlist?list=${encodeURIComponent(playlistId)}`;
     }
 
@@ -929,8 +929,8 @@ export function extractYouTubeMedia(rawUrl: string): YouTubeMediaInfo {
         videoId,
         playlistId: null,
         isYouTubeDomainWithoutMedia: false,
-        embedUrl: `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&rel=0&modestbranding=1&playsinline=1&enablejsapi=1`,
-        previewEmbedUrl: `https://www.youtube-nocookie.com/embed/${videoId}?rel=0&modestbranding=1&playsinline=1&enablejsapi=1`,
+        embedUrl: `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&controls=0&rel=0&modestbranding=1&iv_load_policy=3&playsinline=1&enablejsapi=1`,
+        previewEmbedUrl: `https://www.youtube-nocookie.com/embed/${videoId}?controls=0&rel=0&modestbranding=1&iv_load_policy=3&playsinline=1&enablejsapi=1`,
         watchUrl: `https://www.youtube.com/watch?v=${videoId}`,
         thumbnailUrl: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
       };
@@ -1033,18 +1033,14 @@ export function getYouTubeEmbedUrl(
     return `${url}${sep}${key}=${value}`;
   };
 
-  finalUrl = appendParam(finalUrl, 'playsinline', '1');
-  finalUrl = appendParam(finalUrl, 'rel', '0');
+  finalUrl = appendParam(finalUrl, 'controls', '0');
   finalUrl = appendParam(finalUrl, 'modestbranding', '1');
-  finalUrl = appendParam(finalUrl, 'enablejsapi', '1');
-  finalUrl = appendParam(finalUrl, 'mute', muted ? '1' : '0');
-  finalUrl = appendParam(finalUrl, 'playsinline', '1');
   finalUrl = appendParam(finalUrl, 'rel', '0');
-  finalUrl = appendParam(finalUrl, 'modestbranding', '1');
+  finalUrl = appendParam(finalUrl, 'iv_load_policy', '3');
+  finalUrl = appendParam(finalUrl, 'playsinline', '1');
   finalUrl = appendParam(finalUrl, 'enablejsapi', '1');
   finalUrl = appendParam(finalUrl, 'mute', muted ? '1' : '0');
   finalUrl = appendParam(finalUrl, 'cc_load_policy', '0');
-  finalUrl = appendParam(finalUrl, 'iv_load_policy', '3');
 
 
   if (typeof window !== 'undefined' && window.location?.origin) {
@@ -1133,10 +1129,11 @@ export function getDailymotionEmbedUrl(
 
   const params = new URLSearchParams();
   params.set('autoplay', options?.autoplay === false ? '0' : '1');
+  params.set('ui-logo', '0');
+  params.set('queue-enable', 'false');
   params.set('mute', options?.muted ? '1' : '0');
   params.set('quality', 'auto');
   params.set('playsinline', '1');
-  params.set('queue-enable', 'false');
   params.set('sharing-enable', 'false');
   params.set('api', 'postMessage');
   if (

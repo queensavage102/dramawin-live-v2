@@ -311,7 +311,7 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
   return (
     <>
       {isOpen ? (
-        <div className="fixed inset-x-2 bottom-20 top-14 sm:inset-auto sm:bottom-20 sm:right-6 sm:w-[390px] sm:h-[540px] z-[80] flex flex-col">
+        <div className="fixed inset-x-2 bottom-36 top-14 sm:inset-auto sm:bottom-36 sm:right-6 sm:w-[390px] sm:h-[540px] z-[80] flex flex-col">
           <section
             role="dialog"
             aria-label="DramaWin VIP Support"
@@ -449,7 +449,7 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
           onClick={() => setOpen(true)}
           aria-label="AI Assistant"
           title="AI Assistant"
-          className="fixed bottom-20 right-3 z-50 w-11 h-11 rounded-full bg-amber-400 hover:bg-amber-300 text-black flex items-center justify-center shadow-lg active:scale-95 transition cursor-pointer"
+          className="fixed bottom-36 right-3 z-50 w-11 h-11 rounded-full bg-amber-400 hover:bg-amber-300 text-black flex items-center justify-center shadow-lg active:scale-95 transition cursor-pointer"
         >
           <Sparkles className="w-5 h-5" />
         </button>

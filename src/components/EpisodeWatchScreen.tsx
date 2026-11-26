@@ -282,6 +282,9 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
         if (videoSource.kind === 'youtube') {
           postYouTubeCommand(iframeRef.current, 'seekTo', [0, true]);
           postYouTubeCommand(iframeRef.current, 'playVideo');
+        } else if (videoSource.kind === 'dailymotion') {
+          postDailymotionCommand(iframeRef.current, 'seek', [0]);
+          postDailymotionCommand(iframeRef.current, 'play');
         }
         if (videoRef.current) {
           try {
@@ -737,8 +740,8 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
     }, [clearRecoveryTimers, clearStallPill]);
 
     const iframeClassName = zoomed
-      ? 'absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[max(100cqw,177.78cqh)] h-[max(100cqh,56.25cqw)] border-0 block pointer-events-auto bg-[#060608] transition-all duration-300 ease-out'
-      : 'absolute inset-0 w-full h-full border-0 block pointer-events-auto bg-[#060608] transition-all duration-300 ease-out';
+      ? 'absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[max(100cqw,177.78cqh)] h-[max(100cqh,56.25cqw)] border-0 block pointer-events-auto bg-[#060608] scale-[1.22] transition-all duration-300 ease-out'
+      : 'absolute inset-0 w-full h-full border-0 block pointer-events-auto bg-[#060608] scale-[1.14] transition-all duration-300 ease-out';
 
     const directVideoClassName = `absolute inset-0 w-full h-full bg-[#060608] transition-all duration-300 ease-out ${
       zoomed ? 'object-cover' : 'object-contain'
@@ -1120,7 +1123,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
         className="relative h-[100dvh] w-full bg-[#060608] flex flex-col overflow-hidden"
       >
         {/* 1. True Full-Screen Edge-to-Edge Video Stage with Floating Translucent DramaWin HUD */}
-        <div className="relative flex-1 min-h-0 w-full bg-[#060608] overflow-hidden [container-type:size]">
+        <div className="relative w-full h-[calc(100vh-125px)] h-[calc(100dvh-125px)] flex-1 min-h-0 bg-[#060608] overflow-hidden [container-type:size]">
           <WatchVideoStage
             episode={episode}
             zoomed={isZoomed}

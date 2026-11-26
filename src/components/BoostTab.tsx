@@ -26,7 +26,6 @@ import {
   InlineDramaTriviaGame,
   InlineGoldMemoryMatch,
 } from './BoostMiniGames';
-import { BottomAdBanner } from './BottomAdBanner';
 import { RealisticGoldCoin } from './RealisticGoldCoin';
 
 const VERIFICATION_DURATION_MS = 20_000;
@@ -313,7 +312,7 @@ export const BoostTab: React.FC<BoostTabProps> = ({
   const memoryRewardDisplay = isDoubleNext ? 300 : 150;
 
   return (
-    <div className="space-y-4 pb-20">
+    <div className="space-y-4 pb-6">
       {/* 1. Compact Header + Coin Balance */}
       <section className="obsidian-card rounded-2xl px-4 py-3.5 border border-[#D4AF37]/40 bg-gradient-to-r from-[#161209] via-[#100F14] to-[#0A0A0E] flex items-center justify-between gap-3">
         <div className="min-w-0">
@@ -1000,14 +999,6 @@ export const BoostTab: React.FC<BoostTabProps> = ({
         </div>
       </section>
       )}
-
-      {/* 4. Bottom Adsterra 320x50px Banner Slot Cleanly Anchored Above Bottom Navigation Bar */}
-      <div
-        aria-label="Sponsored banner"
-        className="fixed bottom-16 left-0 right-0 z-30 bg-[#09090b]/95 backdrop-blur-md border-t border-white/[0.08] flex items-center justify-center"
-      >
-        <BottomAdBanner />
-      </div>
 
       {/* TimeWall Quick Tasks & Paid Surveys Modal */}
       {timewallOpen && (

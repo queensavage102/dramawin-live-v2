@@ -31,6 +31,8 @@ import {
   ModernGenre,
   ModernShowItem,
   buildModernPlayerEpisode,
+  fetchDailymotionShowsByGenre,
+  getCachedDailymotionShowsByGenre,
   getModernCatalogByGenre,
 } from '../utils/modernCatalog';
 import { resolveEpisodeCover } from '../utils/localState';
@@ -228,20 +230,36 @@ const ModernShowPosterCard: React.FC<{
   isUnlocked: boolean;
   onWatch: (show: ModernShowItem) => void;
 }> = ({ show, isUnlocked, onWatch }) => {
+  const [imgFailed, setImgFailed] = useState(false);
+
+  useEffect(() => {
+    setImgFailed(false);
+  }, [show.coverUrl]);
+
   return (
-    <div className="group relative aspect-[2/3] w-full rounded-2xl bg-[#111116] border border-white/[0.1] hover:border-amber-400/60 overflow-hidden transition-all shadow-[0_10px_28px_rgba(0,0,0,0.55)] flex flex-col justify-between">
-      <img
-        src={show.coverUrl}
-        alt={show.title}
-        loading="lazy"
-        className="absolute inset-0 w-full h-full object-cover object-center brightness-105 saturate-110 transition-transform duration-500 group-hover:scale-[1.04]"
-      />
+    <div className="group relative aspect-[2/3] w-full rounded-2xl bg-[#111116] border border-white/[0.12] hover:border-amber-400/70 overflow-hidden transition-all shadow-[0_12px_32px_rgba(0,0,0,0.62)] flex flex-col justify-between">
+      {!imgFailed && show.coverUrl ? (
+        <img
+          src={show.coverUrl}
+          alt={show.title}
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          onError={() => setImgFailed(true)}
+          className="absolute inset-0 w-full h-full object-cover object-center brightness-105 saturate-115 transition-transform duration-500 group-hover:scale-[1.05]"
+        />
+      ) : (
+        <div className="absolute inset-0 w-full h-full bg-gradient-to-br from-[#231932] via-[#13131b] to-[#08080c] flex items-center justify-center p-4 text-center">
+          <span className="text-sm font-display font-bold text-amber-200/80 line-clamp-3">
+            {show.title}
+          </span>
+        </div>
+      )}
 
       {/* Measured Dark Gradient Scrim for Poster Readability */}
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/92 via-black/25 to-black/25" />
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/95 via-black/30 to-black/25" />
 
       {/* Top Badges: Genre + Unlock Status */}
-      <div className="relative z-10 p-2 flex items-center justify-between gap-1.5">
+      <div className="relative z-10 p-2.5 flex items-center justify-between gap-1.5">
         <span className="px-2 py-0.5 rounded-md bg-black/75 backdrop-blur-md border border-white/20 text-[10px] font-bold uppercase tracking-wider text-white shadow-sm">
           {show.genre}
         </span>
@@ -260,14 +278,14 @@ const ModernShowPosterCard: React.FC<{
       </div>
 
       {/* Bottom Title + Watch CTA */}
-      <div className="relative z-10 p-2.5 space-y-2">
-        <div className="space-y-0.5">
+      <div className="relative z-10 p-3 space-y-2.5">
+        <div className="space-y-1">
           <div className="flex items-center justify-between gap-1.5">
             <span className="text-[10px] font-mono-num font-bold text-amber-300/95">
               {show.episodesLabel}
             </span>
           </div>
-          <h3 className="text-[13px] sm:text-sm font-display font-bold text-white line-clamp-2 leading-tight drop-shadow-[0_2px_6px_rgba(0,0,0,0.95)] group-hover:text-amber-300 transition-colors">
+          <h3 className="text-[15px] sm:text-base font-display font-extrabold text-white line-clamp-2 leading-snug drop-shadow-[0_2px_8px_rgba(0,0,0,0.95)] group-hover:text-amber-300 transition-colors">
             {show.title}
           </h3>
           <p className="text-[11px] text-zinc-200/85 line-clamp-1">
@@ -278,9 +296,9 @@ const ModernShowPosterCard: React.FC<{
         <button
           type="button"
           onClick={() => onWatch(show)}
-          className="w-full min-h-[36px] px-3 rounded-xl gold-gradient-bg text-[#181307] text-xs font-extrabold inline-flex items-center justify-center gap-1.5 shadow-[0_6px_18px_rgba(212,175,55,0.4)] hover:brightness-105 active:scale-[0.98] cursor-pointer transition"
+          className="w-full min-h-[42px] px-3.5 rounded-xl gold-gradient-bg text-[#181307] text-xs sm:text-sm font-black inline-flex items-center justify-center gap-1.5 shadow-[0_8px_20px_rgba(212,175,55,0.45)] hover:brightness-105 active:scale-[0.98] cursor-pointer transition"
         >
-          <Play className="w-3.5 h-3.5 fill-current" />
+          <Play className="w-4 h-4 fill-current" />
           <span>Watch</span>
         </button>
       </div>
@@ -315,13 +333,36 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
   const [selectedSeriesId, setSelectedSeriesId] = useState<string | null>(null);
   const [activePlayerEpisode, setActivePlayerEpisode] = useState<DramaEpisode | null>(null);
   const [heroIndex, setHeroIndex] = useState(0);
+  const [dailymotionShows, setDailymotionShows] = useState<ModernShowItem[]>(
+    () => getCachedDailymotionShowsByGenre('All') || []
+  );
   const heroTouchStartX = useRef<number | null>(null);
 
   const unlockedSet = useMemo(() => new Set(unlockedMovieIds), [unlockedMovieIds]);
 
+  useEffect(() => {
+    const cached = getCachedDailymotionShowsByGenre(selectedCategory);
+    if (cached && cached.length > 0) {
+      setDailymotionShows(cached);
+      return;
+    }
+    setDailymotionShows([]);
+    const controller = new AbortController();
+    fetchDailymotionShowsByGenre(selectedCategory, controller.signal)
+      .then((items) => {
+        if (!controller.signal.aborted) {
+          setDailymotionShows(items);
+        }
+      })
+      .catch(() => {
+        // Keep featured curated shows visible when offline or rate-limited
+      });
+    return () => controller.abort();
+  }, [selectedCategory]);
+
   const modernShows = useMemo(
-    () => getModernCatalogByGenre(selectedCategory),
-    [selectedCategory]
+    () => getModernCatalogByGenre(selectedCategory, dailymotionShows),
+    [selectedCategory, dailymotionShows]
   );
 
   const handleWatchModernShow = (show: ModernShowItem) => {
@@ -494,7 +535,7 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
     if (heroSlides.length <= 1) return;
     const timer = window.setInterval(() => {
       setHeroIndex((prev) => (prev + 1) % heroSlides.length);
-    }, 5000);
+    }, 4000);
     return () => window.clearInterval(timer);
   }, [heroSlides.length]);
 
@@ -612,11 +653,11 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
                   className="w-full h-full relative text-left cursor-pointer block"
                 >
                   <EpisodeCover
-                    key={`hero-${activeHero.series.seriesId}-${activeHero.series.posterUrl}`}
+                    key={`hero-${heroIndex}-${activeHero.series.seriesId}-${activeHero.series.posterUrl}`}
                     src={activeHero.series.posterUrl}
                     fallbackSrc={activeHero.series.fallbackYtThumb}
                     alt={activeHero.series.seriesName}
-                    className="w-full h-full object-cover object-[center_22%] opacity-100 brightness-100 contrast-105 saturate-115 transition-transform duration-500 group-hover:scale-[1.03]"
+                    className="hero-ken-burns w-full h-full object-cover object-[center_22%] opacity-100 brightness-105 contrast-105 saturate-115"
                   />
                   {/* Dark gradient strictly confined to bottom behind title text */}
                   <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[36%] bg-gradient-to-t from-black/85 via-black/35 to-transparent" />
@@ -651,10 +692,11 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
                   className="w-full h-full relative text-left block cursor-pointer"
                 >
                   <img
-                    key={`hero-modern-${activeHero.show.id}`}
+                    key={`hero-modern-${heroIndex}-${activeHero.show.id}`}
                     src={activeHero.show.coverUrl}
                     alt={activeHero.show.title}
-                    className="w-full h-full object-cover object-[center_22%] opacity-100 brightness-105 contrast-105 saturate-115 transition-transform duration-500 group-hover:scale-[1.03]"
+                    referrerPolicy="no-referrer"
+                    className="hero-ken-burns w-full h-full object-cover object-[center_22%] opacity-100 brightness-105 contrast-105 saturate-115"
                   />
                   {/* Dark gradient strictly confined to bottom behind title text */}
                   <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[42%] bg-gradient-to-t from-black/90 via-black/45 to-transparent" />
@@ -758,8 +800,8 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
                       aria-selected={active}
                       className={`h-2 rounded-full transition-all cursor-pointer ${
                         active
-                          ? 'w-7 bg-gradient-to-r from-amber-300 via-yellow-400 to-fuchsia-500 shadow-[0_0_12px_rgba(251,191,36,0.75)]'
-                          : 'w-2 bg-white/20 hover:bg-white/40'
+                          ? 'w-7 bg-gradient-to-r from-[#FCE7A2] via-[#D4AF37] to-[#B58E29] shadow-[0_0_12px_rgba(212,175,55,0.85)]'
+                          : 'w-2 bg-white/25 hover:bg-white/45'
                       }`}
                     />
                   );
@@ -852,7 +894,7 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
               </span>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 sm:gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3.5 sm:gap-5">
               {modernShows.map((show) => (
                 <ModernShowPosterCard
                   key={`${selectedCategory}-${show.id}`}

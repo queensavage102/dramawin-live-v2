@@ -3,6 +3,7 @@ import { User, onAuthStateChanged, signInAnonymously, signInWithPopup } from 'fi
 import { AlertTriangle, Crown, Flame, ShieldCheck, X } from 'lucide-react';
 import { AdminBoardPage } from './components/AdminBoardPage';
 import { BoostTab } from './components/BoostTab';
+import { BottomAdBanner } from './components/BottomAdBanner';
 import { BottomNavBar } from './components/BottomNavBar';
 import { CheckInVaultTab } from './components/CheckInVaultTab';
 import { ConfettiExplosion } from './components/ConfettiExplosion';
@@ -2056,7 +2057,7 @@ function DramaWinApp() {
   }
 
   return (
-    <div className="min-h-screen bg-[#09090b] text-[#F6F2E9] pb-24">
+    <div className="min-h-screen bg-[#09090b] text-[#F6F2E9] pb-32">
 
       <ConfettiExplosion
         active={confettiActive}
@@ -2331,9 +2332,9 @@ function DramaWinApp() {
         </footer>
       </main>
 
-      {/* Floating Glowing SPIN Wheel Icon on Home Screen (directly above AI Assistant button) */}
+      {/* Floating Glowing SPIN Wheel Icon on Home Screen (above AI Assistant button & sticky ad banner) */}
       {activeTab === 'watch' && splashDone && !sponsorOffer && !spinModalOpen && (
-        <div className="fixed bottom-36 right-3 z-50 pointer-events-none">
+        <div className="fixed bottom-52 right-3 z-50 pointer-events-none">
           <LuckySpinFloatingButton onClick={() => setSpinModalOpen(true)} />
         </div>
       )}
@@ -2348,6 +2349,16 @@ function DramaWinApp() {
         poolPrizeZar={appConfig.poolPrizeZar || DEFAULT_POOL_PRIZE_ZAR}
         firebaseEmail={firebaseUser?.email || null}
       />
+
+      {/* Sticky Adsterra 320x50px Banner Cleanly Anchored at bottom-16 Above Bottom Navigation Bar */}
+      {activeTab !== 'foryou' && (
+        <div
+          aria-label="Sponsored banner"
+          className="fixed bottom-16 left-0 right-0 z-30 bg-[#09090b]/95 backdrop-blur-md border-t border-white/[0.08] flex items-center justify-center"
+        >
+          <BottomAdBanner />
+        </div>
+      )}
 
       {/* Fixed 5-Tab Bottom Navigation Bar */}
       <BottomNavBar activeTab={activeTab} onSelectTab={setActiveTab} />

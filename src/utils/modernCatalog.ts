@@ -40,7 +40,8 @@ export interface ModernShowItem {
   tagline: string;
   description: string;
   coverUrl: string;
-  youtubeId: string;
+  youtubeId?: string;
+  dailymotionId?: string;
 }
 
 export const SPLASH_MODERN_POSTERS: readonly string[] = [
@@ -265,15 +266,134 @@ export const MODERN_CURATED_CATALOG: ModernShowItem[] = [
   },
 ];
 
-export function getModernCatalogByGenre(genre: ModernGenre): ModernShowItem[] {
-  if (genre === 'All') {
-    return MODERN_CURATED_CATALOG;
+interface DailymotionVideoRaw {
+  id?: string;
+  title?: string;
+  thumbnail_720_url?: string;
+}
+
+interface DailymotionSearchResponse {
+  list?: DailymotionVideoRaw[];
+}
+
+const dailymotionGenreCache = new Map<ModernGenre, ModernShowItem[]>();
+
+async function queryDailymotionGenre(
+  genre: Exclude<ModernGenre, 'All'>,
+  limit: number,
+  signal?: AbortSignal
+): Promise<ModernShowItem[]> {
+  const url = `https://api.dailymotion.com/videos?search=${encodeURIComponent(
+    `${genre} short film`
+  )}&fields=id,title,thumbnail_720_url&limit=${limit}&family_filter=1&flags=no_live`;
+
+  const response = await fetch(url, { signal });
+  if (!response.ok) {
+    throw new Error(`Dailymotion API returned ${response.status}`);
   }
-  return MODERN_CURATED_CATALOG.filter((item) => item.genre === genre);
+  const payload = (await response.json()) as DailymotionSearchResponse;
+  const list = Array.isArray(payload?.list) ? payload.list : [];
+
+  const seen = new Set<string>();
+  const items: ModernShowItem[] = [];
+
+  for (const raw of list) {
+    const id = typeof raw.id === 'string' ? raw.id.trim() : '';
+    const title = typeof raw.title === 'string' ? raw.title.trim() : '';
+    const thumb =
+      typeof raw.thumbnail_720_url === 'string' ? raw.thumbnail_720_url.trim() : '';
+    if (!id || !title || !thumb || seen.has(id)) continue;
+    seen.add(id);
+
+    items.push({
+      id: `dm-${id}`,
+      title,
+      genre,
+      episodesLabel: genre === 'Anime' ? 'HD Anime' : `${genre} HD`,
+      tagline: `Full HD ${genre} · Watch & Earn`,
+      description: `Stream "${title}" in HD inside DramaWin and earn coin rewards while watching.`,
+      coverUrl: thumb.replace(/^http:\/\//i, 'https://'),
+      dailymotionId: id,
+    });
+  }
+
+  return items;
+}
+
+export function getCachedDailymotionShowsByGenre(
+  genre: ModernGenre
+): ModernShowItem[] | null {
+  return dailymotionGenreCache.get(genre) || null;
+}
+
+export async function fetchDailymotionShowsByGenre(
+  genre: ModernGenre,
+  signal?: AbortSignal
+): Promise<ModernShowItem[]> {
+  const cached = dailymotionGenreCache.get(genre);
+  if (cached && cached.length > 0) {
+    return cached;
+  }
+
+  let items: ModernShowItem[] = [];
+
+  if (genre === 'All') {
+    const [horrorList, romanceList, animeList] = await Promise.all([
+      queryDailymotionGenre('Horror', 9, signal).catch(() => []),
+      queryDailymotionGenre('Romance', 8, signal).catch(() => []),
+      queryDailymotionGenre('Anime', 8, signal).catch(() => []),
+    ]);
+
+    const interleaved: ModernShowItem[] = [];
+    const seenIds = new Set<string>();
+    const maxLen = Math.max(horrorList.length, romanceList.length, animeList.length);
+    for (let i = 0; i < maxLen; i += 1) {
+      for (const bucket of [horrorList, romanceList, animeList]) {
+        const candidate = bucket[i];
+        if (candidate && !seenIds.has(candidate.id)) {
+          seenIds.add(candidate.id);
+          interleaved.push(candidate);
+        }
+      }
+    }
+    items = interleaved.slice(0, 25);
+  } else {
+    items = await queryDailymotionGenre(genre, 25, signal);
+  }
+
+  if (items.length > 0) {
+    dailymotionGenreCache.set(genre, items);
+  }
+  return items;
+}
+
+export function getModernCatalogByGenre(
+  genre: ModernGenre,
+  extraShows: ModernShowItem[] = []
+): ModernShowItem[] {
+  const featured =
+    genre === 'All'
+      ? MODERN_CURATED_CATALOG
+      : MODERN_CURATED_CATALOG.filter((item) => item.genre === genre);
+
+  if (!extraShows.length) return featured;
+
+  const seen = new Set(featured.map((item) => item.id));
+  const merged = [...featured];
+  for (const extra of extraShows) {
+    if (!seen.has(extra.id)) {
+      seen.add(extra.id);
+      merged.push(extra);
+    }
+  }
+  return merged;
 }
 
 export function buildModernPlayerEpisode(item: ModernShowItem): DramaEpisode {
-  const embedUrl = `https://www.youtube-nocookie.com/embed/${item.youtubeId}`;
+  const embedUrl = item.dailymotionId
+    ? `https://www.dailymotion.com/embed/video/${item.dailymotionId}?autoplay=1&ui-logo=0&queue-enable=false`
+    : `https://www.youtube-nocookie.com/embed/${item.youtubeId || ''}?controls=0&modestbranding=1&rel=0&iv_load_policy=3`;
+
   return {
     id: `modern-${item.id}`,
     title: item.title,

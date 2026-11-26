@@ -5,7 +5,7 @@ interface VipSplashScreenProps {
   onComplete: () => void;
 }
 
-const SPLASH_DURATION_MS = 1200;
+const SPLASH_DURATION_MS = 2500;
 
 const SplashPosterTile: React.FC<{ coverUrl: string }> = ({ coverUrl }) => (
   <div className="relative w-24 sm:w-28 aspect-[2/3] shrink-0 rounded-xl overflow-hidden border border-white/20 shadow-[0_10px_28px_rgba(0,0,0,0.65)]">
@@ -195,14 +195,14 @@ export const VipSplashScreen: React.FC<VipSplashScreenProps> = ({ onComplete }) 
         })}
       </div>
 
-      {/* Light Dark-Vignette (rgba(0,0,0,0.45)) Keeping Poster Art Rich & Vivid */}
+      {/* Bright Dark-Vignette (rgba(0,0,0,0.35)) Keeping Poster Art Vivid Behind Gold Crown */}
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 bg-[rgba(0,0,0,0.45)]"
+        className="pointer-events-none absolute inset-0 bg-[rgba(0,0,0,0.35)]"
       />
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_46%,rgba(0,0,0,0.22)_0%,rgba(0,0,0,0.45)_62%,rgba(0,0,0,0.72)_100%)]"
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_46%,rgba(0,0,0,0.12)_0%,rgba(0,0,0,0.32)_62%,rgba(0,0,0,0.56)_100%)]"
       />
 
       {/* Center Foreground: Gold Drama Win Crown Logo & Tagline */}

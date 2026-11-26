@@ -31,8 +31,11 @@ import {
   FULL_EPISODE_UNLOCK_COINS,
   MODERN_GENRES,
   ModernGenre,
+  ModernShowItem,
   PREVIEW_FREE_SECONDS,
   buildModernPlayerEpisode,
+  fetchDailymotionShowsByGenre,
+  getCachedDailymotionShowsByGenre,
   getModernCatalogByGenre,
 } from '../utils/modernCatalog';
 import {
@@ -55,9 +58,9 @@ interface ForYouFeedItem extends DramaEpisode {
 const FORYOU_YOUTUBE_ALLOW =
   'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen';
 const FORYOU_IFRAME_FIT_CLASS =
-  'pointer-events-none absolute inset-0 w-full h-full border-0 block bg-[#060608] transition-all duration-300 ease-out';
+  'pointer-events-none absolute inset-0 w-full h-full border-0 block bg-[#060608] scale-[1.14] transition-all duration-300 ease-out';
 const FORYOU_IFRAME_ZOOM_CLASS =
-  'pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[max(100cqw,177.78cqh)] h-[max(100cqh,56.25cqw)] border-0 block bg-[#060608] transition-all duration-300 ease-out';
+  'pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[max(100cqw,177.78cqh)] h-[max(100cqh,56.25cqw)] border-0 block bg-[#060608] scale-[1.22] transition-all duration-300 ease-out';
 const FORYOU_VIDEO_FIT_CLASS =
   'pointer-events-none w-full h-full object-contain bg-[#060608] transition-all duration-300 ease-out';
 const FORYOU_VIDEO_ZOOM_CLASS =
@@ -147,6 +150,9 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
   onSwitchToHome,
 }) => {
   const [selectedGenre, setSelectedGenre] = useState<ModernGenre>('All');
+  const [dailymotionShows, setDailymotionShows] = useState<ModernShowItem[]>(
+    () => getCachedDailymotionShowsByGenre('All') || []
+  );
   const [activeIndex, setActiveIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(true);
   const [isZoomed, setIsZoomed] = useState(false);
@@ -276,9 +282,29 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
     [scheduleStallPill]
   );
 
+  useEffect(() => {
+    const cached = getCachedDailymotionShowsByGenre(selectedGenre);
+    if (cached && cached.length > 0) {
+      setDailymotionShows(cached);
+      return;
+    }
+    setDailymotionShows([]);
+    const controller = new AbortController();
+    fetchDailymotionShowsByGenre(selectedGenre, controller.signal)
+      .then((items) => {
+        if (!controller.signal.aborted) {
+          setDailymotionShows(items);
+        }
+      })
+      .catch(() => {
+        // Keep featured curated shows playing if offline or rate-limited
+      });
+    return () => controller.abort();
+  }, [selectedGenre]);
+
   const modernShows = useMemo(
-    () => getModernCatalogByGenre(selectedGenre),
-    [selectedGenre]
+    () => getModernCatalogByGenre(selectedGenre, dailymotionShows),
+    [selectedGenre, dailymotionShows]
   );
 
   const playableAdminEpisodes = useMemo(
@@ -989,7 +1015,7 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
         }`}
       >
         {/* 1. True Full-Screen Edge-to-Edge Video Stage with Floating Translucent DramaWin HUD */}
-        <div className="relative flex-1 min-h-0 w-full bg-[#060608] overflow-hidden [container-type:size]">
+        <div className="relative w-full h-[calc(100vh-125px)] h-[calc(100dvh-125px)] flex-1 min-h-0 bg-[#060608] overflow-hidden [container-type:size]">
           {/* Video Frame / Featured Drama Preview Layer */}
           {currentEpisode.featuredDrama ? (
             <div className="relative w-full h-full overflow-hidden bg-[#060608]">
@@ -1491,6 +1517,9 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
               if (videoSource.kind === 'youtube') {
                 postYouTubeCommand(iframeRef.current, 'seekTo', [0, true]);
                 postYouTubeCommand(iframeRef.current, 'playVideo');
+              } else if (videoSource.kind === 'dailymotion') {
+                postDailymotionCommand(iframeRef.current, 'seek', [0]);
+                postDailymotionCommand(iframeRef.current, 'play');
               }
               if (videoRef.current) {
                 try {
