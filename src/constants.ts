@@ -1084,26 +1084,34 @@ export function getYouTubeWatchUrl(rawUrl: string): string | null {
   return extractYouTubeMedia(rawUrl).watchUrl;
 }
 
+function cleanDailymotionCandidateId(candidate: string | null | undefined): string | null {
+  if (!candidate) return null;
+  const stripped = candidate.trim().split(/[_?#&/]/)[0].trim();
+  return /^[a-zA-Z0-9]{4,24}$/.test(stripped) ? stripped : null;
+}
+
 export function extractDailymotionVideoId(rawUrl: string): string | null {
   const unwrapped = normalizeYouTubeInput(rawUrl);
   if (!unwrapped) return null;
 
-  // Support bare Dailymotion video IDs (e.g. "x8abcde" or "k5m9abc123")
-  if (/^[xk][a-zA-Z0-9]{5,18}$/i.test(unwrapped)) {
-    return unwrapped;
+  // Support bare Dailymotion video IDs (e.g. "x8abcde", "x8abcde_title?foo=1", or "k5m9abc123")
+  if (/^[xk][a-zA-Z0-9]{4,20}(?:[_?#&/]|$)/i.test(unwrapped)) {
+    const bareClean = cleanDailymotionCandidateId(unwrapped);
+    if (bareClean) return bareClean;
   }
 
   const regexPatterns = [
     /(?:dai\.ly\/)([a-zA-Z0-9]+)(?:[?#&_/]|$)/i,
     /(?:dailymotion\.com\/(?:embed\/|swf\/|player\/)?video\/)([a-zA-Z0-9]+)(?:[_?#&/]|$)/i,
-    /(?:geo\.dailymotion\.com\/player(?:\/[a-zA-Z0-9]+)?\.html[^#]*[?&]video=)([a-zA-Z0-9]+)(?:[&#]|$)/i,
-    /(?:dailymotion\.com\/[^?#]*[?&]video=)([a-zA-Z0-9]+)(?:[&#]|$)/i,
+    /(?:geo\.dailymotion\.com\/player(?:\/[a-zA-Z0-9]+)?\.html[^#]*[?&]video=)([a-zA-Z0-9]+)(?:[_?#&/]|$)/i,
+    /(?:dailymotion\.com\/[^?#]*[?&]video=)([a-zA-Z0-9]+)(?:[_?#&/]|$)/i,
   ];
 
   for (const regex of regexPatterns) {
     const match = unwrapped.match(regex);
-    if (match?.[1] && /^[a-zA-Z0-9]{4,24}$/.test(match[1])) {
-      return match[1];
+    const cleanMatch = cleanDailymotionCandidateId(match?.[1]);
+    if (cleanMatch) {
+      return cleanMatch;
     }
   }
 
@@ -1119,24 +1127,25 @@ export function extractDailymotionVideoId(rawUrl: string): string | null {
 
     if (host === 'dai.ly') {
       const firstSeg = parsed.pathname.split('/').filter(Boolean)[0] || '';
-      const cleanId = firstSeg.split('_')[0];
-      return cleanId && /^[a-zA-Z0-9]{4,24}$/.test(cleanId) ? cleanId : null;
+      const cleanId = cleanDailymotionCandidateId(firstSeg);
+      if (cleanId) return cleanId;
     }
 
     if (host === 'dailymotion.com' || host.endsWith('.dailymotion.com')) {
-      const videoParam = parsed.searchParams.get('video');
-      if (videoParam && /^[a-zA-Z0-9]{4,24}$/.test(videoParam)) {
+      const videoParam = cleanDailymotionCandidateId(parsed.searchParams.get('video'));
+      if (videoParam) {
         return videoParam;
       }
-      const hashMatch = parsed.hash.match(/video=([a-zA-Z0-9]{4,24})/i);
-      if (hashMatch?.[1]) {
-        return hashMatch[1];
+      const hashMatch = parsed.hash.match(/video=([^&#]+)/i);
+      const cleanHashId = cleanDailymotionCandidateId(hashMatch?.[1]);
+      if (cleanHashId) {
+        return cleanHashId;
       }
       const parts = parsed.pathname.split('/').filter(Boolean);
       const videoIdx = parts.findIndex((p) => p.toLowerCase() === 'video');
       if (videoIdx !== -1 && parts[videoIdx + 1]) {
-        const cleanId = parts[videoIdx + 1].split('_')[0];
-        if (/^[a-zA-Z0-9]{4,24}$/.test(cleanId)) {
+        const cleanId = cleanDailymotionCandidateId(parts[videoIdx + 1]);
+        if (cleanId) {
           return cleanId;
         }
       }

@@ -382,7 +382,7 @@ export const WatchPartyOverlay: React.FC<WatchPartyOverlayProps> = ({
       {/* 2. Full-Screen Cross-Screen Floating Emoji & VIP Celebration Reactions Layer */}
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 z-30 overflow-hidden"
+        className="pointer-events-none absolute inset-0 z-20 overflow-hidden"
       >
         {floatingBursts.map((burst) =>
           burst.isSuper ? (

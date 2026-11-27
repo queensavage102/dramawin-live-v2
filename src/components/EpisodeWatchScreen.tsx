@@ -201,11 +201,12 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
         ? Math.max(0, Math.floor(episode.startTime))
         : undefined;
 
+    const initialMutedRef = useRef(muted);
     const videoSource = useMemo(
       () =>
         resolveVideoSource(rawVideoUrl, {
           startSeconds: customStart,
-          muted: false,
+          muted: initialMutedRef.current,
           autoplay: true,
           ccSubtitles,
         }),
@@ -946,8 +947,8 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
         : 'scale-[1.85]';
 
     const iframeClassName = fitMode || watchParty16x9
-      ? 'pointer-events-none absolute inset-0 z-0 w-full h-full border-0 block bg-transparent scale-100 transition-transform duration-300 ease-out'
-      : `pointer-events-none absolute inset-0 z-0 w-full h-full border-0 block bg-transparent ${scaleClass} transition-transform duration-300 ease-out`;
+      ? 'pointer-events-none absolute inset-0 z-10 w-full h-full border-0 block bg-transparent scale-100 transition-transform duration-300 ease-out'
+      : `pointer-events-none absolute inset-0 z-10 w-full h-full border-0 block bg-transparent ${scaleClass} transition-transform duration-300 ease-out`;
 
     const directVideoClassName = `pointer-events-none absolute inset-0 z-0 w-full h-full bg-transparent transition-transform duration-300 ease-out ${
       fitMode || watchParty16x9 ? 'object-contain scale-100' : `object-cover ${scaleClass}`
@@ -1184,13 +1185,39 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
   const [partySwitcherOpen, setPartySwitcherOpen] = useState(false);
   const [partyChatDrawerOpen, setPartyChatDrawerOpen] = useState(false);
   const [partyUnreadCount, setPartyUnreadCount] = useState(0);
+  const [partyTapToUnmute, setPartyTapToUnmute] = useState<boolean>(() => Boolean(inWatchParty));
   const [inviteCopied, setInviteCopied] = useState(false);
   const [ccSubtitlesOn, setCcSubtitlesOn] = useState(true);
 
   useEffect(() => {
     setPartyChatDrawerOpen(false);
     setPartyUnreadCount(0);
-  }, [watchPartyRoom?.roomId]);
+    setPartyTapToUnmute(Boolean(inWatchParty));
+  }, [inWatchParty, watchPartyRoom?.roomId]);
+
+  const effectiveMuted = muted || (inWatchParty && partyTapToUnmute);
+
+  const handleWatchPartyToggleMute = useCallback(() => {
+    if (inWatchParty && partyTapToUnmute) {
+      setPartyTapToUnmute(false);
+      if (muted) {
+        onToggleMute();
+      }
+      return;
+    }
+    onToggleMute();
+  }, [inWatchParty, partyTapToUnmute, muted, onToggleMute]);
+
+  const handleUnmuteFromOverlay = useCallback(
+    (e?: React.SyntheticEvent) => {
+      e?.stopPropagation();
+      setPartyTapToUnmute(false);
+      if (muted) {
+        onToggleMute();
+      }
+    },
+    [muted, onToggleMute]
+  );
 
   const handleShareInviteLink = useCallback(() => {
     if (!watchPartyRoom) return;
@@ -1900,20 +1927,20 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
       role="dialog"
       aria-modal="true"
       aria-label={episode.title}
-      className={`fixed inset-0 overflow-hidden flex flex-col ${
+      className={
         inWatchParty
-          ? isExpandedFull
-            ? 'z-[75] bg-[#0d0d12]'
-            : 'z-50 bg-[#0d0d12]'
-          : isExpandedFull
-            ? 'z-[75] bg-[#070709]'
-            : 'z-[35] bg-[#070709]'
-      }`}
+          ? `fixed inset-0 h-[100dvh] w-screen overflow-hidden flex flex-col bg-black ${
+              isExpandedFull ? 'z-[75]' : 'z-50'
+            }`
+          : `fixed inset-0 overflow-hidden flex flex-col ${
+              isExpandedFull ? 'z-[75] bg-[#070709]' : 'z-[35] bg-[#070709]'
+            }`
+      }
     >
       <div
         ref={playerContainerRef}
         className={`relative h-[100dvh] w-full flex flex-col overflow-hidden ${
-          inWatchParty ? 'bg-[#0d0d12]' : 'bg-[#060608]'
+          inWatchParty ? 'bg-black' : 'bg-[#060608]'
         }`}
       >
         {/* 0. Single Slim Watch Party Top Header Bar (Room Code, Counter, Share, Leave) */}
@@ -1961,11 +1988,11 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
 
                 <button
                   type="button"
-                  onClick={onToggleMute}
-                  aria-label={muted ? 'Unmute video' : 'Mute video'}
+                  onClick={handleWatchPartyToggleMute}
+                  aria-label={effectiveMuted ? 'Unmute video' : 'Mute video'}
                   className="h-7 w-7 rounded-full border border-white/15 bg-white/[0.06] flex items-center justify-center text-zinc-300 hover:text-white cursor-pointer shrink-0"
                 >
-                  {muted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5 text-[#D4AF37]" />}
+                  {effectiveMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5 text-[#D4AF37]" />}
                 </button>
 
                 <button
@@ -1995,12 +2022,18 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
         )}
 
         {/* 1. Full-Screen Video Stage (~85%+ Screen Height in Watch Party & Solo) */}
-        <div className="relative w-full flex-1 min-h-0 bg-[#060608] overflow-hidden [container-type:size]">
+        <div
+          className={
+            inWatchParty
+              ? 'relative flex-1 w-full h-full min-h-0 flex flex-col overflow-hidden bg-black'
+              : 'relative w-full flex-1 min-h-0 bg-[#060608] overflow-hidden'
+          }
+        >
           <WatchVideoStage
             episode={episode}
             fitMode={isFitMode}
             paused={userPaused || rewardModalOpen || previewLockOpen}
-            muted={muted}
+            muted={effectiveMuted}
             playbackRate={1}
             resumePlaybackSignal={resumePlaybackSignal}
             manualReloadNonce={videoReloadNonce}
@@ -2026,7 +2059,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
 
           {/* Transparent Interactive Tap Overlay <div> (Host & Solo Only; Non-interactive Sync Status for Guests) */}
           {inWatchParty && watchPartyRole === 'guest' ? (
-            <div className="pointer-events-none absolute inset-0 z-10 w-full h-full bg-transparent flex items-center justify-center">
+            <div className="pointer-events-none absolute inset-0 z-[15] w-full h-full bg-transparent flex items-center justify-center">
               {userPaused && !previewLockOpen && !rewardModalOpen && (
                 <div className="px-4 py-2 rounded-full bg-black/75 backdrop-blur-md border border-emerald-400/50 text-emerald-200 text-xs font-extrabold inline-flex items-center gap-2 shadow-xl">
                   <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
@@ -2046,7 +2079,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
                 }
               }}
               aria-label={userPaused ? 'Play episode' : 'Pause episode'}
-              className="absolute inset-0 z-10 w-full h-full bg-transparent cursor-pointer flex items-center justify-center focus:outline-none"
+              className="absolute inset-0 z-[15] w-full h-full bg-transparent cursor-pointer flex items-center justify-center focus:outline-none"
             >
               {userPaused && !previewLockOpen && !rewardModalOpen ? (
                 <span className="w-16 h-16 rounded-full bg-black/75 backdrop-blur-md border-2 border-[#D4AF37] text-[#FCE7A2] flex items-center justify-center shadow-[0_0_28px_rgba(212,175,55,0.45)] transition-transform">
@@ -2058,6 +2091,21 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
                 </span>
               ) : null}
             </div>
+          )}
+
+          {/* Mobile Chrome Autoplay Unblock: Starts Muted with One-Tap Unmute Overlay */}
+          {inWatchParty && partyTapToUnmute && !previewLockOpen && !rewardModalOpen && (
+            <button
+              type="button"
+              onClick={handleUnmuteFromOverlay}
+              aria-label="Tap to unmute Watch Party audio"
+              className="pointer-events-auto absolute inset-0 z-[25] flex items-center justify-center bg-black/15 cursor-pointer focus:outline-none"
+            >
+              <span className="px-4 py-2.5 rounded-full bg-black/80 backdrop-blur-md border border-[#D4AF37]/80 text-[#FCE7A2] text-xs sm:text-sm font-black inline-flex items-center gap-2 shadow-[0_0_24px_rgba(251,191,36,0.45)] animate-pulse">
+                <VolumeX className="w-4 h-4 text-[#FBBF24]" />
+                <span>Tap to Unmute</span>
+              </span>
+            </button>
           )}
 
           {!inWatchParty && (
@@ -2190,11 +2238,11 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
 
                     <button
                       type="button"
-                      onClick={onToggleMute}
-                      aria-label={muted ? 'Unmute video' : 'Mute video'}
+                      onClick={handleWatchPartyToggleMute}
+                      aria-label={effectiveMuted ? 'Unmute video' : 'Mute video'}
                       className="min-h-[26px] min-w-[26px] rounded-full backdrop-blur-md border border-white/20 bg-black/65 flex items-center justify-center text-zinc-300 hover:text-white cursor-pointer shrink-0"
                     >
-                      {muted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5 text-[#D4AF37]" />}
+                      {effectiveMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5 text-[#D4AF37]" />}
                     </button>
                   </div>
                 </div>

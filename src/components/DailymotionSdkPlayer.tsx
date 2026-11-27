@@ -337,6 +337,13 @@ export const DailymotionSdkPlayer: React.FC<DailymotionSdkPlayerProps> = React.m
           onStallStateChangeRef.current?.(false);
 
           postDailymotionCommand(iframeRef.current, 'muted', [mutedRef.current]);
+          postDailymotionCommand(
+            iframeRef.current,
+            mutedRef.current ? 'mute' : 'unmute'
+          );
+          if (!mutedRef.current) {
+            postDailymotionCommand(iframeRef.current, 'volume', [1]);
+          }
           if (playbackRateRef.current !== 1) {
             postDailymotionCommand(iframeRef.current, 'playbackSpeed', [playbackRateRef.current]);
           }
@@ -475,6 +482,13 @@ export const DailymotionSdkPlayer: React.FC<DailymotionSdkPlayerProps> = React.m
       onStallStateChangeRef.current?.(false);
 
       postDailymotionCommand(iframeRef.current, 'muted', [mutedRef.current]);
+      postDailymotionCommand(
+        iframeRef.current,
+        mutedRef.current ? 'mute' : 'unmute'
+      );
+      if (!mutedRef.current) {
+        postDailymotionCommand(iframeRef.current, 'volume', [1]);
+      }
       if (playbackRateRef.current !== 1) {
         postDailymotionCommand(iframeRef.current, 'playbackSpeed', [playbackRateRef.current]);
       }
@@ -510,6 +524,12 @@ export const DailymotionSdkPlayer: React.FC<DailymotionSdkPlayerProps> = React.m
       if (!loadedRef.current) return;
       postDailymotionCommand(iframeRef.current, 'muted', [muted]);
       postDailymotionCommand(iframeRef.current, muted ? 'mute' : 'unmute');
+      if (!muted) {
+        postDailymotionCommand(iframeRef.current, 'volume', [1]);
+        if (!pausedRef.current) {
+          postDailymotionCommand(iframeRef.current, 'play');
+        }
+      }
     }, [muted]);
 
     // Sync playback rate
@@ -545,7 +565,7 @@ export const DailymotionSdkPlayer: React.FC<DailymotionSdkPlayerProps> = React.m
     }, [replayNonce]);
 
     return (
-      <div className="relative w-full h-full bg-[#060608] overflow-hidden">
+      <div className="relative flex-1 w-full h-full overflow-hidden bg-black">
         {embedSrc && (
           <iframe
             ref={iframeRef}
@@ -556,7 +576,7 @@ export const DailymotionSdkPlayer: React.FC<DailymotionSdkPlayerProps> = React.m
             referrerPolicy="no-referrer-when-downgrade"
             allow="autoplay; fullscreen; picture-in-picture"
             allowFullScreen
-            className={`${className} ${
+            className={`absolute inset-0 w-full h-full border-0 z-10 ${className} ${
               interactive ? 'pointer-events-auto' : 'pointer-events-none'
             }`}
           />
@@ -568,7 +588,7 @@ export const DailymotionSdkPlayer: React.FC<DailymotionSdkPlayerProps> = React.m
             alt=""
             aria-hidden="true"
             referrerPolicy="no-referrer"
-            className="pointer-events-none absolute inset-0 w-full h-full object-cover opacity-35 blur-sm"
+            className="pointer-events-none absolute inset-0 z-0 w-full h-full object-cover opacity-35 blur-sm"
           />
         )}
 
