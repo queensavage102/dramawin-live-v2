@@ -1048,7 +1048,7 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
       
       
       title={episode.title}
-      referrerPolicy="origin"
+      referrerPolicy="no-referrer"
       
       
       className={iframeClassName}
