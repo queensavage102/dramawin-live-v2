@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+wetimport React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -1039,43 +1039,23 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
     );
 
     if (videoSource.kind === 'dailymotion' && videoSource.dailymotionId) {
-    
-      const dmId = videoSource.dailymotionId!;
+  const dmId = videoSource.dailymotionId!;
+  return (
+    <iframe
+      key={`dm-embed-${episode.id}-${dmId}`}
+      src={`https://www.dailymotion.com/embed/video/${dmId}?autoplay=1&mute=1&playsinline=1`}
       
-      return (
-        <DailymotionSdkPlayer
-          key={`dm-sdk-${episode.id}-${dmId}`}
-          videoId={dmId}
-          title={episode.title}
-          posterUrl={hasPoster ? episode.coverImage : undefined}
-          paused={paused}
-          muted={muted}
-          autoplay={true}
-          startSeconds={customStart || 0}
-          playbackRate={playbackRate}
-          ccSubtitles={ccSubtitles}
-          seekRequest={seekRequest}
-          replayNonce={previewReplayNonce}
-          reloadNonce={manualReloadNonce}
-          isPreviewLocked={isPreviewLocked}
-          interactive={true}
-          
-          minimalEmbed={inWatchParty}
-          showIdBadge={inWatchParty}
-          fallbackToTestId={false}
-          
-          className={iframeClassName}
-          onTimeUpdate={onTimeUpdate}
-          onPreviewLimitReached={onPreviewLimitReached}
-          onPlayingChange={onPlayingChange}
-          onVideoEnded={onVideoEnded}
-          onStallStateChange={onStallStateChange}
-          onSdkSyncEvent={onSdkSyncEvent}
-          onStateProviderReady={onStateProviderReady}
-          onFallbackNextEpisode={onFallbackNextEpisode}
-        />
-      );
-    }
+      
+      title={episode.title}
+      allow="autoplay; fullscreen; picture-in-picture"
+      referrerPolicy="no-referrer-when-downgrade"
+      className={iframeClassName}
+      style={{ width: '100%', height: '100%', border: 0 }}
+    />
+  );
+    
+    
+    
 
     if (
       videoSource.kind === 'youtube' ||
