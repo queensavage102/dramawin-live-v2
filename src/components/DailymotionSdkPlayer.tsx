@@ -1,6 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, RotateCcw, SkipForward } from 'lucide-react';
-import { extractDailymotionVideoId } from '../constants';
+import {
+  WATCH_PARTY_FALLBACK_DAILYMOTION_ID,
+  extractDailymotionVideoId,
+  isValidDailymotionId,
+} from '../constants';
 import { PREVIEW_FREE_SECONDS } from '../utils/modernCatalog';
 
 export interface DailymotionPlaybackSnapshot {
@@ -32,6 +36,9 @@ export interface DailymotionSdkPlayerProps {
   reloadNonce?: number;
   isPreviewLocked?: boolean;
   interactive?: boolean;
+  minimalEmbed?: boolean;
+  showIdBadge?: boolean;
+  fallbackToTestId?: boolean;
   className?: string;
   onTimeUpdate?: (currentTime: number, duration: number) => void;
   onPreviewLimitReached?: () => void;
@@ -153,6 +160,9 @@ export const DailymotionSdkPlayer: React.FC<DailymotionSdkPlayerProps> = React.m
     reloadNonce = 0,
     isPreviewLocked = false,
     interactive = false,
+    minimalEmbed = false,
+    showIdBadge = false,
+    fallbackToTestId = false,
     className = '',
     onTimeUpdate,
     onPreviewLimitReached,
@@ -163,10 +173,23 @@ export const DailymotionSdkPlayer: React.FC<DailymotionSdkPlayerProps> = React.m
     onStateProviderReady,
     onFallbackNextEpisode,
   }) => {
-    const cleanVideoId = useMemo(
-      () => extractDailymotionVideoId(videoId) || (videoId || '').trim(),
-      [videoId]
-    );
+    const cleanVideoId = useMemo(() => {
+      const extracted = extractDailymotionVideoId(videoId) || (videoId || '').trim();
+      const valid = isValidDailymotionId(extracted);
+      const resolved = valid
+        ? extracted
+        : fallbackToTestId
+          ? WATCH_PARTY_FALLBACK_DAILYMOTION_ID
+          : '';
+      console.log('[DailymotionSdkPlayer] Video ID resolution:', {
+        rawVideoId: videoId,
+        extracted,
+        validStartsWithXorK: valid,
+        fallbackToTestId,
+        resolvedCleanId: resolved,
+      });
+      return resolved;
+    }, [videoId, fallbackToTestId]);
 
     const iframeRef = useRef<HTMLIFrameElement | null>(null);
     const pausedRef = useRef(paused);
@@ -269,9 +292,12 @@ export const DailymotionSdkPlayer: React.FC<DailymotionSdkPlayerProps> = React.m
       };
     }, [cleanVideoId]);
 
-    // Build direct Dailymotion embed iframe URL (?autoplay=1&mute=0&playsinline=1)
+    // Build direct Dailymotion embed iframe URL
     const embedSrc = useMemo(() => {
       if (!cleanVideoId) return '';
+      if (minimalEmbed) {
+        return `https://www.dailymotion.com/embed/video/${encodeURIComponent(cleanVideoId)}?autoplay=1&mute=1`;
+      }
       const params = new URLSearchParams();
       params.set('autoplay', autoplay && !pausedRef.current ? '1' : '0');
       params.set('mute', mutedRef.current ? '1' : '0');
@@ -289,7 +315,7 @@ export const DailymotionSdkPlayer: React.FC<DailymotionSdkPlayerProps> = React.m
         params.set('start', String(mountStartSeconds));
       }
       return `https://www.dailymotion.com/embed/video/${encodeURIComponent(cleanVideoId)}?${params.toString()}`;
-    }, [cleanVideoId, autoplay, ccSubtitles, mountStartSeconds]);
+    }, [cleanVideoId, minimalEmbed, autoplay, ccSubtitles, mountStartSeconds]);
 
     const reportProgress = useCallback((nextTime: number, nextDuration?: number) => {
       if (typeof nextDuration === 'number' && Number.isFinite(nextDuration) && nextDuration > 0) {
@@ -565,7 +591,7 @@ export const DailymotionSdkPlayer: React.FC<DailymotionSdkPlayerProps> = React.m
     }, [replayNonce]);
 
     return (
-      <div className="relative flex-1 w-full h-full overflow-hidden bg-black">
+      <div className="relative flex-1 w-full h-full overflow-hidden">
         {embedSrc && (
           <iframe
             ref={iframeRef}
@@ -576,13 +602,20 @@ export const DailymotionSdkPlayer: React.FC<DailymotionSdkPlayerProps> = React.m
             referrerPolicy="no-referrer-when-downgrade"
             allow="autoplay; fullscreen; picture-in-picture"
             allowFullScreen
+            style={{ width: '100%', height: '100%', display: 'block', zIndex: 10 }}
             className={`absolute inset-0 w-full h-full border-0 z-10 ${className} ${
               interactive ? 'pointer-events-auto' : 'pointer-events-none'
             }`}
           />
         )}
 
-        {isLoading && !unavailableReason && posterUrl && posterUrl !== 'none' && (
+        {showIdBadge && cleanVideoId && (
+          <div className="pointer-events-none absolute top-2 left-2 z-20 px-2 py-0.5 rounded bg-black/55 backdrop-blur-sm border border-white/15 text-[10px] font-mono-num font-bold text-white/85">
+            ID: {cleanVideoId}
+          </div>
+        )}
+
+        {!minimalEmbed && isLoading && !unavailableReason && posterUrl && posterUrl !== 'none' && (
           <img
             src={posterUrl}
             alt=""

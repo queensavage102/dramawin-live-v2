@@ -15,9 +15,11 @@ import {
   Unsubscribe,
 } from 'firebase/firestore';
 import {
+  WATCH_PARTY_FALLBACK_DAILYMOTION_ID,
   WATCH_PARTY_PRIVATE_CAPACITY,
   WATCH_PARTY_PUBLIC_CAPACITY,
   extractDailymotionVideoId,
+  isValidDailymotionId,
   sanitizeMediaUrl,
   sanitizePosterUrl,
 } from '../constants';
@@ -308,14 +310,22 @@ function sanitizeUsername(raw: string): string {
 }
 
 function buildCleanDailymotionLobbyUrl(dmId: string): string {
-  return `https://www.dailymotion.com/embed/video/${dmId}?autoplay=1&mute=0&ui-logo=0&queue-enable=false&subtitles-default=en&playsinline=1&api=postMessage&ui-start-screen-info=false`;
+  return `https://www.dailymotion.com/embed/video/${dmId}?autoplay=1&mute=1`;
 }
 
 function buildEpisodeFields(episode: DramaEpisode) {
   const rawVideoUrl = sanitizeMediaUrl((episode.videoUrl || episode.youtubeUrl || '').trim());
-  const dmId = (extractDailymotionVideoId(rawVideoUrl) || '').slice(0, 32);
-  const normalizedDmUrl = dmId ? buildCleanDailymotionLobbyUrl(dmId) : rawVideoUrl;
-  const safeVideoUrl = (normalizedDmUrl || 'https://www.dailymotion.com').slice(0, 500);
+  const extractedId = extractDailymotionVideoId(rawVideoUrl) || '';
+  const dmId = isValidDailymotionId(extractedId)
+    ? extractedId.slice(0, 32)
+    : WATCH_PARTY_FALLBACK_DAILYMOTION_ID;
+  console.log('[WatchParty] buildEpisodeFields media check:', {
+    episodeId: episode.id,
+    videoUrl: rawVideoUrl,
+    extractedId,
+    finalDailymotionId: dmId,
+  });
+  const safeVideoUrl = buildCleanDailymotionLobbyUrl(dmId).slice(0, 500);
   const coverImage = sanitizePosterUrl(
     episode.coverImage || episode.posterUrl || episode.thumbnailUrl || ''
   ).slice(0, 2000);
@@ -335,8 +345,21 @@ function buildEpisodeFields(episode: DramaEpisode) {
 }
 
 export function episodeFromWatchPartyRoom(room: WatchPartyRoom): DramaEpisode {
-  const dmId = (room.dailymotionId || extractDailymotionVideoId(room.videoUrl || '') || '').trim();
-  const resolvedMediaUrl = dmId ? buildCleanDailymotionLobbyUrl(dmId) : room.videoUrl;
+  const candidateId = (
+    room.dailymotionId ||
+    extractDailymotionVideoId(room.videoUrl || '') ||
+    ''
+  ).trim();
+  const dmId = isValidDailymotionId(candidateId)
+    ? candidateId
+    : WATCH_PARTY_FALLBACK_DAILYMOTION_ID;
+  console.log('[WatchParty] episodeFromWatchPartyRoom media check:', {
+    roomId: room.roomId,
+    roomVideoUrl: room.videoUrl,
+    roomDailymotionId: room.dailymotionId,
+    resolvedCleanId: dmId,
+  });
+  const resolvedMediaUrl = buildCleanDailymotionLobbyUrl(dmId);
   const safeTitle = isEnglishCatalogTitle(room.episodeTitle)
     ? room.episodeTitle
     : isEnglishCatalogTitle(room.seriesTitle)

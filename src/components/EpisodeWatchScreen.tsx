@@ -27,9 +27,12 @@ import {
   COIN_POT_CYCLE_SECONDS,
   DEFAULT_SPONSOR_URL,
   WATCH_PARTY_COINS_MULTIPLIER,
+  WATCH_PARTY_FALLBACK_DAILYMOTION_ID,
   WATCH_PARTY_PRIVATE_CAPACITY,
   WATCH_PARTY_PUBLIC_CAPACITY,
   buildWatchPartyInviteLink,
+  extractDailymotionVideoId,
+  isValidDailymotionId,
   resolveVideoSource,
   sanitizeMediaUrl,
 } from '../constants';
@@ -157,6 +160,8 @@ interface WatchVideoStageProps {
   seekRequest?: { time: number; nonce: number } | null;
   ccSubtitles?: boolean;
   watchParty16x9?: boolean;
+  inWatchParty?: boolean;
+  watchPartyDailymotionId?: string;
   onTimeUpdate?: (currentTime: number, duration: number) => void;
   onPreviewLimitReached?: () => void;
   onPlayingChange?: (playing: boolean) => void;
@@ -186,6 +191,8 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
     seekRequest = null,
     ccSubtitles = true,
     watchParty16x9 = false,
+    inWatchParty = false,
+    watchPartyDailymotionId,
     onTimeUpdate,
     onPreviewLimitReached,
     onPlayingChange,
@@ -212,6 +219,36 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
         }),
       [rawVideoUrl, customStart, ccSubtitles]
     );
+
+    const resolvedWatchPartyDailymotionId = useMemo(() => {
+      const candidate = (
+        watchPartyDailymotionId ||
+        videoSource.dailymotionId ||
+        extractDailymotionVideoId(rawVideoUrl) ||
+        ''
+      ).trim();
+      const valid = isValidDailymotionId(candidate);
+      const finalId = valid ? candidate : WATCH_PARTY_FALLBACK_DAILYMOTION_ID;
+      if (inWatchParty) {
+        console.log('[WatchParty] WatchVideoStage media diagnostic:', {
+          episodeId: episode.id,
+          videoUrl: rawVideoUrl,
+          watchPartyDailymotionId,
+          resolvedKind: videoSource.kind,
+          extractedCandidate: candidate,
+          validStartsWithXorK: valid,
+          cleanId: finalId,
+        });
+      }
+      return finalId;
+    }, [
+      inWatchParty,
+      episode.id,
+      rawVideoUrl,
+      watchPartyDailymotionId,
+      videoSource.kind,
+      videoSource.dailymotionId,
+    ]);
 
     const resolvedDirectUrl = useResolvedMediaUrl(
       videoSource.kind === 'direct' ? videoSource.url : ''
@@ -1001,11 +1038,14 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
       </div>
     );
 
-    if (videoSource.kind === 'dailymotion' && videoSource.dailymotionId) {
+    if (inWatchParty || (videoSource.kind === 'dailymotion' && videoSource.dailymotionId)) {
+      const dmId = inWatchParty
+        ? resolvedWatchPartyDailymotionId
+        : videoSource.dailymotionId!;
       return (
         <DailymotionSdkPlayer
-          key={`dm-sdk-${episode.id}`}
-          videoId={videoSource.dailymotionId}
+          key={`dm-sdk-${episode.id}-${dmId}`}
+          videoId={dmId}
           title={episode.title}
           posterUrl={hasPoster ? episode.coverImage : undefined}
           paused={paused}
@@ -1019,6 +1059,9 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
           reloadNonce={manualReloadNonce}
           isPreviewLocked={isPreviewLocked}
           interactive={false}
+          minimalEmbed={inWatchParty}
+          showIdBadge={inWatchParty}
+          fallbackToTestId={inWatchParty}
           className={iframeClassName}
           onTimeUpdate={onTimeUpdate}
           onPreviewLimitReached={onPreviewLimitReached}
@@ -2041,7 +2084,9 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
             previewReplayNonce={previewReplayNonce}
             seekRequest={seekRequest}
             ccSubtitles={ccSubtitlesOn}
-            watchParty16x9={false}
+            watchParty16x9={inWatchParty && !isFitMode}
+            inWatchParty={inWatchParty}
+            watchPartyDailymotionId={watchPartyRoom?.dailymotionId}
             onTimeUpdate={handleStageTimeUpdate}
             onPreviewLimitReached={() => {
               if (!effectiveArchiveLocked) return;
@@ -2093,18 +2138,16 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
             </div>
           )}
 
-          {/* Mobile Chrome Autoplay Unblock: Starts Muted with One-Tap Unmute Overlay */}
+          {/* Mobile Chrome Autoplay Unblock: Compact Floating Pill (No Overlay Div Blocking Video) */}
           {inWatchParty && partyTapToUnmute && !previewLockOpen && !rewardModalOpen && (
             <button
               type="button"
               onClick={handleUnmuteFromOverlay}
               aria-label="Tap to unmute Watch Party audio"
-              className="pointer-events-auto absolute inset-0 z-[25] flex items-center justify-center bg-black/15 cursor-pointer focus:outline-none"
+              className="pointer-events-auto absolute top-2 right-2 z-[25] px-3.5 py-1.5 rounded-full bg-black/80 backdrop-blur-md border border-[#D4AF37]/80 text-[#FCE7A2] text-xs font-black inline-flex items-center gap-1.5 shadow-[0_0_20px_rgba(251,191,36,0.45)] animate-pulse cursor-pointer focus:outline-none"
             >
-              <span className="px-4 py-2.5 rounded-full bg-black/80 backdrop-blur-md border border-[#D4AF37]/80 text-[#FCE7A2] text-xs sm:text-sm font-black inline-flex items-center gap-2 shadow-[0_0_24px_rgba(251,191,36,0.45)] animate-pulse">
-                <VolumeX className="w-4 h-4 text-[#FBBF24]" />
-                <span>Tap to Unmute</span>
-              </span>
+              <VolumeX className="w-3.5 h-3.5 text-[#FBBF24]" />
+              <span>Tap to Unmute</span>
             </button>
           )}
 

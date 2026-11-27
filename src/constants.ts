@@ -1084,6 +1084,13 @@ export function getYouTubeWatchUrl(rawUrl: string): string | null {
   return extractYouTubeMedia(rawUrl).watchUrl;
 }
 
+export const WATCH_PARTY_FALLBACK_DAILYMOTION_ID = 'x84sh87';
+
+export function isValidDailymotionId(id: string | null | undefined): boolean {
+  if (!id) return false;
+  return /^[xk][a-zA-Z0-9]{4,20}$/i.test(id.trim());
+}
+
 function cleanDailymotionCandidateId(candidate: string | null | undefined): string | null {
   if (!candidate) return null;
   const stripped = candidate.trim().split(/[_?#&/]/)[0].trim();
