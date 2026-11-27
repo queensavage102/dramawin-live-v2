@@ -1043,12 +1043,14 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
   return (
     <iframe
       key={`dm-embed-${episode.id}-${dmId}`}
-      src={`https://www.dailymotion.com/embed/video/${dmId}?autoplay=1&mute=1&playsinline=1`}
+      src={`https://geo.dailymotion.com/player.html?video=${dmId}`}
+      
       
       
       title={episode.title}
-      allow="autoplay; fullscreen; picture-in-picture"
-      referrerPolicy="no-referrer-when-downgrade"
+      referrerPolicy="origin"
+      
+      
       className={iframeClassName}
       style={{ width: '100%', height: '100%', border: 0 }}
     />
