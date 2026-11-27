@@ -1040,9 +1040,8 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
 
     if (videoSource.kind === 'dailymotion' && videoSource.dailymotionId) {
     
-      const dmId = inWatchParty
-        ? resolvedWatchPartyDailymotionId
-        : videoSource.dailymotionId!;
+      const dmId = videoSource.dailymotionId!;
+      
       return (
         <DailymotionSdkPlayer
           key={`dm-sdk-${episode.id}-${dmId}`}
@@ -1059,10 +1058,12 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
           replayNonce={previewReplayNonce}
           reloadNonce={manualReloadNonce}
           isPreviewLocked={isPreviewLocked}
-          interactive={false}
+          interactive={true}
+          
           minimalEmbed={inWatchParty}
           showIdBadge={inWatchParty}
-          fallbackToTestId={inWatchParty}
+          fallbackToTestId={false}
+          
           className={iframeClassName}
           onTimeUpdate={onTimeUpdate}
           onPreviewLimitReached={onPreviewLimitReached}
