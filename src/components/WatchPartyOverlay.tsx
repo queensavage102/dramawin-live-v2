@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronDown,
-  ChevronUp,
   Coins,
   Crown,
   Film,
@@ -51,17 +50,26 @@ interface FloatingBurstReaction {
   leftPct: number;
 }
 
+interface FloatingChatPill {
+  localKey: string;
+  message: WatchPartyMessage;
+}
+
 interface WatchPartyOverlayProps {
   room: WatchPartyRoom;
   role: 'host' | 'guest';
   username: string;
   playerTotalCoins: number;
+  viewerCount: number;
   episodes: DramaEpisode[];
   episodeSwitcherOpen: boolean;
+  chatDrawerOpen: boolean;
+  onCloseChatDrawer: () => void;
   onCloseEpisodeSwitcher: () => void;
   onRequestSwitchEpisode: (episode: DramaEpisode) => void;
   onDeductSuperReactionCoins: (cost: number, title: string) => Promise<boolean>;
   onNotify?: (message: string, tone?: 'gold' | 'neutral' | 'error') => void;
+  onIncomingChatPing?: () => void;
 }
 
 export const WatchPartyOverlay: React.FC<WatchPartyOverlayProps> = ({
@@ -69,19 +77,24 @@ export const WatchPartyOverlay: React.FC<WatchPartyOverlayProps> = ({
   role,
   username,
   playerTotalCoins,
+  viewerCount,
   episodes,
   episodeSwitcherOpen,
+  chatDrawerOpen,
+  onCloseChatDrawer,
   onCloseEpisodeSwitcher,
   onRequestSwitchEpisode,
   onDeductSuperReactionCoins,
   onNotify,
+  onIncomingChatPing,
 }) => {
   const [messages, setMessages] = useState<WatchPartyMessage[]>([]);
+  const [floatingChatPills, setFloatingChatPills] = useState<FloatingChatPill[]>([]);
   const [floatingBursts, setFloatingBursts] = useState<FloatingBurstReaction[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [superMode, setSuperMode] = useState(false);
-  const [chatMinimized, setChatMinimized] = useState(false);
   const [sending, setSending] = useState(false);
+
   const [switcherGenre, setSwitcherGenre] = useState<ModernGenre>('All');
   const [switcherSearch, setSwitcherSearch] = useState('');
   const [switcherSearchResults, setSwitcherSearchResults] = useState<DramaEpisode[]>([]);
@@ -90,17 +103,70 @@ export const WatchPartyOverlay: React.FC<WatchPartyOverlayProps> = ({
 
   const seenReactionIdsRef = useRef<Set<string>>(new Set());
   const initialReactionSnapDoneRef = useRef(false);
+  const seenMessageIdsRef = useRef<Set<string>>(new Set());
+  const initialMessageSnapDoneRef = useRef(false);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const chatInputRef = useRef<HTMLInputElement | null>(null);
+  const chatDrawerOpenRef = useRef(chatDrawerOpen);
+  const onIncomingChatPingRef = useRef(onIncomingChatPing);
+
+  useEffect(() => {
+    chatDrawerOpenRef.current = chatDrawerOpen;
+  }, [chatDrawerOpen]);
+
+  useEffect(() => {
+    onIncomingChatPingRef.current = onIncomingChatPing;
+  }, [onIncomingChatPing]);
 
   useEffect(() => {
     seenReactionIdsRef.current.clear();
     initialReactionSnapDoneRef.current = false;
+    seenMessageIdsRef.current.clear();
+    initialMessageSnapDoneRef.current = false;
     setMessages([]);
+    setFloatingChatPills([]);
     setFloatingBursts([]);
 
     const unsubMessages = subscribeWatchPartyMessages(
       room.roomId,
-      (list) => setMessages(list),
+      (list) => {
+        setMessages(list);
+        const nowMs = Date.now();
+        const freshlyArrived: FloatingChatPill[] = [];
+
+        if (!initialMessageSnapDoneRef.current) {
+          list.forEach((m) => {
+            seenMessageIdsRef.current.add(m.id);
+            const createdMs =
+              typeof m.createdAt?.toMillis === 'function' ? m.createdAt.toMillis() : 0;
+            if (createdMs && nowMs - createdMs < 8000) {
+              freshlyArrived.push({ localKey: `${m.id}_init`, message: m });
+            }
+          });
+          initialMessageSnapDoneRef.current = true;
+        } else {
+          list.forEach((m) => {
+            if (seenMessageIdsRef.current.has(m.id)) return;
+            seenMessageIdsRef.current.add(m.id);
+            freshlyArrived.push({ localKey: `${m.id}_${nowMs}`, message: m });
+            if (!chatDrawerOpenRef.current) {
+              onIncomingChatPingRef.current?.();
+            }
+          });
+        }
+
+        if (freshlyArrived.length > 0) {
+          const capped = freshlyArrived.slice(-4);
+          setFloatingChatPills((prev) => [...prev, ...capped].slice(-4));
+          capped.forEach((item) => {
+            window.setTimeout(() => {
+              setFloatingChatPills((prev) =>
+                prev.filter((pill) => pill.localKey !== item.localKey)
+              );
+            }, 8050);
+          });
+        }
+      },
       () => {}
     );
 
@@ -124,8 +190,8 @@ export const WatchPartyOverlay: React.FC<WatchPartyOverlayProps> = ({
             superCost: rx.superCost || 0,
             vipLabel: rx.vipLabel,
             leftPct: rx.isSuper
-              ? 18 + Math.round(Math.random() * 52)
-              : 8 + Math.round(Math.random() * 76),
+              ? 20 + Math.round(Math.random() * 52)
+              : 10 + Math.round(Math.random() * 76),
           });
         });
         if (newlyAdded.length > 0) {
@@ -150,11 +216,11 @@ export const WatchPartyOverlay: React.FC<WatchPartyOverlayProps> = ({
   }, [room.roomId]);
 
   useEffect(() => {
-    if (chatMinimized) return;
+    if (!chatDrawerOpen) return;
     if (chatScrollRef.current) {
       chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
     }
-  }, [messages, chatMinimized]);
+  }, [messages, chatDrawerOpen]);
 
   useEffect(() => {
     if (!episodeSwitcherOpen) return;
@@ -236,11 +302,15 @@ export const WatchPartyOverlay: React.FC<WatchPartyOverlayProps> = ({
 
   const handleSendChat = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    const clean = chatInput.trim();
+    const rawValue = chatInput || chatInputRef.current?.value || '';
+    const clean = rawValue.trim();
     if (!clean || sending) return;
 
-    // Immediately clear chat input upon send
+    // Immediately clear text input upon send
     setChatInput('');
+    if (chatInputRef.current) {
+      chatInputRef.current.value = '';
+    }
 
     if (superMode && playerTotalCoins < WATCH_PARTY_SUPER_COST) {
       onNotify?.(
@@ -259,9 +329,7 @@ export const WatchPartyOverlay: React.FC<WatchPartyOverlayProps> = ({
           WATCH_PARTY_SUPER_COST,
           `Watch Party Gold Highlight Chat (${room.roomId})`
         );
-        if (!paid) {
-          return;
-        }
+        if (!paid) return;
       }
       await sendWatchPartyMessage(room.roomId, {
         username,
@@ -277,10 +345,44 @@ export const WatchPartyOverlay: React.FC<WatchPartyOverlayProps> = ({
 
   return (
     <>
-      {/* Full-Screen Cross-Screen Floating Emoji & VIP Celebration Reactions Layer */}
+      {/* 1. TikTok Live-Style Floating Chat Overlay (Last 3-4 Incoming Messages, Fade Out After 8s) */}
+      {!chatDrawerOpen && floatingChatPills.length > 0 && (
+        <div
+          aria-live="polite"
+          className="pointer-events-none absolute bottom-3 left-2.5 sm:left-4 z-20 max-w-[min(82vw,330px)] flex flex-col items-start gap-1.5"
+        >
+          {floatingChatPills.slice(-4).map(({ localKey, message }) => (
+            <div
+              key={localKey}
+              className={`watch-party-chat-pill rounded-2xl px-3 py-1.5 text-xs leading-snug bg-black/60 backdrop-blur-sm shadow-[0_4px_16px_rgba(0,0,0,0.45)] border ${
+                message.isSuper
+                  ? 'border-[#D4AF37]/65 text-[#FFF8E7]'
+                  : 'border-white/15 text-white'
+              }`}
+            >
+              {message.isSuper && (
+                <span className="inline-block mr-1.5 px-1.5 py-[1px] rounded bg-amber-400 text-[#181307] text-[9px] font-black uppercase tracking-wider align-middle">
+                  VIP
+                </span>
+              )}
+              <span
+                className={`font-black mr-1.5 ${
+                  message.uid === room.hostUid ? 'text-amber-300' : 'text-[#FCE7A2]'
+                }`}
+              >
+                {message.uid === room.hostUid ? '👑 ' : ''}
+                {message.username}:
+              </span>
+              <span className="break-words">{message.text}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 2. Full-Screen Cross-Screen Floating Emoji & VIP Celebration Reactions Layer */}
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 z-20 overflow-hidden"
+        className="pointer-events-none absolute inset-0 z-30 overflow-hidden"
       >
         {floatingBursts.map((burst) =>
           burst.isSuper ? (
@@ -322,98 +424,132 @@ export const WatchPartyOverlay: React.FC<WatchPartyOverlayProps> = ({
         )}
       </div>
 
-      {/* Bottom-Left Translucent Live Chat Feed & Compact Input */}
-      <div
-        onClick={(e) => e.stopPropagation()}
-        onPointerDown={(e) => e.stopPropagation()}
-        className="pointer-events-none absolute bottom-2 left-2 sm:left-3 z-[25] w-[min(86vw,310px)] flex flex-col gap-1"
-      >
-        {!chatMinimized && (
+      {/* 3. Slide-Up Semi-Transparent Collapsible Chat Drawer */}
+      {chatDrawerOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Live Party Chat Drawer"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (e.target === e.currentTarget) onCloseChatDrawer();
+          }}
+          className="fixed inset-0 z-[70] bg-black/35 flex flex-col justify-end"
+        >
           <div
-            ref={chatScrollRef}
-            className="pointer-events-auto max-h-16 overflow-y-auto space-y-0.5 px-2.5 py-1 rounded-xl bg-black/50 backdrop-blur-sm no-scrollbar shadow-sm"
+            onClick={(e) => e.stopPropagation()}
+            className="watch-party-drawer-slide w-full max-h-[60dvh] rounded-t-3xl bg-[#0d0d12]/88 backdrop-blur-xl border-t border-[#D4AF37]/40 shadow-[0_-18px_50px_rgba(0,0,0,0.9)] flex flex-col overflow-hidden"
           >
-            {messages.length === 0 ? (
-              <p className="text-[10px] text-zinc-300 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)] truncate">
-                Room <strong className="text-[#FCE7A2] font-mono-num">{room.roomId}</strong> live • Say hi!
-              </p>
-            ) : (
-              messages.slice(-12).map((msg) => (
-                <div
-                  key={msg.id}
-                  className={`text-[10px] sm:text-[11px] leading-tight drop-shadow-[0_1px_3px_rgba(0,0,0,0.95)] ${
-                    msg.isSuper ? 'text-[#FFF8E7] font-semibold' : 'text-white/95'
-                  }`}
-                >
-                  {msg.isSuper && (
-                    <span className="inline-block mr-1 px-1 py-[1px] rounded bg-amber-400 text-[#181307] text-[8px] font-black uppercase tracking-wider align-middle shadow-sm">
-                      VIP
-                    </span>
-                  )}
-                  <span
-                    className={`font-black mr-1 ${
-                      msg.uid === room.hostUid ? 'text-amber-300' : 'text-[#FCE7A2]'
+            {/* Drawer Header */}
+            <div className="shrink-0 px-4 py-2.5 border-b border-white/10 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+                <h3 className="text-xs sm:text-sm font-black uppercase tracking-wider text-[#FCE7A2] truncate">
+                  💬 Live Party Chat
+                </h3>
+                <span className="px-2 py-0.5 rounded-full bg-white/[0.08] font-mono-num text-[10px] font-bold text-zinc-300 shrink-0">
+                  {Math.max(1, viewerCount)} online
+                </span>
+              </div>
+
+              <button
+                type="button"
+                onClick={onCloseChatDrawer}
+                aria-label="Close chat drawer"
+                className="h-8 w-8 rounded-full bg-white/[0.08] hover:bg-white/[0.16] border border-white/15 text-zinc-200 flex items-center justify-center cursor-pointer shrink-0 transition"
+              >
+                <ChevronDown className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Full Message History */}
+            <div
+              ref={chatScrollRef}
+              className="flex-1 min-h-[160px] overflow-y-auto px-3.5 py-2.5 space-y-2"
+            >
+              {messages.length === 0 ? (
+                <div className="h-full min-h-[120px] flex items-center justify-center text-center px-4">
+                  <p className="text-xs text-zinc-400">
+                    Room <strong className="text-[#FCE7A2] font-mono-num">{room.roomId}</strong> is live — send the first message!
+                  </p>
+                </div>
+              ) : (
+                messages.map((msg) => (
+                  <div
+                    key={msg.id}
+                    className={`rounded-2xl px-3 py-2 text-xs leading-snug ${
+                      msg.isSuper
+                        ? 'bg-gradient-to-r from-[#281e09]/90 to-[#181308]/90 border border-[#D4AF37]/50 text-[#FFF8E7] shadow-sm'
+                        : 'bg-white/[0.06] border border-white/10 text-zinc-100'
                     }`}
                   >
-                    {msg.uid === room.hostUid ? '👑' : ''}
-                    {msg.username}:
-                  </span>
-                  <span className="break-words">{msg.text}</span>
-                </div>
-              ))
-            )}
-          </div>
-        )}
+                    {msg.isSuper && (
+                      <span className="inline-block mr-1.5 px-1.5 py-[1px] rounded bg-amber-400 text-[#181307] text-[9px] font-black uppercase tracking-wider align-middle">
+                        VIP
+                      </span>
+                    )}
+                    <span
+                      className={`font-black mr-1.5 ${
+                        msg.uid === room.hostUid ? 'text-amber-300' : 'text-[#FCE7A2]'
+                      }`}
+                    >
+                      {msg.uid === room.hostUid ? '👑 ' : ''}
+                      {msg.username}:
+                    </span>
+                    <span className="break-words">{msg.text}</span>
+                  </div>
+                ))
+              )}
+            </div>
 
-        <div className="pointer-events-auto flex items-center gap-1 h-8 rounded-full bg-black/75 hover:bg-black/85 backdrop-blur-md px-1.5 border border-white/15 shadow-lg">
-          <button
-            type="button"
-            onClick={() => setChatMinimized((prev) => !prev)}
-            aria-label={chatMinimized ? 'Expand live chat feed' : 'Minimize live chat feed'}
-            className="w-6 h-6 rounded-full flex items-center justify-center text-zinc-400 hover:text-[#FCE7A2] cursor-pointer shrink-0 transition"
-          >
-            {chatMinimized ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-          </button>
+            {/* Chat Text Input Box */}
+            <form
+              onSubmit={(e) => void handleSendChat(e)}
+              className="shrink-0 px-3 sm:px-4 pt-2.5 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t border-white/10 bg-black/55 flex items-center gap-2"
+            >
+              <button
+                type="button"
+                onClick={() => setSuperMode((prev) => !prev)}
+                aria-pressed={superMode}
+                title={`Toggle Gold Super Chat (${WATCH_PARTY_SUPER_COST} Coins)`}
+                className={`min-h-[38px] px-2.5 rounded-full text-[10px] font-black inline-flex items-center gap-1 cursor-pointer transition shrink-0 ${
+                  superMode
+                    ? 'gold-gradient-bg border border-yellow-200 text-[#181307] shadow-[0_0_12px_rgba(251,191,36,0.7)]'
+                    : 'bg-white/[0.08] hover:bg-white/[0.15] border border-white/15 text-amber-300'
+                }`}
+              >
+                <Crown className="w-3.5 h-3.5 fill-current" />
+                <span>{WATCH_PARTY_SUPER_COST}</span>
+              </button>
 
-          <button
-            type="button"
-            onClick={() => setSuperMode((prev) => !prev)}
-            aria-pressed={superMode}
-            title={`Toggle Gold Super Chat (${WATCH_PARTY_SUPER_COST} Coins)`}
-            className={`min-h-[22px] px-1.5 rounded-full text-[9px] font-black inline-flex items-center gap-0.5 cursor-pointer transition shrink-0 ${
-              superMode
-                ? 'gold-gradient-bg border border-yellow-200 text-[#181307] shadow-[0_0_10px_rgba(251,191,36,0.85)]'
-                : 'bg-white/10 hover:bg-white/20 border border-white/15 text-amber-300'
-            }`}
-          >
-            <Crown className="w-2.5 h-2.5 fill-current" />
-            <span>{WATCH_PARTY_SUPER_COST}</span>
-          </button>
+              <input
+                ref={chatInputRef}
+                type="text"
+                maxLength={240}
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                placeholder={
+                  superMode ? 'Send Gold VIP chat (-100)...' : 'Say something to the room...'
+                }
+                autoFocus
+                className="flex-1 min-w-0 min-h-[40px] px-3.5 rounded-full bg-black/75 border border-white/20 text-xs sm:text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:border-[#D4AF37]"
+              />
 
-          <form onSubmit={(e) => void handleSendChat(e)} className="flex-1 min-w-0 flex items-center gap-1 pr-0.5">
-            <input
-              type="text"
-              maxLength={240}
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              placeholder={superMode ? 'Gold chat (-100)...' : 'Chat with room...'}
-              className="w-full bg-transparent text-[11px] text-white placeholder:text-zinc-400 focus:outline-none"
-            />
-            {chatInput.trim() && (
               <button
                 type="submit"
-                disabled={sending}
+                disabled={sending || !chatInput.trim()}
                 aria-label="Send message"
-                className="w-6 h-6 rounded-full gold-gradient-bg text-[#181307] flex items-center justify-center shrink-0 cursor-pointer shadow"
+                className="min-h-[40px] px-4 rounded-full gold-gradient-bg text-[#181307] text-xs font-black inline-flex items-center justify-center gap-1 shrink-0 disabled:opacity-45 cursor-pointer shadow transition"
               >
-                <Send className="w-3 h-3" />
+                <Send className="w-3.5 h-3.5" />
+                <span>Send</span>
               </button>
-            )}
-          </form>
+            </form>
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Host Episode Switcher Modal (Zero forced ad interruption!) */}
+      {/* 4. Host Episode Switcher Modal */}
       {episodeSwitcherOpen && role === 'host' && (
         <div
           role="dialog"
@@ -566,6 +702,9 @@ interface WatchPartyReactionDockProps {
   room: WatchPartyRoom;
   username: string;
   playerTotalCoins: number;
+  chatDrawerOpen: boolean;
+  unreadChatCount?: number;
+  onToggleChatDrawer: () => void;
   onDeductSuperReactionCoins: (cost: number, title: string) => Promise<boolean>;
   onWatchBonusAd?: () => void;
   onNotify?: (message: string, tone?: 'gold' | 'neutral' | 'error') => void;
@@ -575,6 +714,9 @@ export const WatchPartyReactionDock: React.FC<WatchPartyReactionDockProps> = ({
   room,
   username,
   playerTotalCoins,
+  chatDrawerOpen,
+  unreadChatCount = 0,
+  onToggleChatDrawer,
   onDeductSuperReactionCoins,
   onWatchBonusAd,
   onNotify,
@@ -602,7 +744,7 @@ export const WatchPartyReactionDock: React.FC<WatchPartyReactionDockProps> = ({
     if (sending) return;
     if (playerTotalCoins < spec.cost) {
       onNotify?.(
-        `Need ${spec.cost} Coins for ${spec.emoji} ${spec.label}. Tap +${WATCH_PARTY_VOLUNTARY_AD_COINS} Coins (Watch Ad) to earn more!`,
+        `Need ${spec.cost} Coins for ${spec.emoji} ${spec.label}. Tap +${WATCH_PARTY_VOLUNTARY_AD_COINS} Coins to earn more!`,
         'error'
       );
       return;
@@ -639,57 +781,74 @@ export const WatchPartyReactionDock: React.FC<WatchPartyReactionDockProps> = ({
   };
 
   return (
-    <div className="shrink-0 relative z-20 w-full bg-[#0E0C13]/95 backdrop-blur-md border-t border-white/10 px-2.5 sm:px-4 py-1.5 flex flex-wrap items-center justify-between gap-2">
-      {/* Left: Free Quick Reactions (😂, 😱, ❤️) + VIP Animated Reactions (🔥 100, 👑 250) */}
-      <div className="flex items-center gap-1.5 flex-wrap">
-        <div className="flex items-center gap-1">
-          {WATCH_PARTY_FREE_EMOJIS.map((emoji) => (
-            <button
-              key={emoji}
-              type="button"
-              disabled={sending}
-              onClick={() => void handleFreeReaction(emoji)}
-              aria-label={`Free reaction ${emoji}`}
-              className="min-h-[34px] min-w-[34px] px-2 rounded-full bg-white/[0.08] hover:bg-white/[0.16] border border-white/15 text-base flex items-center justify-center active:scale-90 cursor-pointer transition"
-            >
-              {emoji}
-            </button>
-          ))}
-        </div>
+    <div className="shrink-0 relative z-30 w-full bg-[#0d0d12]/95 border-t border-white/10 px-2.5 sm:px-4 pt-1.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] flex items-center gap-1.5 overflow-x-auto no-scrollbar whitespace-nowrap">
+      {/* Collapsible Chat Drawer Trigger */}
+      <button
+        type="button"
+        onClick={onToggleChatDrawer}
+        aria-expanded={chatDrawerOpen}
+        className={`relative h-8 px-3 rounded-full border text-[11px] font-black inline-flex items-center gap-1 whitespace-nowrap active:scale-95 cursor-pointer transition shrink-0 ${
+          chatDrawerOpen
+            ? 'gold-gradient-bg border-amber-200 text-[#181307] shadow-[0_0_12px_rgba(251,191,36,0.45)]'
+            : 'bg-white/[0.1] hover:bg-white/[0.18] border-white/20 text-white'
+        }`}
+      >
+        <span>💬 Chat</span>
+        {!chatDrawerOpen && unreadChatCount > 0 && (
+          <span className="px-1.5 py-[1px] rounded-full bg-amber-400 text-[#181307] font-mono-num text-[9px] font-black leading-none">
+            {unreadChatCount > 99 ? '99+' : unreadChatCount}
+          </span>
+        )}
+      </button>
 
-        <span className="h-4 w-px bg-white/15 mx-0.5 hidden sm:inline-block" aria-hidden="true" />
+      <span className="h-4 w-px bg-white/15 shrink-0" aria-hidden="true" />
 
-        <div className="flex items-center gap-1.5">
-          {WATCH_PARTY_VIP_REACTIONS.map((vip) => {
-            const canAfford = playerTotalCoins >= vip.cost;
-            return (
-              <button
-                key={vip.label}
-                type="button"
-                disabled={sending}
-                onClick={() => void handleVipReaction(vip)}
-                title={`${vip.label} (${vip.cost} Coins)`}
-                className={`min-h-[34px] px-2.5 rounded-full border text-[11px] font-black inline-flex items-center gap-1 whitespace-nowrap active:scale-95 cursor-pointer transition ${
-                  vip.emoji === '👑'
-                    ? 'bg-gradient-to-r from-[#2e2107] to-[#1d1506] border-[#FBBF24]/75 text-[#FCE7A2] shadow-[0_0_14px_rgba(251,191,36,0.28)] hover:border-yellow-300'
-                    : 'bg-gradient-to-r from-orange-950/85 to-rose-950/80 border-orange-400/70 text-orange-200 shadow-[0_0_14px_rgba(249,115,22,0.25)] hover:border-orange-300'
-                } ${!canAfford ? 'opacity-80' : ''}`}
-              >
-                <span className="text-sm leading-none">{vip.emoji}</span>
-                <span>{vip.label}</span>
-                <span className="px-1.5 py-0.5 rounded-full bg-black/55 font-mono-num text-[9px] text-amber-300">
-                  {vip.cost}
-                </span>
-              </button>
-            );
-          })}
-        </div>
+      {/* Free Quick Reactions (😂, 😱, ❤️) */}
+      <div className="flex items-center gap-1 shrink-0">
+        {WATCH_PARTY_FREE_EMOJIS.map((emoji) => (
+          <button
+            key={emoji}
+            type="button"
+            disabled={sending}
+            onClick={() => void handleFreeReaction(emoji)}
+            aria-label={`Free reaction ${emoji}`}
+            className="h-8 w-8 rounded-full bg-white/[0.08] hover:bg-white/[0.16] border border-white/15 text-base flex items-center justify-center active:scale-90 cursor-pointer transition shrink-0"
+          >
+            {emoji}
+          </button>
+        ))}
       </div>
 
-      {/* Right: Coin Balance + Compact '+200 Coins (Watch Ad)' */}
+      <span className="h-4 w-px bg-white/15 shrink-0" aria-hidden="true" />
+
+      {/* Compact VIP Animated Reactions (🔥 100, 👑 250) */}
+      <div className="flex items-center gap-1 shrink-0">
+        {WATCH_PARTY_VIP_REACTIONS.map((vip) => {
+          const canAfford = playerTotalCoins >= vip.cost;
+          return (
+            <button
+              key={vip.label}
+              type="button"
+              disabled={sending}
+              onClick={() => void handleVipReaction(vip)}
+              title={`${vip.label} (${vip.cost} Coins)`}
+              className={`h-8 px-2.5 rounded-full border text-[11px] font-black inline-flex items-center gap-1 whitespace-nowrap active:scale-95 cursor-pointer transition shrink-0 ${
+                vip.emoji === '👑'
+                  ? 'bg-gradient-to-r from-[#2e2107] to-[#1d1506] border-[#FBBF24]/75 text-[#FCE7A2] shadow-[0_0_12px_rgba(251,191,36,0.28)] hover:border-yellow-300'
+                  : 'bg-gradient-to-r from-orange-950/85 to-rose-950/80 border-orange-400/70 text-orange-200 shadow-[0_0_12px_rgba(249,115,22,0.25)] hover:border-orange-300'
+              } ${!canAfford ? 'opacity-80' : ''}`}
+            >
+              <span className="text-sm leading-none">{vip.emoji}</span>
+              <span className="font-mono-num text-[10px]">{vip.cost}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Coin Balance & Compact +200 Coins Button */}
       <div className="flex items-center gap-1.5 ml-auto shrink-0">
-        <div className="min-h-[32px] px-2.5 rounded-full bg-black/65 border border-[#D4AF37]/40 inline-flex items-center gap-1 text-[11px] font-mono-num font-extrabold text-[#FCE7A2]">
-          <Coins className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+        <div className="h-8 px-2 rounded-full bg-black/65 border border-[#D4AF37]/40 inline-flex items-center gap-1 text-[11px] font-mono-num font-extrabold text-[#FCE7A2] shrink-0">
+          <Coins className="w-3 h-3 text-amber-400 shrink-0" />
           <span>{playerTotalCoins.toLocaleString()}</span>
         </div>
 
@@ -697,10 +856,10 @@ export const WatchPartyReactionDock: React.FC<WatchPartyReactionDockProps> = ({
           <button
             type="button"
             onClick={onWatchBonusAd}
-            className="min-h-[32px] px-2.5 rounded-full gold-gradient-bg text-[#181307] text-[10px] sm:text-[11px] font-black inline-flex items-center gap-1 whitespace-nowrap shadow-[0_0_12px_rgba(212,175,55,0.4)] hover:brightness-105 active:scale-95 cursor-pointer transition"
+            className="h-8 px-2.5 rounded-full gold-gradient-bg text-[#181307] text-[10px] font-black inline-flex items-center gap-1 whitespace-nowrap shadow-[0_0_12px_rgba(212,175,55,0.4)] hover:brightness-105 active:scale-95 cursor-pointer transition shrink-0"
           >
             <Sparkles className="w-3 h-3 shrink-0" />
-            <span>+{WATCH_PARTY_VOLUNTARY_AD_COINS} Coins (Watch Ad)</span>
+            <span>+{WATCH_PARTY_VOLUNTARY_AD_COINS} Coins</span>
           </button>
         )}
       </div>

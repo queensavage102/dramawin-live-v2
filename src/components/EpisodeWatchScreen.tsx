@@ -50,7 +50,10 @@ import { DoubleRewardModal } from './DoubleRewardModal';
 import { IsolatedHtml5Video, IsolatedYouTubeIframe } from './IsolatedYouTubeIframe';
 import { MovieUnlockOverlay } from './MovieUnlockOverlay';
 import { RealisticGoldCoin } from './RealisticGoldCoin';
-import { WatchPartyOverlay, WatchPartyReactionDock } from './WatchPartyOverlay';
+import {
+  WatchPartyOverlay,
+  WatchPartyReactionDock,
+} from './WatchPartyOverlay';
 
 interface EpisodeWatchScreenProps {
   episode: DramaEpisode;
@@ -153,6 +156,7 @@ interface WatchVideoStageProps {
   previewReplayNonce?: number;
   seekRequest?: { time: number; nonce: number } | null;
   ccSubtitles?: boolean;
+  watchParty16x9?: boolean;
   onTimeUpdate?: (currentTime: number, duration: number) => void;
   onPreviewLimitReached?: () => void;
   onPlayingChange?: (playing: boolean) => void;
@@ -181,6 +185,7 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
     previewReplayNonce = 0,
     seekRequest = null,
     ccSubtitles = true,
+    watchParty16x9 = false,
     onTimeUpdate,
     onPreviewLimitReached,
     onPlayingChange,
@@ -934,14 +939,18 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
     }, [clearRecoveryTimers, clearStallPill]);
 
     const isAnime = (episode.category || '').toLowerCase() === 'anime';
-    const scaleClass = isAnime ? 'scale-[1.85] -translate-y-4' : 'scale-[1.85]';
+    const scaleClass = watchParty16x9
+      ? 'scale-100'
+      : isAnime
+        ? 'scale-[1.85] -translate-y-4'
+        : 'scale-[1.85]';
 
-    const iframeClassName = fitMode
+    const iframeClassName = fitMode || watchParty16x9
       ? 'pointer-events-none absolute inset-0 z-0 w-full h-full border-0 block bg-transparent scale-100 transition-transform duration-300 ease-out'
       : `pointer-events-none absolute inset-0 z-0 w-full h-full border-0 block bg-transparent ${scaleClass} transition-transform duration-300 ease-out`;
 
     const directVideoClassName = `pointer-events-none absolute inset-0 z-0 w-full h-full bg-transparent transition-transform duration-300 ease-out ${
-      fitMode ? 'object-contain scale-100' : `object-cover ${scaleClass}`
+      fitMode || watchParty16x9 ? 'object-contain scale-100' : `object-cover ${scaleClass}`
     }`;
 
     const hasPoster = Boolean(episode.coverImage && episode.coverImage !== 'none');
@@ -1173,8 +1182,15 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
   const [durationSec, setDurationSec] = useState(0);
   const [seekRequest, setSeekRequest] = useState<{ time: number; nonce: number } | null>(null);
   const [partySwitcherOpen, setPartySwitcherOpen] = useState(false);
+  const [partyChatDrawerOpen, setPartyChatDrawerOpen] = useState(false);
+  const [partyUnreadCount, setPartyUnreadCount] = useState(0);
   const [inviteCopied, setInviteCopied] = useState(false);
   const [ccSubtitlesOn, setCcSubtitlesOn] = useState(true);
+
+  useEffect(() => {
+    setPartyChatDrawerOpen(false);
+    setPartyUnreadCount(0);
+  }, [watchPartyRoom?.roomId]);
 
   const handleShareInviteLink = useCallback(() => {
     if (!watchPartyRoom) return;
@@ -1884,15 +1900,101 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
       role="dialog"
       aria-modal="true"
       aria-label={episode.title}
-      className={`fixed inset-0 bg-[#070709] overflow-hidden ${
-        isExpandedFull ? 'z-[75]' : 'z-[35]'
+      className={`fixed inset-0 overflow-hidden flex flex-col ${
+        inWatchParty
+          ? isExpandedFull
+            ? 'z-[75] bg-[#0d0d12]'
+            : 'z-50 bg-[#0d0d12]'
+          : isExpandedFull
+            ? 'z-[75] bg-[#070709]'
+            : 'z-[35] bg-[#070709]'
       }`}
     >
       <div
         ref={playerContainerRef}
-        className="relative h-[100dvh] w-full bg-[#060608] flex flex-col overflow-hidden"
+        className={`relative h-[100dvh] w-full flex flex-col overflow-hidden ${
+          inWatchParty ? 'bg-[#0d0d12]' : 'bg-[#060608]'
+        }`}
       >
-        {/* 1. True Zero-Escape Full-Screen Video Stage */}
+        {/* 0. Single Slim Watch Party Top Header Bar (Room Code, Counter, Share, Leave) */}
+        {inWatchParty && watchPartyRoom && !isExpandedFull && (
+          <header className="shrink-0 relative z-30 bg-[#0d0d12] border-b border-white/10 px-2.5 sm:px-4 pt-[max(0.45rem,env(safe-area-inset-top))] pb-2">
+            <div className="flex items-center justify-between gap-1.5 min-h-[36px]">
+              <div className="min-w-0 flex items-center gap-1.5 overflow-hidden">
+                <Radio className="w-3 h-3 text-emerald-400 animate-pulse shrink-0" />
+                <span className="font-mono-num text-xs font-black text-[#FCE7A2] shrink-0">
+                  {watchPartyRoom.roomId}
+                </span>
+                <span className="px-1.5 py-0.5 rounded-full bg-white/[0.08] border border-white/15 font-mono-num text-[10px] font-bold text-zinc-200 shrink-0">
+                  {Math.max(1, watchPartyViewerCount)}/{isPrivateLobby ? WATCH_PARTY_PRIVATE_CAPACITY : WATCH_PARTY_PUBLIC_CAPACITY}
+                </span>
+                {watchPartyRole === 'guest' && (
+                  <span className="hidden sm:inline-flex px-1.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/45 text-emerald-200 text-[9px] font-black shrink-0">
+                    Synced
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-1 shrink-0">
+                {watchPartyRole === 'host' && onSwitchWatchPartyEpisode && (
+                  <button
+                    type="button"
+                    onClick={() => setPartySwitcherOpen(true)}
+                    aria-label="Switch Episode"
+                    title="Switch Episode"
+                    className="h-7 px-2 rounded-full bg-white/[0.08] border border-[#D4AF37]/50 text-[#FCE7A2] text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer shrink-0"
+                  >
+                    <Tv className="w-3 h-3 text-amber-300" />
+                    <span className="hidden xs:inline sm:inline">Ep</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setIsFitMode((prev) => !prev)}
+                  aria-label={isFitMode ? 'Fill screen' : 'Fit video'}
+                  className="h-7 px-2 rounded-full border border-white/15 bg-white/[0.06] text-[#FCE7A2] text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer shrink-0"
+                >
+                  {isFitMode ? <ZoomIn className="w-3 h-3" /> : <Scan className="w-3 h-3" />}
+                  <span>{isFitMode ? 'Fill' : 'Fit'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={onToggleMute}
+                  aria-label={muted ? 'Unmute video' : 'Mute video'}
+                  className="h-7 w-7 rounded-full border border-white/15 bg-white/[0.06] flex items-center justify-center text-zinc-300 hover:text-white cursor-pointer shrink-0"
+                >
+                  {muted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5 text-[#D4AF37]" />}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleShareInviteLink}
+                  className="h-7 px-2.5 rounded-full gold-gradient-bg text-[#181307] text-[10px] font-black inline-flex items-center gap-1 cursor-pointer shadow-[0_0_10px_rgba(251,191,36,0.35)] shrink-0"
+                >
+                  {inviteCopied ? (
+                    <Check className="w-3 h-3 text-emerald-900" />
+                  ) : (
+                    <Share2 className="w-3 h-3" />
+                  )}
+                  <span>{inviteCopied ? 'Copied!' : 'Share'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={onLeaveWatchParty || handleClose}
+                  className="h-7 px-2.5 rounded-full bg-red-950/85 hover:bg-red-900 border border-red-400/50 text-[10px] font-bold text-red-200 inline-flex items-center gap-1 cursor-pointer transition shrink-0"
+                >
+                  <LogOut className="w-3 h-3" />
+                  <span>Leave</span>
+                </button>
+              </div>
+            </div>
+          </header>
+        )}
+
+        {/* 1. Full-Screen Video Stage (~85%+ Screen Height in Watch Party & Solo) */}
         <div className="relative w-full flex-1 min-h-0 bg-[#060608] overflow-hidden [container-type:size]">
           <WatchVideoStage
             episode={episode}
@@ -1906,6 +2008,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
             previewReplayNonce={previewReplayNonce}
             seekRequest={seekRequest}
             ccSubtitles={ccSubtitlesOn}
+            watchParty16x9={false}
             onTimeUpdate={handleStageTimeUpdate}
             onPreviewLimitReached={() => {
               if (!effectiveArchiveLocked) return;
@@ -1986,8 +2089,9 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
             </div>
           )}
 
-          {/* 2. Top Bar: Persistent Room Code + Share Header in Watch Party OR Classic Solo Header */}
-          <header className="pointer-events-none absolute inset-x-0 top-0 z-30 bg-gradient-to-b from-black/90 via-black/50 to-transparent px-2.5 sm:px-4 pt-[max(0.4rem,env(safe-area-inset-top))] pb-2">
+          {/* 2. Top Bar: Solo Player Header (and Watch Party Fullscreen Fallback Header) */}
+          {(!inWatchParty || isExpandedFull) && (
+            <header className="pointer-events-none absolute inset-x-0 top-0 z-30 bg-gradient-to-b from-black/90 via-black/50 to-transparent px-2.5 sm:px-4 pt-[max(0.4rem,env(safe-area-inset-top))] pb-2">
             {inWatchParty && watchPartyRoom ? (
               /* Clear Watch Party Banner: Persistent Room Code + Share (?room=CODE) + Synced Badge + Controls */
               <div className="pointer-events-auto flex flex-col gap-1.5 py-1">
@@ -2178,7 +2282,8 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
                 </div>
               </div>
             )}
-          </header>
+            </header>
+          )}
 
           {/* 3. Minimal Circular +1000 Coin Pot Ring Only (Positioned below Sunday Tournament Progress card at top-[175px] right-3) */}
           {!inWatchParty && (
@@ -2310,19 +2415,23 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
             onClose={handleClose}
           />
 
-          {/* Live Watch Party On-Screen Chat, Reactions & Host Switcher */}
+          {/* Live Watch Party Floating Chat Overlay, Collapsible Chat Drawer, Reactions & Host Switcher */}
           {inWatchParty && watchPartyRoom && onDeductSuperReactionCoins && (
             <WatchPartyOverlay
               room={watchPartyRoom}
               role={watchPartyRole}
               username={watchPartyUsername}
               playerTotalCoins={playerTotalCoins}
+              viewerCount={watchPartyViewerCount}
               episodes={episodes}
               episodeSwitcherOpen={partySwitcherOpen}
+              chatDrawerOpen={partyChatDrawerOpen}
+              onCloseChatDrawer={() => setPartyChatDrawerOpen(false)}
               onCloseEpisodeSwitcher={() => setPartySwitcherOpen(false)}
               onRequestSwitchEpisode={handleHostRequestSwitchEpisode}
               onDeductSuperReactionCoins={onDeductSuperReactionCoins}
               onNotify={onNotifyWatchParty}
+              onIncomingChatPing={() => setPartyUnreadCount((prev) => prev + 1)}
             />
           )}
         </div>
@@ -2423,29 +2532,40 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
           ) : null}
         </div>
 
-        {/* 4b. Watch Party Below-Video Quick Reactions, VIP Animated Reactions & +200 Coins (Watch Ad) Dock */}
+        {/* 4b. Compact Watch Party Bottom Bar: 💬 Chat + Quick Emojis + VIP Reactions + Coins */}
         {inWatchParty && watchPartyRoom && onDeductSuperReactionCoins && (
           <WatchPartyReactionDock
             room={watchPartyRoom}
             username={watchPartyUsername}
             playerTotalCoins={playerTotalCoins}
+            chatDrawerOpen={partyChatDrawerOpen}
+            unreadChatCount={partyUnreadCount}
+            onToggleChatDrawer={() => {
+              setPartyChatDrawerOpen((prev) => {
+                const next = !prev;
+                if (next) setPartyUnreadCount(0);
+                return next;
+              });
+            }}
             onDeductSuperReactionCoins={onDeductSuperReactionCoins}
             onWatchBonusAd={onWatchBonusAd}
             onNotify={onNotifyWatchParty}
           />
         )}
 
-        {/* 5. Pinned Bottom 320x50px Adsterra/Monetag Banner Anchored at bottom-16 Above BottomNavBar */}
-        <footer
-          className={`shrink-0 relative z-20 w-full bg-[#09090b] border-t border-[#D4AF37]/30 px-3 pt-1 pb-[max(0.35rem,env(safe-area-inset-bottom))] flex flex-col items-center justify-center ${
-            isExpandedFull ? 'mb-0' : 'mb-16'
-          }`}
-        >
-          <BottomAdBanner />
-          <p className="text-[9px] sm:text-[10px] text-zinc-400 text-center mt-0.5 leading-tight px-2">
-            18+ Only • Winners know when to stop • National Responsible Gambling: 0800 006 008
-          </p>
-        </footer>
+        {/* 5. Pinned Bottom 320x50px Adsterra/Monetag Banner (Hidden in Watch Party so zero banner bleed) */}
+        {!inWatchParty && (
+          <footer
+            className={`shrink-0 relative z-20 w-full bg-[#09090b] border-t border-[#D4AF37]/30 px-3 pt-1 pb-[max(0.35rem,env(safe-area-inset-bottom))] flex flex-col items-center justify-center ${
+              isExpandedFull ? 'mb-0' : 'mb-16'
+            }`}
+          >
+            <BottomAdBanner />
+            <p className="text-[9px] sm:text-[10px] text-zinc-400 text-center mt-0.5 leading-tight px-2">
+              18+ Only • Winners know when to stop • National Responsible Gambling: 0800 006 008
+            </p>
+          </footer>
+        )}
       </div>
 
       {/* Celebratory Coin Ring Complete (+300 / AD Double Rewards x2 +600) Modal */}

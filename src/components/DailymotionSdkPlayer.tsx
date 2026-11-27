@@ -1,11 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, RotateCcw, SkipForward } from 'lucide-react';
+import { extractDailymotionVideoId } from '../constants';
 import { PREVIEW_FREE_SECONDS } from '../utils/modernCatalog';
-import {
-  DailymotionPlayerInstance,
-  DailymotionPlayerState,
-  loadDailymotionSdk,
-} from '../utils/dailymotionSdk';
 
 export interface DailymotionPlaybackSnapshot {
   isPlaying: boolean;
@@ -52,6 +48,95 @@ export interface DailymotionSdkPlayerProps {
   onFallbackNextEpisode?: () => void;
 }
 
+interface ParsedDmEvent {
+  eventName: string;
+  time?: number;
+  duration?: number;
+  errorMessage?: string;
+}
+
+function parseDailymotionMessage(raw: unknown): ParsedDmEvent | null {
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+
+    if (trimmed.startsWith('{')) {
+      try {
+        const obj = JSON.parse(trimmed) as Record<string, unknown>;
+        return parseDailymotionObject(obj);
+      } catch {
+        return null;
+      }
+    }
+
+    if (trimmed.includes('=')) {
+      const params = new URLSearchParams(trimmed);
+      const evt = (params.get('event') || '').trim().toLowerCase();
+      if (!evt) return null;
+      const t = Number(params.get('time'));
+      const d = Number(params.get('duration'));
+      const errMsg = params.get('message') || params.get('error') || undefined;
+      return {
+        eventName: evt,
+        time: Number.isFinite(t) ? t : undefined,
+        duration: Number.isFinite(d) ? d : undefined,
+        errorMessage: errMsg,
+      };
+    }
+
+    return null;
+  }
+
+  if (raw && typeof raw === 'object') {
+    return parseDailymotionObject(raw as Record<string, unknown>);
+  }
+
+  return null;
+}
+
+function parseDailymotionObject(obj: Record<string, unknown>): ParsedDmEvent | null {
+  const evt = typeof obj.event === 'string' ? obj.event.trim().toLowerCase() : '';
+  if (!evt) return null;
+  const rawTime = obj.time ?? obj.videoTime ?? obj.currentTime;
+  const rawDuration = obj.duration ?? obj.videoDuration;
+  const t = typeof rawTime === 'number' ? rawTime : Number(rawTime);
+  const d = typeof rawDuration === 'number' ? rawDuration : Number(rawDuration);
+
+  let errorMessage: string | undefined;
+  if (typeof obj.message === 'string' && obj.message.trim()) {
+    errorMessage = obj.message.trim();
+  } else if (obj.error && typeof obj.error === 'object') {
+    const errObj = obj.error as { message?: unknown; title?: unknown };
+    if (typeof errObj.message === 'string' && errObj.message.trim()) {
+      errorMessage = errObj.message.trim();
+    } else if (typeof errObj.title === 'string' && errObj.title.trim()) {
+      errorMessage = errObj.title.trim();
+    }
+  }
+
+  return {
+    eventName: evt,
+    time: Number.isFinite(t) && t >= 0 ? t : undefined,
+    duration: Number.isFinite(d) && d > 0 ? d : undefined,
+    errorMessage,
+  };
+}
+
+function postDailymotionCommand(
+  iframe: HTMLIFrameElement | null,
+  command: string,
+  parameters: unknown[] = []
+) {
+  try {
+    iframe?.contentWindow?.postMessage(
+      JSON.stringify({ command, parameters }),
+      '*'
+    );
+  } catch {
+    // Ignore cross-origin postMessage restrictions
+  }
+}
+
 export const DailymotionSdkPlayer: React.FC<DailymotionSdkPlayerProps> = React.memo(
   ({
     videoId,
@@ -78,8 +163,12 @@ export const DailymotionSdkPlayer: React.FC<DailymotionSdkPlayerProps> = React.m
     onStateProviderReady,
     onFallbackNextEpisode,
   }) => {
-    const hostRef = useRef<HTMLDivElement | null>(null);
-    const playerRef = useRef<DailymotionPlayerInstance | null>(null);
+    const cleanVideoId = useMemo(
+      () => extractDailymotionVideoId(videoId) || (videoId || '').trim(),
+      [videoId]
+    );
+
+    const iframeRef = useRef<HTMLIFrameElement | null>(null);
     const pausedRef = useRef(paused);
     const mutedRef = useRef(muted);
     const playbackRateRef = useRef(playbackRate);
@@ -90,7 +179,8 @@ export const DailymotionSdkPlayer: React.FC<DailymotionSdkPlayerProps> = React.m
       startSeconds && startSeconds > 0.5 ? startSeconds : null
     );
     const adIsPlayingRef = useRef(false);
-    const readyRef = useRef(false);
+    const loadedRef = useRef(false);
+    const lastRemoteTimeEventAtRef = useRef(0);
 
     const onTimeUpdateRef = useRef(onTimeUpdate);
     const onPreviewLimitReachedRef = useRef(onPreviewLimitReached);
@@ -101,6 +191,9 @@ export const DailymotionSdkPlayer: React.FC<DailymotionSdkPlayerProps> = React.m
     const onStateProviderReadyRef = useRef(onStateProviderReady);
 
     const [localRetryNonce, setLocalRetryNonce] = useState(0);
+    const [mountStartSeconds, setMountStartSeconds] = useState(() =>
+      Math.max(0, Math.floor(startSeconds || 0))
+    );
     const [unavailableReason, setUnavailableReason] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
 
@@ -148,342 +241,296 @@ export const DailymotionSdkPlayer: React.FC<DailymotionSdkPlayerProps> = React.m
       onStateProviderReadyRef.current = onStateProviderReady;
     }, [onStateProviderReady]);
 
-    // Mount & bind official Dailymotion Player Embed SDK
+    // Update initial mount timestamp only when switching videos or manually reloading
     useEffect(() => {
-      const cleanId = (videoId || '').trim();
-      const hostEl = hostRef.current;
-      if (!cleanId || !hostEl) {
-        setUnavailableReason('Missing or invalid Dailymotion video ID.');
-        setIsLoading(false);
+      const nextStart = Math.max(0, Math.floor(startSeconds || savedTimeRef.current || 0));
+      savedTimeRef.current = Math.max(0, startSeconds || 0);
+      pendingSeekRef.current = startSeconds && startSeconds > 0.5 ? startSeconds : null;
+      setMountStartSeconds(nextStart);
+      loadedRef.current = false;
+      adIsPlayingRef.current = false;
+      lastRemoteTimeEventAtRef.current = 0;
+      setUnavailableReason(cleanVideoId ? null : 'Missing or invalid Dailymotion video ID.');
+      setIsLoading(Boolean(cleanVideoId));
+      onStallStateChangeRef.current?.(false);
+    }, [cleanVideoId, reloadNonce, localRetryNonce]);
+
+    // Expose live playback snapshot provider for Watch Party Host sync
+    useEffect(() => {
+      const getSnapshot = async (): Promise<DailymotionPlaybackSnapshot | null> => ({
+        isPlaying: !pausedRef.current,
+        currentTime: savedTimeRef.current,
+        duration: knownDurationRef.current,
+        adIsPlaying: adIsPlayingRef.current,
+      });
+      onStateProviderReadyRef.current?.(getSnapshot);
+      return () => {
+        onStateProviderReadyRef.current?.(null);
+      };
+    }, [cleanVideoId]);
+
+    // Build direct Dailymotion embed iframe URL (?autoplay=1&mute=0&playsinline=1)
+    const embedSrc = useMemo(() => {
+      if (!cleanVideoId) return '';
+      const params = new URLSearchParams();
+      params.set('autoplay', autoplay && !pausedRef.current ? '1' : '0');
+      params.set('mute', mutedRef.current ? '1' : '0');
+      params.set('playsinline', '1');
+      params.set('ui-logo', '0');
+      params.set('queue-enable', 'false');
+      params.set('sharing-enable', 'false');
+      params.set('ui-start-screen-info', 'false');
+      params.set('api', 'postMessage');
+      if (ccSubtitles) {
+        params.set('subtitles-default', 'en');
+        params.set('cc_load_policy', '1');
+      }
+      if (mountStartSeconds > 0) {
+        params.set('start', String(mountStartSeconds));
+      }
+      return `https://www.dailymotion.com/embed/video/${encodeURIComponent(cleanVideoId)}?${params.toString()}`;
+    }, [cleanVideoId, autoplay, ccSubtitles, mountStartSeconds]);
+
+    const reportProgress = useCallback((nextTime: number, nextDuration?: number) => {
+      if (typeof nextDuration === 'number' && Number.isFinite(nextDuration) && nextDuration > 0) {
+        knownDurationRef.current = nextDuration;
+      }
+      if (!Number.isFinite(nextTime) || nextTime < 0) return;
+      if (isPreviewLockedRef.current && nextTime >= PREVIEW_FREE_SECONDS) {
+        savedTimeRef.current = PREVIEW_FREE_SECONDS - 1;
+        postDailymotionCommand(iframeRef.current, 'seek', [PREVIEW_FREE_SECONDS - 1]);
+        postDailymotionCommand(iframeRef.current, 'pause');
+        onPlayingChangeRef.current?.(false);
+        onPreviewLimitReachedRef.current?.();
         return;
       }
+      savedTimeRef.current = nextTime;
+      onTimeUpdateRef.current?.(nextTime, knownDurationRef.current);
+    }, []);
 
-      let disposed = false;
-      readyRef.current = false;
-      adIsPlayingRef.current = false;
-      knownDurationRef.current = 0;
-      setUnavailableReason(null);
-      setIsLoading(true);
-      onStallStateChangeRef.current?.(false);
+    // Listen to Dailymotion iframe postMessage playback events
+    useEffect(() => {
+      if (!cleanVideoId) return;
 
-      const mountEl = document.createElement('div');
-      mountEl.className = 'w-full h-full';
-      hostEl.innerHTML = '';
-      hostEl.appendChild(mountEl);
+      const makeSnapshot = (fallbackPlaying: boolean): DailymotionPlaybackSnapshot => ({
+        isPlaying: fallbackPlaying,
+        currentTime: savedTimeRef.current,
+        duration: knownDurationRef.current,
+        adIsPlaying: adIsPlayingRef.current,
+      });
 
-      const loadTimeout = window.setTimeout(() => {
-        if (!disposed && !readyRef.current) {
-          onStallStateChangeRef.current?.(true);
+      const handleMessage = (event: MessageEvent) => {
+        const origin = typeof event.origin === 'string' ? event.origin.toLowerCase() : '';
+        if (origin && !origin.includes('dailymotion.com') && !origin.includes('dai.ly')) {
+          return;
         }
-      }, 6500);
 
-      void loadDailymotionSdk()
-        .then(async (sdk) => {
-          if (disposed) return;
-          const initialStart = pendingSeekRef.current ?? savedTimeRef.current;
+        const parsed = parseDailymotionMessage(event.data);
+        if (!parsed) return;
 
-          const player = await sdk.createPlayer(mountEl, {
-            video: cleanId,
-            params: {
-              mute: mutedRef.current,
-              startTime: initialStart > 0.5 ? Math.floor(initialStart) : undefined,
-              subtitlesDefault: ccSubtitles ? 'en' : undefined,
-              autostart: autoplay && !pausedRef.current,
-            },
-          });
+        const evt = parsed.eventName;
 
-          if (disposed) {
-            try {
-              void player.destroy?.();
-            } catch {
-              // Ignore destroy errors
-            }
+        if (evt === 'apiready' || evt === 'player_apiready') {
+          loadedRef.current = true;
+          setIsLoading(false);
+          setUnavailableReason(null);
+          onStallStateChangeRef.current?.(false);
+
+          postDailymotionCommand(iframeRef.current, 'muted', [mutedRef.current]);
+          if (playbackRateRef.current !== 1) {
+            postDailymotionCommand(iframeRef.current, 'playbackSpeed', [playbackRateRef.current]);
+          }
+          const targetSeek = pendingSeekRef.current ?? savedTimeRef.current;
+          if (targetSeek > 0.5) {
+            pendingSeekRef.current = null;
+            postDailymotionCommand(iframeRef.current, 'seek', [targetSeek]);
+          }
+          postDailymotionCommand(
+            iframeRef.current,
+            pausedRef.current || !autoplay ? 'pause' : 'play'
+          );
+          return;
+        }
+
+        if (evt === 'timeupdate' || evt === 'video_timechange' || evt === 'progress') {
+          loadedRef.current = true;
+          setIsLoading(false);
+          onStallStateChangeRef.current?.(false);
+          if (typeof parsed.time === 'number') {
+            lastRemoteTimeEventAtRef.current = Date.now();
+            reportProgress(parsed.time, parsed.duration);
+          } else if (typeof parsed.duration === 'number') {
+            knownDurationRef.current = parsed.duration;
+          }
+          onSdkSyncEventRef.current?.('VIDEO_TIMECHANGE', makeSnapshot(!pausedRef.current));
+          return;
+        }
+
+        if (evt === 'durationchange' || evt === 'video_durationchange') {
+          if (typeof parsed.duration === 'number') {
+            knownDurationRef.current = parsed.duration;
+            onTimeUpdateRef.current?.(savedTimeRef.current, knownDurationRef.current);
+          }
+          return;
+        }
+
+        if (evt === 'play' || evt === 'playing' || evt === 'video_play' || evt === 'video_playing') {
+          loadedRef.current = true;
+          setIsLoading(false);
+          setUnavailableReason(null);
+          onStallStateChangeRef.current?.(false);
+          if (pausedRef.current) {
+            postDailymotionCommand(iframeRef.current, 'pause');
             return;
           }
-
-          playerRef.current = player;
-
-          const readSnapshot = async (): Promise<DailymotionPlaybackSnapshot | null> => {
-            try {
-              const st = await player.getState();
-              const t =
-                typeof st.videoTime === 'number' && Number.isFinite(st.videoTime)
-                  ? st.videoTime
-                  : savedTimeRef.current;
-              const dur =
-                typeof st.videoDuration === 'number' && Number.isFinite(st.videoDuration)
-                  ? st.videoDuration
-                  : knownDurationRef.current;
-              return {
-                isPlaying: st.playerIsPaused !== undefined ? !st.playerIsPaused : !pausedRef.current,
-                currentTime: t,
-                duration: dur,
-                adIsPlaying: Boolean(st.adIsPlaying ?? adIsPlayingRef.current),
-              };
-            } catch {
-              return {
-                isPlaying: !pausedRef.current,
-                currentTime: savedTimeRef.current,
-                duration: knownDurationRef.current,
-                adIsPlaying: adIsPlayingRef.current,
-              };
-            }
-          };
-
-          onStateProviderReadyRef.current?.(readSnapshot);
-
-          const makeSnapshot = (
-            st: DailymotionPlayerState | undefined,
-            fallbackPlaying: boolean
-          ): DailymotionPlaybackSnapshot => {
-            const t =
-              typeof st?.videoTime === 'number' && Number.isFinite(st.videoTime)
-                ? st.videoTime
-                : savedTimeRef.current;
-            const dur =
-              typeof st?.videoDuration === 'number' && Number.isFinite(st.videoDuration)
-                ? st.videoDuration
-                : knownDurationRef.current;
-            return {
-              isPlaying:
-                st?.playerIsPaused !== undefined ? !st.playerIsPaused : fallbackPlaying,
-              currentTime: t,
-              duration: dur,
-              adIsPlaying: Boolean(st?.adIsPlaying ?? adIsPlayingRef.current),
-            };
-          };
-
-          const handleTimeProgress = (st?: DailymotionPlayerState) => {
-            if (disposed) return;
-            if (st?.adIsPlaying || adIsPlayingRef.current) return;
-            if (typeof st?.videoDuration === 'number' && Number.isFinite(st.videoDuration) && st.videoDuration > 0) {
-              knownDurationRef.current = st.videoDuration;
-            }
-            const t = typeof st?.videoTime === 'number' && Number.isFinite(st.videoTime) ? st.videoTime : null;
-            if (t !== null && t >= 0) {
-              if (isPreviewLockedRef.current && t >= PREVIEW_FREE_SECONDS) {
-                savedTimeRef.current = PREVIEW_FREE_SECONDS - 1;
-                void player.seek(PREVIEW_FREE_SECONDS - 1);
-                void player.pause();
-                onPlayingChangeRef.current?.(false);
-                onPreviewLimitReachedRef.current?.();
-                return;
-              }
-              savedTimeRef.current = t;
-              onTimeUpdateRef.current?.(t, knownDurationRef.current);
-            }
-          };
-
-          player.on(sdk.events.PLAYER_APIREADY, () => {
-            if (disposed) return;
-            readyRef.current = true;
-            setIsLoading(false);
-            onStallStateChangeRef.current?.(false);
-            try {
-              void player.setMute(mutedRef.current);
-              if (playbackRateRef.current !== 1 && player.setPlaybackSpeed) {
-                void player.setPlaybackSpeed(playbackRateRef.current);
-              }
-              const targetSeek = pendingSeekRef.current ?? savedTimeRef.current;
-              if (targetSeek > 0.5) {
-                pendingSeekRef.current = null;
-                void player.seek(targetSeek);
-              }
-              if (pausedRef.current || !autoplay) {
-                void player.pause();
-              } else {
-                void player.play();
-              }
-            } catch {
-              // Ignore API startup command race
-            }
-          });
-
-          player.on(sdk.events.VIDEO_PLAY, (st) => {
-            if (disposed) return;
-            readyRef.current = true;
-            setIsLoading(false);
-            setUnavailableReason(null);
-            onStallStateChangeRef.current?.(false);
-            if (pausedRef.current) {
-              void player.pause();
-              return;
-            }
-            if (pendingSeekRef.current !== null && pendingSeekRef.current > 0.5) {
-              const target = pendingSeekRef.current;
-              pendingSeekRef.current = null;
-              void player.seek(target);
-            }
-            handleTimeProgress(st);
-            onPlayingChangeRef.current?.(true);
-            onSdkSyncEventRef.current?.('VIDEO_PLAY', makeSnapshot(st, true));
-          });
-
-          player.on(sdk.events.VIDEO_PLAYING, (st) => {
-            if (disposed) return;
-            readyRef.current = true;
-            setIsLoading(false);
-            setUnavailableReason(null);
-            onStallStateChangeRef.current?.(false);
-            if (pausedRef.current) {
-              void player.pause();
-              return;
-            }
-            handleTimeProgress(st);
-            onPlayingChangeRef.current?.(true);
-          });
-
-          player.on(sdk.events.VIDEO_PAUSE, (st) => {
-            if (disposed) return;
-            handleTimeProgress(st);
-            onPlayingChangeRef.current?.(false);
-            onSdkSyncEventRef.current?.('VIDEO_PAUSE', makeSnapshot(st, false));
-          });
-
-          player.on(sdk.events.VIDEO_SEEKEND, (st) => {
-            if (disposed) return;
-            handleTimeProgress(st);
-            onSdkSyncEventRef.current?.(
-              'VIDEO_SEEKEND',
-              makeSnapshot(st, !pausedRef.current)
-            );
-          });
-
-          player.on(sdk.events.VIDEO_TIMECHANGE, (st) => {
-            if (disposed) return;
-            readyRef.current = true;
-            setIsLoading(false);
-            onStallStateChangeRef.current?.(false);
-            handleTimeProgress(st);
-            onSdkSyncEventRef.current?.(
-              'VIDEO_TIMECHANGE',
-              makeSnapshot(st, !pausedRef.current)
-            );
-          });
-
-          player.on(sdk.events.VIDEO_DURATIONCHANGE, (st) => {
-            if (disposed) return;
-            handleTimeProgress(st);
-          });
-
-          player.on(sdk.events.VIDEO_END, () => {
-            if (disposed) return;
-            onPlayingChangeRef.current?.(false);
-            onVideoEndedRef.current?.();
-          });
-
-          player.on(sdk.events.AD_START, () => {
-            if (disposed) return;
-            adIsPlayingRef.current = true;
-            readyRef.current = true;
-            setIsLoading(false);
-            onStallStateChangeRef.current?.(false);
-          });
-
-          player.on(sdk.events.AD_END, (st) => {
-            if (disposed) return;
-            adIsPlayingRef.current = false;
-            onSdkSyncEventRef.current?.('AD_END', makeSnapshot(st, !pausedRef.current));
-          });
-
-          player.on(sdk.events.PLAYER_ERROR, (st) => {
-            if (disposed) return;
-            const errMsg =
-              st?.error?.message ||
-              st?.error?.title ||
-              'This video is unavailable or geo-blocked in your region.';
-            setIsLoading(false);
-            setUnavailableReason(errMsg);
-            onPlayingChangeRef.current?.(false);
-            onStallStateChangeRef.current?.(false);
-          });
-        })
-        .catch(() => {
-          if (!disposed) {
-            setIsLoading(false);
-            setUnavailableReason('Video Unavailable — unable to initialize Dailymotion player.');
-            onPlayingChangeRef.current?.(false);
+          if (pendingSeekRef.current !== null && pendingSeekRef.current > 0.5) {
+            const target = pendingSeekRef.current;
+            pendingSeekRef.current = null;
+            postDailymotionCommand(iframeRef.current, 'seek', [target]);
           }
-        });
-
-      return () => {
-        disposed = true;
-        window.clearTimeout(loadTimeout);
-        onStateProviderReadyRef.current?.(null);
-        const current = playerRef.current;
-        playerRef.current = null;
-        if (current) {
-          try {
-            void current.destroy?.();
-          } catch {
-            // Ignore cleanup errors
+          if (typeof parsed.time === 'number') {
+            lastRemoteTimeEventAtRef.current = Date.now();
+            reportProgress(parsed.time, parsed.duration);
           }
+          onPlayingChangeRef.current?.(true);
+          if (evt === 'play' || evt === 'video_play') {
+            onSdkSyncEventRef.current?.('VIDEO_PLAY', makeSnapshot(true));
+          }
+          return;
         }
-        if (hostEl) {
-          hostEl.innerHTML = '';
+
+        if (evt === 'pause' || evt === 'video_pause') {
+          if (typeof parsed.time === 'number') {
+            lastRemoteTimeEventAtRef.current = Date.now();
+            reportProgress(parsed.time, parsed.duration);
+          }
+          onPlayingChangeRef.current?.(false);
+          onSdkSyncEventRef.current?.('VIDEO_PAUSE', makeSnapshot(false));
+          return;
+        }
+
+        if (evt === 'seeked' || evt === 'video_seekend') {
+          if (typeof parsed.time === 'number') {
+            lastRemoteTimeEventAtRef.current = Date.now();
+            reportProgress(parsed.time, parsed.duration);
+          }
+          onSdkSyncEventRef.current?.('VIDEO_SEEKEND', makeSnapshot(!pausedRef.current));
+          return;
+        }
+
+        if (evt === 'ended' || evt === 'video_end') {
+          onPlayingChangeRef.current?.(false);
+          onVideoEndedRef.current?.();
+          return;
+        }
+
+        if (evt === 'ad_start') {
+          adIsPlayingRef.current = true;
+          loadedRef.current = true;
+          setIsLoading(false);
+          onStallStateChangeRef.current?.(false);
+          return;
+        }
+
+        if (evt === 'ad_end') {
+          adIsPlayingRef.current = false;
+          onSdkSyncEventRef.current?.('AD_END', makeSnapshot(!pausedRef.current));
+          return;
+        }
+
+        if (evt === 'error' || evt === 'player_error') {
+          setIsLoading(false);
+          setUnavailableReason(
+            parsed.errorMessage || 'This video is unavailable or geo-blocked in your region.'
+          );
+          onPlayingChangeRef.current?.(false);
+          onStallStateChangeRef.current?.(false);
         }
       };
-    }, [videoId, reloadNonce, localRetryNonce, ccSubtitles, autoplay]);
 
-    // Sync paused state cleanly to SDK
+      window.addEventListener('message', handleMessage);
+      return () => window.removeEventListener('message', handleMessage);
+    }, [cleanVideoId, autoplay, reportProgress]);
+
+    // Smooth fallback clock when iframe has loaded and cross-origin postMessage timeupdate isn't emitted
     useEffect(() => {
-      const player = playerRef.current;
-      if (!player) return;
-      try {
-        if (paused) {
-          void player.pause();
-        } else {
-          if (savedTimeRef.current > 0.5 && pendingSeekRef.current !== null) {
-            void player.seek(pendingSeekRef.current);
-            pendingSeekRef.current = null;
-          }
-          void player.play();
+      if (!cleanVideoId || paused || unavailableReason) return;
+
+      const timer = window.setInterval(() => {
+        if (!loadedRef.current || pausedRef.current || adIsPlayingRef.current) return;
+        const msSinceRemote = Date.now() - lastRemoteTimeEventAtRef.current;
+        if (msSinceRemote >= 1400) {
+          const next = savedTimeRef.current + 0.5 * playbackRateRef.current;
+          reportProgress(next);
         }
-      } catch {
-        // Ignore transient command error
+      }, 500);
+
+      return () => window.clearInterval(timer);
+    }, [cleanVideoId, paused, unavailableReason, reportProgress]);
+
+    const handleIframeLoad = useCallback(() => {
+      loadedRef.current = true;
+      setIsLoading(false);
+      setUnavailableReason(null);
+      onStallStateChangeRef.current?.(false);
+
+      postDailymotionCommand(iframeRef.current, 'muted', [mutedRef.current]);
+      if (playbackRateRef.current !== 1) {
+        postDailymotionCommand(iframeRef.current, 'playbackSpeed', [playbackRateRef.current]);
+      }
+      const targetSeek = pendingSeekRef.current ?? savedTimeRef.current;
+      if (targetSeek > 0.5) {
+        postDailymotionCommand(iframeRef.current, 'seek', [targetSeek]);
+      }
+      if (pausedRef.current || !autoplay) {
+        postDailymotionCommand(iframeRef.current, 'pause');
+        onPlayingChangeRef.current?.(false);
+      } else {
+        postDailymotionCommand(iframeRef.current, 'play');
+        onPlayingChangeRef.current?.(true);
+      }
+    }, [autoplay]);
+
+    // Sync paused state to iframe
+    useEffect(() => {
+      if (!loadedRef.current) return;
+      if (paused) {
+        postDailymotionCommand(iframeRef.current, 'pause');
+      } else {
+        if (pendingSeekRef.current !== null && pendingSeekRef.current > 0.5) {
+          postDailymotionCommand(iframeRef.current, 'seek', [pendingSeekRef.current]);
+          pendingSeekRef.current = null;
+        }
+        postDailymotionCommand(iframeRef.current, 'play');
       }
     }, [paused]);
 
-    // Sync muted state cleanly to SDK
+    // Sync muted state to iframe
     useEffect(() => {
-      const player = playerRef.current;
-      if (!player) return;
-      try {
-        void player.setMute(muted);
-      } catch {
-        // Ignore transient mute error
-      }
+      if (!loadedRef.current) return;
+      postDailymotionCommand(iframeRef.current, 'muted', [muted]);
+      postDailymotionCommand(iframeRef.current, muted ? 'mute' : 'unmute');
     }, [muted]);
 
     // Sync playback rate
     useEffect(() => {
-      const player = playerRef.current;
-      if (!player?.setPlaybackSpeed) return;
-      try {
-        void player.setPlaybackSpeed(playbackRate);
-      } catch {
-        // Ignore unsupported speed errors
-      }
+      if (!loadedRef.current) return;
+      postDailymotionCommand(iframeRef.current, 'playbackSpeed', [playbackRate]);
     }, [playbackRate]);
 
-    // Sync imperative seek requests (scrubbing & Watch Party drift snaps)
+    // Sync imperative seek requests (scrubbing & Watch Party catch-up seeks)
     useEffect(() => {
       if (!seekRequest || seekRequest.nonce <= 0) return;
       const target = Math.max(0, seekRequest.time);
       savedTimeRef.current = target;
       pendingSeekRef.current = target;
-      const player = playerRef.current;
-      if (!player) return;
-      try {
-        void player.seek(target);
-        pendingSeekRef.current = null;
-        if (pausedRef.current) {
-          void player.pause();
-        } else {
-          void player.play();
-        }
-      } catch {
-        // Keep pendingSeekRef for PLAYER_APIREADY
+      if (!loadedRef.current) return;
+      postDailymotionCommand(iframeRef.current, 'seek', [target]);
+      pendingSeekRef.current = null;
+      if (pausedRef.current) {
+        postDailymotionCommand(iframeRef.current, 'pause');
+      } else {
+        postDailymotionCommand(iframeRef.current, 'play');
       }
     }, [seekRequest]);
 
@@ -492,25 +539,28 @@ export const DailymotionSdkPlayer: React.FC<DailymotionSdkPlayerProps> = React.m
       if (!replayNonce || replayNonce <= 0) return;
       savedTimeRef.current = 0;
       pendingSeekRef.current = 0;
-      const player = playerRef.current;
-      if (!player) return;
-      try {
-        void player.seek(0);
-        void player.play();
-      } catch {
-        // Ignore replay errors
-      }
+      if (!loadedRef.current) return;
+      postDailymotionCommand(iframeRef.current, 'seek', [0]);
+      postDailymotionCommand(iframeRef.current, 'play');
     }, [replayNonce]);
 
     return (
       <div className="relative w-full h-full bg-[#060608] overflow-hidden">
-        <div
-          ref={hostRef}
-          aria-label={title}
-          className={`${className} [&_iframe]:w-full [&_iframe]:h-full [&_iframe]:border-0 ${
-            interactive ? 'pointer-events-auto' : 'pointer-events-none'
-          }`}
-        />
+        {embedSrc && (
+          <iframe
+            ref={iframeRef}
+            key={`dm-iframe-${cleanVideoId}-r${reloadNonce}-l${localRetryNonce}-cc${ccSubtitles ? '1' : '0'}`}
+            src={embedSrc}
+            title={title}
+            onLoad={handleIframeLoad}
+            referrerPolicy="no-referrer-when-downgrade"
+            allow="autoplay; fullscreen; picture-in-picture"
+            allowFullScreen
+            className={`${className} ${
+              interactive ? 'pointer-events-auto' : 'pointer-events-none'
+            }`}
+          />
+        )}
 
         {isLoading && !unavailableReason && posterUrl && posterUrl !== 'none' && (
           <img

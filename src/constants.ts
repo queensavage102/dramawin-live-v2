@@ -1158,14 +1158,13 @@ export function getDailymotionEmbedUrl(
   const params = new URLSearchParams();
   params.set('autoplay', options?.autoplay === false ? '0' : '1');
   params.set('mute', options?.muted ? '1' : '0');
+  params.set('playsinline', '1');
   params.set('ui-logo', '0');
   params.set('queue-enable', 'false');
   params.set('subtitles-default', 'en');
   if (options?.ccSubtitles) {
     params.set('cc_load_policy', '1');
   }
-  params.set('quality', 'auto');
-  params.set('playsinline', '1');
   params.set('sharing-enable', 'false');
   params.set('api', 'postMessage');
   params.set('ui-start-screen-info', 'false');
@@ -1177,7 +1176,7 @@ export function getDailymotionEmbedUrl(
     params.set('start', String(Math.floor(options.startSeconds)));
   }
 
-  return `https://www.dailymotion.com/embed/video/${videoId}?${params.toString()}`;
+  return `https://www.dailymotion.com/embed/video/${encodeURIComponent(videoId)}?${params.toString()}`;
 }
 
 export function extractVimeoVideoId(rawUrl: string): { id: string; hash?: string } | null {

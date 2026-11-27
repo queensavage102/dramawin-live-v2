@@ -18,7 +18,6 @@ import { MysteryRevealState, MysteryVaultCard } from './components/MysteryVaultC
 import { RealisticGoldCoin } from './components/RealisticGoldCoin';
 import { SupportChatWidget } from './components/SupportChatWidget';
 import { TopHeader } from './components/TopHeader';
-import { PendingLobbyGateAction, VipScreeningPassModal } from './components/VipScreeningPassModal';
 import { VipSplashScreen } from './components/VipSplashScreen';
 import { WatchPartyLobbyModal } from './components/WatchPartyLobbyModal';
 import { WatchTab } from './components/WatchTab';
@@ -30,8 +29,6 @@ import {
   MYSTERY_CYCLE_BOXES,
   REFERRAL_REWARD_COINS,
   STREAK_DAYS,
-  WATCH_PARTY_ENTRY_AD_COUNT,
-  WATCH_PARTY_ENTRY_COIN_COST,
   WATCH_PARTY_VOLUNTARY_AD_COINS,
   buildPersonalInviteLink,
   getCurrentWeekKey,
@@ -75,7 +72,6 @@ import {
   updateSponsorAdUrl,
 } from './services/dramawinService';
 import {
-  checkWatchPartyUnlockAccess,
   clearActiveWatchPartySessionState,
   createWatchPartyRoom,
   endWatchPartyRoom,
@@ -304,9 +300,6 @@ function DramaWinApp() {
   const [activeWatchPartyRoom, setActiveWatchPartyRoom] = useState<WatchPartyRoom | null>(null);
   const [activeWatchPartyRole, setActiveWatchPartyRole] = useState<'host' | 'guest'>('guest');
   const [watchPartyViewerCount, setWatchPartyViewerCount] = useState(1);
-  const [pendingLobbyGate, setPendingLobbyGate] = useState<PendingLobbyGateAction | null>(null);
-  const [vipPassAdsCompleted, setVipPassAdsCompleted] = useState(0);
-  const [vipPassProcessing, setVipPassProcessing] = useState(false);
 
   useEffect(() => {
     if (activeTab !== 'watch') {
@@ -1904,11 +1897,7 @@ function DramaWinApp() {
       const safeCost = Math.max(1, Math.min(1000, Math.round(cost)));
       if (playerNow.coins < safeCost) {
         showToast(
-          `You need ${safeCost.toLocaleString()} Coins for ${
-            safeCost >= WATCH_PARTY_ENTRY_COIN_COST
-              ? 'the VIP Screening Pass'
-              : 'Gold Super-Reactions & Highlighted Chat'
-          }.`,
+          `You need ${safeCost.toLocaleString()} Coins for VIP Animated Reactions & Highlighted Chat.`,
           undefined,
           'error',
           undefined,
@@ -1964,59 +1953,6 @@ function DramaWinApp() {
       return true;
     },
     [showToast]
-  );
-
-  const executeApprovedLobbyAction = useCallback(
-    async (action: PendingLobbyGateAction): Promise<void> => {
-      setVipPassProcessing(true);
-      try {
-        if (action.kind === 'create') {
-          const created = await createWatchPartyRoom({
-            episode: action.episode,
-            hostName: latestStateRef.current.currentPlayer.username,
-            isPublic: action.isPublic,
-          });
-          handleEnterWatchPartyRoom(created, 'host');
-          setPendingLobbyGate(null);
-          setVipPassAdsCompleted(0);
-          setWatchPartyModalOpen(false);
-          showToast(
-            `Watch Lobby ${created.roomId} is live! 1.5x Coins active.`,
-            undefined,
-            'gold',
-            undefined,
-            3200
-          );
-        } else {
-          const role: 'host' | 'guest' =
-            auth.currentUser?.uid && action.room.hostUid === auth.currentUser.uid
-              ? 'host'
-              : 'guest';
-          handleEnterWatchPartyRoom(action.room, role);
-          setPendingLobbyGate(null);
-          setVipPassAdsCompleted(0);
-          setWatchPartyModalOpen(false);
-          showToast(
-            `Joined ${action.room.hostName}'s Watch Lobby! 1.5x Coins active.`,
-            undefined,
-            'gold',
-            undefined,
-            3200
-          );
-        }
-      } catch (err) {
-        showToast(
-          err instanceof Error ? err.message : 'Unable to enter Watch Lobby right now.',
-          undefined,
-          'error',
-          undefined,
-          3000
-        );
-      } finally {
-        setVipPassProcessing(false);
-      }
-    },
-    [handleEnterWatchPartyRoom, showToast]
   );
 
   const handleCreateFreeWatchPartyRoom = useCallback(
@@ -2083,97 +2019,42 @@ function DramaWinApp() {
   const handleRequestJoinWatchLobby = useCallback(
     async (room: WatchPartyRoom) => {
       setWatchPartyModalOpen(false);
+      const isHost = Boolean(auth.currentUser?.uid && room.hostUid === auth.currentUser.uid);
+
       if (activeWatchPartyRoomRef.current?.roomId === room.roomId) {
-        const role: 'host' | 'guest' =
-          auth.currentUser?.uid && room.hostUid === auth.currentUser.uid
-            ? 'host'
-            : activeWatchPartyRoleRef.current;
-        handleEnterWatchPartyRoom(room, role);
+        handleEnterWatchPartyRoom(room, isHost ? 'host' : activeWatchPartyRoleRef.current);
         return;
       }
 
-      const access = await checkWatchPartyUnlockAccess(room);
-      if (access.hasAccess) {
-        handleEnterWatchPartyRoom(room, access.role);
-        showToast(
-          `Resumed Watch Lobby ${room.roomId}! 1.5x Coins active.`,
-          undefined,
-          'gold',
-          undefined,
-          3000
-        );
-        return;
+      if (!isHost) {
+        const capacityCheck = await isWatchPartyRoomFull(room);
+        if (capacityCheck.full) {
+          showToast(
+            `Watch Lobby is full (${capacityCheck.viewerCount}/${capacityCheck.capacity} watching).`,
+            undefined,
+            'error',
+            undefined,
+            3200
+          );
+          return;
+        }
       }
 
-      const capacityCheck = await isWatchPartyRoomFull(room);
-      if (capacityCheck.full) {
-        showToast(
-          `Watch Lobby is full (${capacityCheck.viewerCount}/${capacityCheck.capacity} watching).`,
-          undefined,
-          'error',
-          undefined,
-          3200
-        );
-        return;
-      }
-      setVipPassAdsCompleted(0);
-      setPendingLobbyGate({ kind: 'join', room });
+      handleEnterWatchPartyRoom(room, isHost ? 'host' : 'guest');
+      showToast(
+        isHost
+          ? `Returned to your Watch Lobby ${room.roomId}!`
+          : `Joined ${room.hostName}'s Watch Lobby! 1.5x Coins active.`,
+        undefined,
+        'gold',
+        undefined,
+        3000
+      );
     },
     [handleEnterWatchPartyRoom, showToast]
   );
 
-  const handlePayVipPassWithCoins = useCallback(async (): Promise<void> => {
-    const action = pendingLobbyGate;
-    if (!action) return;
-    const label =
-      action.kind === 'create'
-        ? `🎟️ VIP Screening Pass · Host "${action.episode.title}"`
-        : `🎟️ VIP Screening Pass · Join Lobby ${action.room.roomId}`;
-    const paid = await handleSpendWatchPartyCoins(WATCH_PARTY_ENTRY_COIN_COST, label);
-    if (paid) {
-      await executeApprovedLobbyAction(action);
-    }
-  }, [pendingLobbyGate, handleSpendWatchPartyCoins, executeApprovedLobbyAction]);
-
-  const handleWatchVipPassSponsorAd = useCallback(() => {
-    const action = pendingLobbyGate;
-    if (!action) return;
-    const nextCompleted = Math.min(WATCH_PARTY_ENTRY_AD_COUNT, vipPassAdsCompleted + 1);
-    startSponsorRewardFlow(
-      async () => {
-        setVipPassAdsCompleted(nextCompleted);
-        if (nextCompleted >= WATCH_PARTY_ENTRY_AD_COUNT) {
-          await executeApprovedLobbyAction(action);
-        } else {
-          showToast(
-            `VIP Pass Ad ${nextCompleted} / ${WATCH_PARTY_ENTRY_AD_COUNT} verified!`,
-            undefined,
-            'gold',
-            undefined,
-            2800
-          );
-        }
-      },
-      {
-        claimLabel:
-          nextCompleted >= WATCH_PARTY_ENTRY_AD_COUNT
-            ? `Unlock VIP Pass (${nextCompleted}/${WATCH_PARTY_ENTRY_AD_COUNT})`
-            : `Verify Ad (${nextCompleted}/${WATCH_PARTY_ENTRY_AD_COUNT})`,
-        readyHeadline:
-          nextCompleted >= WATCH_PARTY_ENTRY_AD_COUNT
-            ? `VIP Screening Pass Ready (${nextCompleted}/${WATCH_PARTY_ENTRY_AD_COUNT})!`
-            : `Sponsor Ad ${nextCompleted}/${WATCH_PARTY_ENTRY_AD_COUNT} Complete!`,
-      }
-    );
-  }, [
-    pendingLobbyGate,
-    vipPassAdsCompleted,
-    startSponsorRewardFlow,
-    executeApprovedLobbyAction,
-    showToast,
-  ]);
-
-  // Auto-join ?room=CODE invite link OR restore previously unlocked active Watch Party session
+  // Auto-join ?room=CODE invite link OR restore previously active Watch Party session (100% free)
   useEffect(() => {
     if (isAdminRoute || !splashDone || autoJoinedPartyRef.current) return;
     autoJoinedPartyRef.current = true;
@@ -2192,37 +2073,27 @@ function DramaWinApp() {
             );
             return;
           }
-          const access = await checkWatchPartyUnlockAccess(room);
-          if (access.hasAccess) {
-            handleEnterWatchPartyRoom(room, access.role);
-            showToast(
-              `Returned to Watch Lobby ${room.roomId}! 1.5x Coins active.`,
-              undefined,
-              'gold',
-              undefined,
-              3200
-            );
-            return;
+          const isHost = Boolean(auth.currentUser?.uid && room.hostUid === auth.currentUser.uid);
+          if (!isHost) {
+            const capacityCheck = await isWatchPartyRoomFull(room);
+            if (capacityCheck.full) {
+              showToast(
+                `Watch Lobby "${room.roomId}" is full (${capacityCheck.viewerCount}/${capacityCheck.capacity} watching).`,
+                undefined,
+                'error',
+                undefined,
+                3500
+              );
+              return;
+            }
           }
-          const capacityCheck = await isWatchPartyRoomFull(room);
-          if (capacityCheck.full) {
-            showToast(
-              `Watch Lobby "${room.roomId}" is full (${capacityCheck.viewerCount}/${capacityCheck.capacity} watching).`,
-              undefined,
-              'error',
-              undefined,
-              3500
-            );
-            return;
-          }
-          setVipPassAdsCompleted(0);
-          setPendingLobbyGate({ kind: 'join', room, fromInviteLink: true });
+          handleEnterWatchPartyRoom(room, isHost ? 'host' : 'guest');
           showToast(
-            `Invited to Lobby ${room.roomId}! Unlock VIP Screening Pass to join.`,
+            `Joined ${room.hostName}'s Watch Lobby ${room.roomId}! 1.5x Coins active.`,
             undefined,
             'gold',
             undefined,
-            3500
+            3200
           );
         })
         .catch(() => {
@@ -3108,11 +2979,16 @@ function DramaWinApp() {
       </main>
 
       {/* Floating Glowing SPIN Wheel Icon on Home Screen (above AI Assistant button & sticky ad banner) */}
-      {activeTab === 'watch' && !watchPlayerOpen && splashDone && !sponsorOffer && !spinModalOpen && (
-        <div className="fixed bottom-52 right-3 z-50 pointer-events-none">
-          <LuckySpinFloatingButton onClick={() => setSpinModalOpen(true)} />
-        </div>
-      )}
+      {activeTab === 'watch' &&
+        !watchPlayerOpen &&
+        !(activeWatchPartyRoom && activeWatchPartyRoom.status === 'active') &&
+        splashDone &&
+        !sponsorOffer &&
+        !spinModalOpen && (
+          <div className="fixed bottom-52 right-3 z-50 pointer-events-none">
+            <LuckySpinFloatingButton onClick={() => setSpinModalOpen(true)} />
+          </div>
+        )}
 
       {/* Existing Floating Yellow Support Button & VIP Support Chat Modal (Gmail/Web3Forms forwarding intact) */}
       <SupportChatWidget
@@ -3123,29 +2999,37 @@ function DramaWinApp() {
         qualificationThreshold={qualificationThreshold}
         poolPrizeZar={appConfig.poolPrizeZar || DEFAULT_POOL_PRIZE_ZAR}
         firebaseEmail={firebaseUser?.email || null}
-        hideFloatingButton={activeTab === 'foryou' || (activeTab === 'watch' && watchPlayerOpen)}
+        hideFloatingButton={
+          activeTab === 'foryou' ||
+          (activeTab === 'watch' && watchPlayerOpen) ||
+          Boolean(activeWatchPartyRoom && activeWatchPartyRoom.status === 'active')
+        }
       />
 
       {/* Sticky Adsterra 320x50px Banner Cleanly Anchored at bottom-16 Above Bottom Navigation Bar */}
-      {activeTab !== 'foryou' && !(activeTab === 'watch' && watchPlayerOpen) && (
-        <div
-          aria-label="Sponsored banner"
-          className="fixed bottom-16 left-0 right-0 z-30 bg-[#09090b]/95 backdrop-blur-md border-t border-white/[0.08] flex items-center justify-center"
-        >
-          <BottomAdBanner />
-        </div>
-      )}
+      {activeTab !== 'foryou' &&
+        !(activeTab === 'watch' && watchPlayerOpen) &&
+        !(activeWatchPartyRoom && activeWatchPartyRoom.status === 'active') && (
+          <div
+            aria-label="Sponsored banner"
+            className="fixed bottom-16 left-0 right-0 z-30 bg-[#09090b]/95 backdrop-blur-md border-t border-white/[0.08] flex items-center justify-center"
+          >
+            <BottomAdBanner />
+          </div>
+        )}
 
-      {/* Fixed 5-Tab Bottom Navigation Bar */}
-      <BottomNavBar
-        activeTab={activeTab}
-        onSelectTab={(tab) => {
-          setActiveTab(tab);
-          if (tab === 'watch') {
-            setHomeReturnNonce((prev) => prev + 1);
-          }
-        }}
-      />
+      {/* Fixed 5-Tab Bottom Navigation Bar (Hidden while inside an active Watch Party room) */}
+      {!(activeWatchPartyRoom && activeWatchPartyRoom.status === 'active') && (
+        <BottomNavBar
+          activeTab={activeTab}
+          onSelectTab={(tab) => {
+            setActiveTab(tab);
+            if (tab === 'watch') {
+              setHomeReturnNonce((prev) => prev + 1);
+            }
+          }}
+        />
+      )}
 
       {/* Exclusive Gift Box Vault Modal (Header Gift Box icon opens ONLY this, never Daily Sign-In) */}
       {giftVaultModalOpen && (
@@ -3184,7 +3068,7 @@ function DramaWinApp() {
 
       {/* Live Watch Party Lobby Modal */}
       <WatchPartyLobbyModal
-        open={watchPartyModalOpen && !pendingLobbyGate && !sponsorOffer}
+        open={watchPartyModalOpen && !sponsorOffer}
         episodes={episodes}
         initialEpisode={watchPartyModalInitialEpisode}
         activeRoom={activeWatchPartyRoom}
@@ -3193,23 +3077,6 @@ function DramaWinApp() {
         onRequestJoinRoom={handleRequestJoinWatchLobby}
         onNotify={handleNotifyWatchParty}
         onClose={() => setWatchPartyModalOpen(false)}
-      />
-
-      {/* VIP Screening Pass (3 Anti-Cheat Sponsor Ads or 1,000 Coins Entry Gate) */}
-      <VipScreeningPassModal
-        open={Boolean(pendingLobbyGate) && !sponsorOffer}
-        pendingAction={pendingLobbyGate}
-        adsCompleted={vipPassAdsCompleted}
-        playerTotalCoins={currentPlayer.coins}
-        processing={vipPassProcessing}
-        onPayWithCoins={handlePayVipPassWithCoins}
-        onWatchSponsorAd={handleWatchVipPassSponsorAd}
-        onClose={() => {
-          if (!vipPassProcessing) {
-            setPendingLobbyGate(null);
-            setVipPassAdsCompleted(0);
-          }
-        }}
       />
 
       {/* Privacy Policy & Affiliate Disclosure Modal */}
