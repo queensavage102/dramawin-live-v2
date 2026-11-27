@@ -4,7 +4,6 @@ import {
   ArrowLeft,
   Check,
   Coins,
-  Copy,
   Film,
   Lock,
   LogOut,
@@ -13,6 +12,7 @@ import {
   Radio,
   RotateCcw,
   Scan,
+  Share2,
   SkipForward,
   Trophy,
   Tv,
@@ -33,6 +33,7 @@ import {
   resolveVideoSource,
   sanitizeMediaUrl,
 } from '../constants';
+import { fetchWatchPartyRoom } from '../services/watchPartyService';
 import { DramaEpisode, WatchPartyRoom } from '../types';
 import {
   FULL_EPISODE_UNLOCK_COINS,
@@ -49,7 +50,7 @@ import { DoubleRewardModal } from './DoubleRewardModal';
 import { IsolatedHtml5Video, IsolatedYouTubeIframe } from './IsolatedYouTubeIframe';
 import { MovieUnlockOverlay } from './MovieUnlockOverlay';
 import { RealisticGoldCoin } from './RealisticGoldCoin';
-import { WatchPartyOverlay } from './WatchPartyOverlay';
+import { WatchPartyOverlay, WatchPartyReactionDock } from './WatchPartyOverlay';
 
 interface EpisodeWatchScreenProps {
   episode: DramaEpisode;
@@ -73,6 +74,7 @@ interface EpisodeWatchScreenProps {
   onSyncHostPlayback?: (playback: { isPlaying: boolean; currentTime: number }) => void;
   onSwitchWatchPartyEpisode?: (episode: DramaEpisode) => Promise<void>;
   onDeductSuperReactionCoins?: (cost: number, title: string) => Promise<boolean>;
+  onWatchBonusAd?: () => void;
   onNotifyWatchParty?: (message: string, tone?: 'gold' | 'neutral' | 'error') => void;
   onUnlockArchiveMovie?: (identifier: string, movieTitle: string) => Promise<boolean>;
   onUnlockArchiveMovieWithAd?: (identifier: string, movieTitle: string) => Promise<boolean>;
@@ -1128,6 +1130,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
   onSyncHostPlayback,
   onSwitchWatchPartyEpisode,
   onDeductSuperReactionCoins,
+  onWatchBonusAd,
   onNotifyWatchParty,
   onUnlockArchiveMovie,
   onUnlockArchiveMovieWithAd,
@@ -1173,7 +1176,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
   const [inviteCopied, setInviteCopied] = useState(false);
   const [ccSubtitlesOn, setCcSubtitlesOn] = useState(true);
 
-  const handleCopyInviteLink = useCallback(() => {
+  const handleShareInviteLink = useCallback(() => {
     if (!watchPartyRoom) return;
     const inviteUrl = buildWatchPartyInviteLink(watchPartyRoom.roomId);
     const copyFallback = () => {
@@ -1197,6 +1200,18 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
       }
     };
 
+    const runNativeShare = () => {
+      if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+        void navigator
+          .share({
+            title: `Join my Watch Party (${watchPartyRoom.roomId})`,
+            text: `Watch "${episode.title}" live with me in DramaWin Watch Party (${watchPartyRoom.roomId})!`,
+            url: inviteUrl,
+          })
+          .catch(() => {});
+      }
+    };
+
     if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
       void navigator.clipboard
         .writeText(inviteUrl)
@@ -1207,10 +1222,15 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
             'gold'
           );
           window.setTimeout(() => setInviteCopied(false), 2000);
+          runNativeShare();
         })
-        .catch(copyFallback);
+        .catch(() => {
+          copyFallback();
+          runNativeShare();
+        });
     } else {
       copyFallback();
+      runNativeShare();
     }
   }, [watchPartyRoom, episode, onNotifyWatchParty, onOpenWatchPartyLobby]);
 
@@ -1318,7 +1338,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
         ? Math.min(PREVIEW_FREE_SECONDS - 1, rawTarget)
         : rawTarget;
 
-      const driftThreshold = forceDriftCheck ? 2.2 : 3.0;
+      const driftThreshold = forceDriftCheck ? 0.8 : 2.5;
       if (Math.abs(liveGuestTime - targetTime) > driftThreshold) {
         currentTimeSecRef.current = targetTime;
         setCurrentTimeSec(targetTime);
@@ -1336,6 +1356,11 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
         if (!snapshot.adIsPlaying && Number.isFinite(snapshot.currentTime) && snapshot.currentTime >= 0) {
           currentTimeSecRef.current = snapshot.currentTime;
         }
+        return;
+      }
+
+      if (eventName === 'VIDEO_PLAY' && inWatchParty && watchPartyRole === 'guest') {
+        void syncGuestToRoomState(watchPartyRoomRef.current, false);
         return;
       }
 
@@ -1507,7 +1532,42 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
     syncGuestToRoomState,
   ]);
 
-  // Periodic guest drift check every 3s (recovers post-ad or mobile buffering drift > 3s)
+  // Immediate guest live catch-up seek when returning from voluntary rewarded ad or tab switch
+  useEffect(() => {
+    if (!inWatchParty || watchPartyRole !== 'guest' || !watchPartyRoom?.roomId) return;
+    if (resumePlaybackSignal <= 0) return;
+    const roomId = watchPartyRoom.roomId;
+    void fetchWatchPartyRoom(roomId)
+      .then((latestRoom) => {
+        void syncGuestToRoomState(latestRoom || watchPartyRoomRef.current, true);
+      })
+      .catch(() => {
+        void syncGuestToRoomState(watchPartyRoomRef.current, true);
+      });
+  }, [resumePlaybackSignal, inWatchParty, watchPartyRole, watchPartyRoom?.roomId, syncGuestToRoomState]);
+
+  useEffect(() => {
+    if (!inWatchParty || watchPartyRole !== 'guest' || !watchPartyRoom?.roomId) return;
+    const roomId = watchPartyRoom.roomId;
+    const catchUpOnReturn = () => {
+      if (document.visibilityState !== 'visible') return;
+      void fetchWatchPartyRoom(roomId)
+        .then((latestRoom) => {
+          void syncGuestToRoomState(latestRoom || watchPartyRoomRef.current, true);
+        })
+        .catch(() => {
+          void syncGuestToRoomState(watchPartyRoomRef.current, true);
+        });
+    };
+    document.addEventListener('visibilitychange', catchUpOnReturn);
+    window.addEventListener('focus', catchUpOnReturn);
+    return () => {
+      document.removeEventListener('visibilitychange', catchUpOnReturn);
+      window.removeEventListener('focus', catchUpOnReturn);
+    };
+  }, [inWatchParty, watchPartyRole, watchPartyRoom?.roomId, syncGuestToRoomState]);
+
+  // Periodic guest drift check every 3s (recovers post-ad or mobile buffering drift > 2.5s)
   useEffect(() => {
     if (!inWatchParty || watchPartyRole !== 'guest') return;
     const timer = window.setInterval(() => {
@@ -1546,24 +1606,13 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
     return () => window.clearInterval(timer);
   }, [inWatchParty, watchPartyRole, userPaused, episode.id]);
 
+  // Host switches lobby episode directly without forced mid-movie ad interruption
   const handleHostRequestSwitchEpisode = useCallback(
     (targetEpisode: DramaEpisode) => {
       if (!inWatchParty || watchPartyRole !== 'host' || !onSwitchWatchPartyEpisode) return;
-      if (onStartSponsorReward) {
-        onStartSponsorReward(
-          async () => {
-            await onSwitchWatchPartyEpisode(targetEpisode);
-          },
-          {
-            claimLabel: 'Switch Episode',
-            readyHeadline: 'Sponsor Ad Complete • Switching Lobby Episode!',
-          }
-        );
-      } else {
-        void onSwitchWatchPartyEpisode(targetEpisode);
-      }
+      void onSwitchWatchPartyEpisode(targetEpisode);
     },
-    [inWatchParty, watchPartyRole, onSwitchWatchPartyEpisode, onStartSponsorReward]
+    [inWatchParty, watchPartyRole, onSwitchWatchPartyEpisode]
   );
 
   useEffect(() => {
@@ -1872,30 +1921,41 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
             onFallbackNextEpisode={onNextEpisode && hasNextEpisode ? onNextEpisode : undefined}
           />
 
-          {/* Transparent Interactive Tap Overlay <div> with Centered Gold Play/Pause Button */}
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={handleTogglePlayPause}
-            onKeyDown={(e) => {
-              if (e.key === ' ' || e.key === 'Enter') {
-                e.preventDefault();
-                handleTogglePlayPause();
-              }
-            }}
-            aria-label={userPaused ? 'Play episode' : 'Pause episode'}
-            className="absolute inset-0 z-10 w-full h-full bg-transparent cursor-pointer flex items-center justify-center focus:outline-none"
-          >
-            {userPaused && !previewLockOpen && !rewardModalOpen ? (
-              <span className="w-16 h-16 rounded-full bg-black/75 backdrop-blur-md border-2 border-[#D4AF37] text-[#FCE7A2] flex items-center justify-center shadow-[0_0_28px_rgba(212,175,55,0.45)] transition-transform">
-                <Play className="w-7 h-7 fill-current ml-1" />
-              </span>
-            ) : tapFeedback === 'play' ? (
-              <span className="w-14 h-14 rounded-full bg-black/70 backdrop-blur-md border border-[#D4AF37]/80 text-[#FCE7A2] flex items-center justify-center shadow-[0_0_24px_rgba(212,175,55,0.35)] pointer-events-none">
-                <Pause className="w-6 h-6" />
-              </span>
-            ) : null}
-          </div>
+          {/* Transparent Interactive Tap Overlay <div> (Host & Solo Only; Non-interactive Sync Status for Guests) */}
+          {inWatchParty && watchPartyRole === 'guest' ? (
+            <div className="pointer-events-none absolute inset-0 z-10 w-full h-full bg-transparent flex items-center justify-center">
+              {userPaused && !previewLockOpen && !rewardModalOpen && (
+                <div className="px-4 py-2 rounded-full bg-black/75 backdrop-blur-md border border-emerald-400/50 text-emerald-200 text-xs font-extrabold inline-flex items-center gap-2 shadow-xl">
+                  <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+                  <span>Paused by Host · Synced with Host</span>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={handleTogglePlayPause}
+              onKeyDown={(e) => {
+                if (e.key === ' ' || e.key === 'Enter') {
+                  e.preventDefault();
+                  handleTogglePlayPause();
+                }
+              }}
+              aria-label={userPaused ? 'Play episode' : 'Pause episode'}
+              className="absolute inset-0 z-10 w-full h-full bg-transparent cursor-pointer flex items-center justify-center focus:outline-none"
+            >
+              {userPaused && !previewLockOpen && !rewardModalOpen ? (
+                <span className="w-16 h-16 rounded-full bg-black/75 backdrop-blur-md border-2 border-[#D4AF37] text-[#FCE7A2] flex items-center justify-center shadow-[0_0_28px_rgba(212,175,55,0.45)] transition-transform">
+                  <Play className="w-7 h-7 fill-current ml-1" />
+                </span>
+              ) : tapFeedback === 'play' ? (
+                <span className="w-14 h-14 rounded-full bg-black/70 backdrop-blur-md border border-[#D4AF37]/80 text-[#FCE7A2] flex items-center justify-center shadow-[0_0_24px_rgba(212,175,55,0.35)] pointer-events-none">
+                  <Pause className="w-6 h-6" />
+                </span>
+              ) : null}
+            </div>
+          )}
 
           {!inWatchParty && (
             <div className="pointer-events-none absolute top-[max(3.5rem,calc(env(safe-area-inset-top)+3.15rem))] left-3 right-3 sm:max-w-md z-30">
@@ -1926,27 +1986,24 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
             </div>
           )}
 
-          {/* 2. Top Bar: Single Slim Horizontal Strip in Watch Lobby or Classic Solo Header */}
+          {/* 2. Top Bar: Persistent Room Code + Share Header in Watch Party OR Classic Solo Header */}
           <header className="pointer-events-none absolute inset-x-0 top-0 z-30 bg-gradient-to-b from-black/90 via-black/50 to-transparent px-2.5 sm:px-4 pt-[max(0.4rem,env(safe-area-inset-top))] pb-2">
             {inWatchParty && watchPartyRoom ? (
-              /* Clear Watch Party Banner: Room Code + One-Tap Copy Invite Link (?room=CODE) + Controls */
+              /* Clear Watch Party Banner: Persistent Room Code + Share (?room=CODE) + Synced Badge + Controls */
               <div className="pointer-events-auto flex flex-col gap-1.5 py-1">
-                <div className="flex items-center justify-between gap-2 rounded-2xl bg-slate-950/75 backdrop-blur-md border border-[#D4AF37]/50 px-2.5 py-1.5 shadow-[0_4px_18px_rgba(0,0,0,0.65)]">
+                <div className="flex items-center justify-between gap-2 rounded-2xl bg-slate-950/80 backdrop-blur-md border border-[#D4AF37]/50 px-2.5 py-1.5 shadow-[0_4px_18px_rgba(0,0,0,0.65)]">
                   <div className="min-w-0 flex items-center gap-1.5">
                     <button
                       type="button"
                       onClick={handleClose}
                       aria-label="Back to catalog"
-                      className="min-h-[28px] min-w-[28px] rounded-full bg-black/70 border border-[#D4AF37]/45 flex items-center justify-center text-[#FCE7A2] hover:border-[#FBBF24] cursor-pointer shrink-0 transition"
+                      className="min-h-[30px] min-w-[30px] rounded-full bg-black/70 border border-[#D4AF37]/45 flex items-center justify-center text-[#FCE7A2] hover:border-[#FBBF24] cursor-pointer shrink-0 transition"
                     >
                       <ArrowLeft className="w-3.5 h-3.5" />
                     </button>
 
                     <div className="min-w-0 flex items-center gap-1.5 overflow-hidden">
                       <Radio className="w-3 h-3 text-emerald-400 animate-pulse shrink-0" />
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 shrink-0">
-                        Room
-                      </span>
                       <span className="font-mono-num text-xs font-black text-[#FCE7A2] shrink-0">
                         {watchPartyRoom.roomId}
                       </span>
@@ -1955,29 +2012,41 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
                         {Math.max(1, watchPartyViewerCount)}/{isPrivateLobby ? WATCH_PARTY_PRIVATE_CAPACITY : WATCH_PARTY_PUBLIC_CAPACITY}
                       </span>
                       <span className="px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-300 text-[9px] font-black uppercase shrink-0">
-                        {isPrivateLobby ? 'VIP' : 'Public'}
+                        {isPrivateLobby ? 'Private' : 'Public'}
                       </span>
+                      {watchPartyRole === 'guest' && (
+                        <span className="hidden xs:inline-flex sm:inline-flex px-1.5 py-0.5 rounded bg-emerald-500/20 border border-emerald-400/45 text-emerald-200 text-[9px] font-black shrink-0">
+                          Synced with Host
+                        </span>
+                      )}
                     </div>
                   </div>
 
                   <button
                     type="button"
-                    onClick={handleCopyInviteLink}
-                    className="min-h-[28px] px-2.5 rounded-full gold-gradient-bg text-[#181307] text-[10px] font-black inline-flex items-center gap-1 cursor-pointer shadow-[0_0_12px_rgba(251,191,36,0.4)] transition shrink-0"
+                    onClick={handleShareInviteLink}
+                    className="min-h-[30px] px-3 rounded-full gold-gradient-bg text-[#181307] text-[10px] sm:text-xs font-black inline-flex items-center gap-1 cursor-pointer shadow-[0_0_12px_rgba(251,191,36,0.4)] transition shrink-0"
                   >
                     {inviteCopied ? (
                       <Check className="w-3 h-3 text-emerald-900" />
                     ) : (
-                      <Copy className="w-3 h-3" />
+                      <Share2 className="w-3 h-3" />
                     )}
-                    <span>{inviteCopied ? 'Copied!' : 'Copy Invite Link'}</span>
+                    <span>{inviteCopied ? 'Copied!' : 'Share'}</span>
                   </button>
                 </div>
 
                 <div className="flex items-center justify-between gap-1.5 text-xs px-0.5">
-                  <span className="text-[11px] font-semibold text-zinc-200 truncate max-w-[170px] sm:max-w-[260px] drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)]">
-                    {episode.title}
-                  </span>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    {watchPartyRole === 'guest' && (
+                      <span className="sm:hidden px-1.5 py-0.5 rounded bg-emerald-950/85 border border-emerald-400/50 text-emerald-200 text-[9px] font-black shrink-0">
+                        Synced with Host
+                      </span>
+                    )}
+                    <span className="text-[11px] font-semibold text-zinc-200 truncate max-w-[140px] sm:max-w-[260px] drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)]">
+                      {episode.title}
+                    </span>
+                  </div>
 
                   <div className="flex items-center gap-1 shrink-0">
                     {watchPartyRole === 'host' && onSwitchWatchPartyEpisode && (
@@ -2258,20 +2327,27 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
           )}
         </div>
 
-        {/* 4. Custom Neon-Gold Interactive Scrub Bar cleanly above Bottom Ad Banner */}
+        {/* 4. Playback Bar (Host/Solo Interactive Controls; Guests See Read-Only Synced with Host Bar) */}
         <div className="shrink-0 relative z-20 w-full bg-[#0B0A10]/95 backdrop-blur-md border-t border-[#D4AF37]/30 px-2.5 sm:px-4 py-1 flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handleTogglePlayPause}
-            aria-label={userPaused ? 'Play episode' : 'Pause episode'}
-            className="w-7 h-7 rounded-full bg-black/75 border border-[#D4AF37]/60 text-[#FCE7A2] flex items-center justify-center shrink-0 cursor-pointer hover:border-[#FBBF24] transition"
-          >
-            {userPaused ? (
-              <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
-            ) : (
-              <Pause className="w-3.5 h-3.5" />
-            )}
-          </button>
+          {inWatchParty && watchPartyRole === 'guest' ? (
+            <span className="min-h-[26px] px-2.5 rounded-full bg-emerald-950/85 border border-emerald-400/50 text-emerald-200 text-[10px] font-black inline-flex items-center gap-1.5 shrink-0">
+              <Radio className="w-3 h-3 text-emerald-400 animate-pulse" />
+              <span>Synced with Host</span>
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={handleTogglePlayPause}
+              aria-label={userPaused ? 'Play episode' : 'Pause episode'}
+              className="w-7 h-7 rounded-full bg-black/75 border border-[#D4AF37]/60 text-[#FCE7A2] flex items-center justify-center shrink-0 cursor-pointer hover:border-[#FBBF24] transition"
+            >
+              {userPaused ? (
+                <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
+              ) : (
+                <Pause className="w-3.5 h-3.5" />
+              )}
+            </button>
+          )}
 
           <span className="font-mono-num text-[10px] sm:text-[11px] font-bold text-[#FCE7A2] tabular-nums shrink-0">
             {formatPlaybackClock(currentTimeSec)}
@@ -2292,21 +2368,25 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
                 />
               )}
             </div>
-            <input
-              type="range"
-              aria-label="Seek episode playback"
-              min={0}
-              max={effectiveDurationSec}
-              step={1}
-              value={Math.min(effectiveDurationSec, Math.floor(currentTimeSec))}
-              onChange={(e) => handleScrubSeek(Number(e.target.value))}
-              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-            />
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3 h-3 rounded-full bg-[#FCE7A2] border border-[#181307] shadow-[0_0_10px_rgba(251,191,36,0.95)]"
-              style={{ left: `${scrubFillPct}%` }}
-            />
+            {!(inWatchParty && watchPartyRole === 'guest') && (
+              <>
+                <input
+                  type="range"
+                  aria-label="Seek episode playback"
+                  min={0}
+                  max={effectiveDurationSec}
+                  step={1}
+                  value={Math.min(effectiveDurationSec, Math.floor(currentTimeSec))}
+                  onChange={(e) => handleScrubSeek(Number(e.target.value))}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                />
+                <span
+                  aria-hidden="true"
+                  className="pointer-events-none absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3 h-3 rounded-full bg-[#FCE7A2] border border-[#181307] shadow-[0_0_10px_rgba(251,191,36,0.95)]"
+                  style={{ left: `${scrubFillPct}%` }}
+                />
+              </>
+            )}
           </div>
 
           <span className="font-mono-num text-[10px] sm:text-[11px] font-semibold text-zinc-400 tabular-nums shrink-0">
@@ -2342,6 +2422,18 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
             </span>
           ) : null}
         </div>
+
+        {/* 4b. Watch Party Below-Video Quick Reactions, VIP Animated Reactions & +200 Coins (Watch Ad) Dock */}
+        {inWatchParty && watchPartyRoom && onDeductSuperReactionCoins && (
+          <WatchPartyReactionDock
+            room={watchPartyRoom}
+            username={watchPartyUsername}
+            playerTotalCoins={playerTotalCoins}
+            onDeductSuperReactionCoins={onDeductSuperReactionCoins}
+            onWatchBonusAd={onWatchBonusAd}
+            onNotify={onNotifyWatchParty}
+          />
+        )}
 
         {/* 5. Pinned Bottom 320x50px Adsterra/Monetag Banner Anchored at bottom-16 Above BottomNavBar */}
         <footer

@@ -176,7 +176,7 @@ export interface PrizeWinRecord {
   createdAtMs?: number;
 }
 
-export type WatchPartyEmoji = '🔥' | '😱' | '❤️';
+export type WatchPartyEmoji = '😂' | '😱' | '❤️' | '🔥' | '👑';
 
 export interface WatchPartyRoom {
   roomId: string;
@@ -233,5 +233,6 @@ export interface WatchPartyReaction {
   emoji: WatchPartyEmoji;
   isSuper: boolean;
   superCost: number;
+  vipLabel?: string;
   createdAt?: Timestamp;
 }

@@ -7,11 +7,17 @@ export const PUBLIC_APP_SHARE_ORIGIN = 'https://drama-win-tornement.vercel.app';
 export const REFERRAL_REWARD_COINS = 1000;
 export const WATCH_PARTY_COINS_MULTIPLIER = 1.5;
 export const WATCH_PARTY_SUPER_COST = 100;
+export const WATCH_PARTY_VOLUNTARY_AD_COINS = 200;
 export const WATCH_PARTY_ENTRY_COIN_COST = 1000;
 export const WATCH_PARTY_ENTRY_AD_COUNT = 3;
 export const WATCH_PARTY_PUBLIC_CAPACITY = 25;
 export const WATCH_PARTY_PRIVATE_CAPACITY = 8;
-export const WATCH_PARTY_EMOJIS = ['🔥', '😱', '❤️'] as const;
+export const WATCH_PARTY_FREE_EMOJIS = ['😂', '😱', '❤️'] as const;
+export const WATCH_PARTY_EMOJIS = WATCH_PARTY_FREE_EMOJIS;
+export const WATCH_PARTY_VIP_REACTIONS = [
+  { emoji: '🔥', label: 'Firestorm', cost: 100 },
+  { emoji: '👑', label: 'Royal Shoutout', cost: 250 },
+] as const;
 
 export function buildPersonalInviteLink(userId: string): string {
   const cleanId = encodeURIComponent((userId || '').trim());

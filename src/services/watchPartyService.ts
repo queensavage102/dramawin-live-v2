@@ -825,6 +825,8 @@ export async function sendWatchPartyReaction(
     username: string;
     emoji: WatchPartyEmoji;
     isSuper: boolean;
+    superCost?: number;
+    vipLabel?: string;
   }
 ): Promise<void> {
   const user = await ensureWatchPartyAuth();
@@ -832,6 +834,8 @@ export async function sendWatchPartyReaction(
   const reactionId = `rx_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const path = `watchParties/${cleanId}/reactions/${reactionId}`;
   const isSuper = Boolean(payload.isSuper);
+  const superCost = isSuper ? (payload.superCost === 250 ? 250 : 100) : 0;
+  const vipLabel = (payload.vipLabel || '').trim().slice(0, 32);
 
   try {
     await setDoc(doc(db, 'watchParties', cleanId, 'reactions', reactionId), {
@@ -840,7 +844,8 @@ export async function sendWatchPartyReaction(
       username: sanitizeUsername(payload.username),
       emoji: payload.emoji,
       isSuper,
-      superCost: isSuper ? 100 : 0,
+      superCost,
+      ...(vipLabel ? { vipLabel } : {}),
       createdAt: serverTimestamp(),
     });
   } catch (error) {

@@ -302,14 +302,15 @@ service cloud.firestore {
 
     function isValidWatchPartyReaction(data) {
       return data.keys().hasAll(['roomId', 'uid', 'username', 'emoji', 'isSuper', 'superCost', 'createdAt'])
-        && data.keys().hasOnly(['roomId', 'uid', 'username', 'emoji', 'isSuper', 'superCost', 'createdAt'])
+        && data.keys().hasOnly(['roomId', 'uid', 'username', 'emoji', 'isSuper', 'superCost', 'vipLabel', 'createdAt'])
         && data.roomId is string && data.roomId.size() >= 4 && data.roomId.size() <= 64 && data.roomId.matches('^[a-zA-Z0-9_\\-]+$')
         && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$')
         && data.username is string && data.username.size() >= 2 && data.username.size() <= 32
-        && data.emoji in ['🔥', '😱', '❤️']
+        && data.emoji in ['😂', '😱', '❤️', '🔥', '👑']
         && data.isSuper is bool
         && data.superCost is number
-        && ((data.isSuper == false && data.superCost == 0) || (data.isSuper == true && data.superCost == 100))
+        && ((data.isSuper == false && data.superCost == 0) || (data.isSuper == true && (data.superCost == 100 || data.superCost == 250)))
+        && (!('vipLabel' in data) || (data.vipLabel is string && data.vipLabel.size() <= 32))
         && data.createdAt is timestamp;
     }
 

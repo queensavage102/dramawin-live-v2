@@ -65,6 +65,7 @@ interface SeriesFoldersSectionProps {
   onSyncHostPlayback?: (playback: { isPlaying: boolean; currentTime: number }) => void;
   onSwitchWatchPartyEpisode?: (episode: DramaEpisode) => Promise<void>;
   onDeductSuperReactionCoins?: (cost: number, title: string) => Promise<boolean>;
+  onWatchBonusAd?: () => void;
   onNotifyWatchParty?: (message: string, tone?: 'gold' | 'neutral' | 'error') => void;
   onToggleMute: () => void;
   onAwardCoinPot: (episode: DramaEpisode, amount: number) => Promise<void>;
@@ -345,6 +346,7 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
   onSyncHostPlayback,
   onSwitchWatchPartyEpisode,
   onDeductSuperReactionCoins,
+  onWatchBonusAd,
   onNotifyWatchParty,
   onToggleMute,
   onAwardCoinPot,
@@ -1172,6 +1174,7 @@ export const SeriesFoldersSection: React.FC<SeriesFoldersSectionProps> = ({
           onSyncHostPlayback={onSyncHostPlayback}
           onSwitchWatchPartyEpisode={onSwitchWatchPartyEpisode}
           onDeductSuperReactionCoins={onDeductSuperReactionCoins}
+          onWatchBonusAd={onWatchBonusAd}
           onNotifyWatchParty={onNotifyWatchParty}
           onUnlockArchiveMovie={onUnlockArchiveMovie}
           onUnlockArchiveMovieWithAd={onUnlockArchiveMovieWithAd}

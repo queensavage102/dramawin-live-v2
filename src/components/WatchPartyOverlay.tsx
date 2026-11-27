@@ -11,7 +11,13 @@ import {
   Tv,
   X,
 } from 'lucide-react';
-import { WATCH_PARTY_EMOJIS, WATCH_PARTY_SUPER_COST, resolveVideoSource } from '../constants';
+import {
+  WATCH_PARTY_FREE_EMOJIS,
+  WATCH_PARTY_SUPER_COST,
+  WATCH_PARTY_VIP_REACTIONS,
+  WATCH_PARTY_VOLUNTARY_AD_COINS,
+  resolveVideoSource,
+} from '../constants';
 import {
   sendWatchPartyMessage,
   sendWatchPartyReaction,
@@ -40,7 +46,9 @@ interface FloatingBurstReaction {
   emoji: WatchPartyEmoji;
   username: string;
   isSuper: boolean;
-  offsetX: number;
+  superCost: number;
+  vipLabel?: string;
+  leftPct: number;
 }
 
 interface WatchPartyOverlayProps {
@@ -113,15 +121,22 @@ export const WatchPartyOverlay: React.FC<WatchPartyOverlayProps> = ({
             emoji: rx.emoji,
             username: rx.username,
             isSuper: rx.isSuper,
-            offsetX: Math.round(Math.random() * 56) - 10,
+            superCost: rx.superCost || 0,
+            vipLabel: rx.vipLabel,
+            leftPct: rx.isSuper
+              ? 18 + Math.round(Math.random() * 52)
+              : 8 + Math.round(Math.random() * 76),
           });
         });
         if (newlyAdded.length > 0) {
-          setFloatingBursts((prev) => [...prev, ...newlyAdded].slice(-18));
+          setFloatingBursts((prev) => [...prev, ...newlyAdded].slice(-20));
           newlyAdded.forEach((item) => {
-            window.setTimeout(() => {
-              setFloatingBursts((prev) => prev.filter((b) => b.localKey !== item.localKey));
-            }, 2700);
+            window.setTimeout(
+              () => {
+                setFloatingBursts((prev) => prev.filter((b) => b.localKey !== item.localKey));
+              },
+              item.isSuper ? 3400 : 2700
+            );
           });
         }
       },
@@ -224,6 +239,9 @@ export const WatchPartyOverlay: React.FC<WatchPartyOverlayProps> = ({
     const clean = chatInput.trim();
     if (!clean || sending) return;
 
+    // Immediately clear chat input upon send
+    setChatInput('');
+
     if (superMode && playerTotalCoins < WATCH_PARTY_SUPER_COST) {
       onNotify?.(
         `You need ${WATCH_PARTY_SUPER_COST} Coins for Gold Highlighted Chat.`,
@@ -233,7 +251,6 @@ export const WatchPartyOverlay: React.FC<WatchPartyOverlayProps> = ({
     }
 
     const useSuper = superMode;
-    setChatInput('');
     if (useSuper) setSuperMode(false);
     setSending(true);
     try {
@@ -243,7 +260,6 @@ export const WatchPartyOverlay: React.FC<WatchPartyOverlayProps> = ({
           `Watch Party Gold Highlight Chat (${room.roomId})`
         );
         if (!paid) {
-          setChatInput(clean);
           return;
         }
       }
@@ -259,90 +275,67 @@ export const WatchPartyOverlay: React.FC<WatchPartyOverlayProps> = ({
     }
   };
 
-  const handleTriggerReaction = async (emoji: WatchPartyEmoji) => {
-    if (sending) return;
-    if (superMode && playerTotalCoins < WATCH_PARTY_SUPER_COST) {
-      onNotify?.(
-        `You need ${WATCH_PARTY_SUPER_COST} Coins to send a Gold Super-Reaction.`,
-        'error'
-      );
-      return;
-    }
-
-    setSending(true);
-    try {
-      if (superMode) {
-        const paid = await onDeductSuperReactionCoins(
-          WATCH_PARTY_SUPER_COST,
-          `Watch Party Gold Super-Reaction ${emoji} (${room.roomId})`
-        );
-        if (!paid) return;
-        await Promise.all([
-          sendWatchPartyReaction(room.roomId, { username, emoji, isSuper: true }),
-          sendWatchPartyMessage(room.roomId, {
-            username,
-            text: `Sent a Gold Super-Reaction ${emoji}!`,
-            isSuper: true,
-            emoji,
-          }),
-        ]);
-        setSuperMode(false);
-      } else {
-        await sendWatchPartyReaction(room.roomId, { username, emoji, isSuper: false });
-      }
-    } catch {
-      onNotify?.('Unable to send reaction right now.', 'error');
-    } finally {
-      setSending(false);
-    }
-  };
-
   return (
     <>
-      {/* Floating Emoji Reactions Layer */}
+      {/* Full-Screen Cross-Screen Floating Emoji & VIP Celebration Reactions Layer */}
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute bottom-32 left-4 sm:left-6 z-20 w-40 h-56 overflow-visible"
+        className="pointer-events-none absolute inset-0 z-20 overflow-hidden"
       >
-        {floatingBursts.map((burst) => (
-          <div
-            key={burst.localKey}
-            className="watch-party-float absolute bottom-0 flex items-center gap-1"
-            style={{ left: `${Math.max(0, burst.offsetX)}px` }}
-          >
-            <span
-              className={`text-2xl sm:text-3xl drop-shadow-[0_4px_12px_rgba(0,0,0,0.9)] ${
-                burst.isSuper
-                  ? 'px-2 py-0.5 rounded-full bg-gradient-to-r from-amber-400/90 to-yellow-300/90 border border-yellow-100 shadow-[0_0_24px_rgba(251,191,36,0.9)]'
-                  : ''
-              }`}
+        {floatingBursts.map((burst) =>
+          burst.isSuper ? (
+            <div
+              key={burst.localKey}
+              className="watch-party-vip-float absolute bottom-20 flex flex-col items-center gap-1 -translate-x-1/2"
+              style={{ left: `${burst.leftPct}%` }}
             >
-              {burst.emoji}
-            </span>
-            {burst.isSuper && (
-              <span className="px-1.5 py-0.5 rounded-full bg-black/85 border border-amber-400 text-[9px] font-black text-amber-300 whitespace-nowrap shadow">
-                {burst.username}
+              <span
+                className={`text-6xl sm:text-7xl drop-shadow-[0_0_28px_rgba(251,191,36,0.95)] ${
+                  burst.emoji === '🔥'
+                    ? 'filter drop-shadow-[0_0_28px_rgba(249,115,22,0.95)]'
+                    : ''
+                }`}
+              >
+                {burst.emoji}
               </span>
-            )}
-          </div>
-        ))}
+              <span
+                className={`px-3 py-1 rounded-full text-[11px] sm:text-xs font-black uppercase tracking-wider whitespace-nowrap shadow-[0_6px_24px_rgba(0,0,0,0.85)] border ${
+                  burst.superCost >= 250 || burst.emoji === '👑'
+                    ? 'gold-gradient-bg border-yellow-100 text-[#181307]'
+                    : 'bg-gradient-to-r from-orange-500 via-amber-500 to-rose-500 border-amber-200 text-white'
+                }`}
+              >
+                {burst.emoji} {burst.username} · {burst.vipLabel || 'VIP Reaction'}!
+              </span>
+            </div>
+          ) : (
+            <div
+              key={burst.localKey}
+              className="watch-party-float absolute bottom-16 -translate-x-1/2 flex flex-col items-center"
+              style={{ left: `${burst.leftPct}%` }}
+            >
+              <span className="text-3xl sm:text-4xl drop-shadow-[0_4px_14px_rgba(0,0,0,0.9)]">
+                {burst.emoji}
+              </span>
+            </div>
+          )
+        )}
       </div>
 
-      {/* Bottom-Left Translucent Live Chat & Reactions Dock */}
+      {/* Bottom-Left Translucent Live Chat Feed & Compact Input */}
       <div
         onClick={(e) => e.stopPropagation()}
         onPointerDown={(e) => e.stopPropagation()}
-        className="pointer-events-none absolute bottom-2 left-2 sm:left-3 z-[25] w-[min(90vw,330px)] flex flex-col gap-1"
+        className="pointer-events-none absolute bottom-2 left-2 sm:left-3 z-[25] w-[min(86vw,310px)] flex flex-col gap-1"
       >
-        {/* Sleek borderless translucent 2-line live chat feed (max-h-16) */}
         {!chatMinimized && (
           <div
             ref={chatScrollRef}
-            className="pointer-events-auto max-h-16 overflow-y-auto space-y-0.5 px-2.5 py-1 rounded-xl bg-black/45 backdrop-blur-sm border-0 no-scrollbar shadow-sm"
+            className="pointer-events-auto max-h-16 overflow-y-auto space-y-0.5 px-2.5 py-1 rounded-xl bg-black/50 backdrop-blur-sm no-scrollbar shadow-sm"
           >
             {messages.length === 0 ? (
               <p className="text-[10px] text-zinc-300 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)] truncate">
-                Lobby <strong className="text-[#FCE7A2] font-mono-num">{room.roomId}</strong> live • Tap 🔥😱❤️
+                Room <strong className="text-[#FCE7A2] font-mono-num">{room.roomId}</strong> live • Say hi!
               </p>
             ) : (
               messages.slice(-12).map((msg) => (
@@ -354,7 +347,7 @@ export const WatchPartyOverlay: React.FC<WatchPartyOverlayProps> = ({
                 >
                   {msg.isSuper && (
                     <span className="inline-block mr-1 px-1 py-[1px] rounded bg-amber-400 text-[#181307] text-[8px] font-black uppercase tracking-wider align-middle shadow-sm">
-                      👑100
+                      VIP
                     </span>
                   )}
                   <span
@@ -372,9 +365,7 @@ export const WatchPartyOverlay: React.FC<WatchPartyOverlayProps> = ({
           </div>
         )}
 
-        {/* Single compact input row (Chat... with inline 🔥 😱 ❤️ reactions and 👑100 Super Chat toggle) */}
         <div className="pointer-events-auto flex items-center gap-1 h-8 rounded-full bg-black/75 hover:bg-black/85 backdrop-blur-md px-1.5 border border-white/15 shadow-lg">
-          {/* 1-Tap Minimize / Expand Toggle */}
           <button
             type="button"
             onClick={() => setChatMinimized((prev) => !prev)}
@@ -384,7 +375,6 @@ export const WatchPartyOverlay: React.FC<WatchPartyOverlayProps> = ({
             {chatMinimized ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
           </button>
 
-          {/* 👑100 Super Chat toggle */}
           <button
             type="button"
             onClick={() => setSuperMode((prev) => !prev)}
@@ -397,17 +387,16 @@ export const WatchPartyOverlay: React.FC<WatchPartyOverlayProps> = ({
             }`}
           >
             <Crown className="w-2.5 h-2.5 fill-current" />
-            <span>100</span>
+            <span>{WATCH_PARTY_SUPER_COST}</span>
           </button>
 
-          {/* Chat input form */}
-          <form onSubmit={(e) => void handleSendChat(e)} className="flex-1 min-w-0 flex items-center gap-1">
+          <form onSubmit={(e) => void handleSendChat(e)} className="flex-1 min-w-0 flex items-center gap-1 pr-0.5">
             <input
               type="text"
               maxLength={240}
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
-              placeholder={superMode ? 'Gold chat (-100)...' : 'Chat...'}
+              placeholder={superMode ? 'Gold chat (-100)...' : 'Chat with room...'}
               className="w-full bg-transparent text-[11px] text-white placeholder:text-zinc-400 focus:outline-none"
             />
             {chatInput.trim() && (
@@ -415,36 +404,16 @@ export const WatchPartyOverlay: React.FC<WatchPartyOverlayProps> = ({
                 type="submit"
                 disabled={sending}
                 aria-label="Send message"
-                className="w-5 h-5 rounded-full gold-gradient-bg text-[#181307] flex items-center justify-center shrink-0 cursor-pointer shadow"
+                className="w-6 h-6 rounded-full gold-gradient-bg text-[#181307] flex items-center justify-center shrink-0 cursor-pointer shadow"
               >
-                <Send className="w-2.5 h-2.5" />
+                <Send className="w-3 h-3" />
               </button>
             )}
           </form>
-
-          {/* Inline reactions 🔥 😱 ❤️ */}
-          <div className="flex items-center gap-0.5 shrink-0 pl-1 border-l border-white/15">
-            {WATCH_PARTY_EMOJIS.map((emoji) => (
-              <button
-                key={emoji}
-                type="button"
-                disabled={sending}
-                onClick={() => void handleTriggerReaction(emoji)}
-                aria-label={
-                  superMode
-                    ? `Send ${emoji} Super-Reaction (${WATCH_PARTY_SUPER_COST} Coins)`
-                    : `React ${emoji}`
-                }
-                className="w-6 h-6 rounded-full flex items-center justify-center text-xs hover:scale-125 active:scale-90 cursor-pointer transition"
-              >
-                {emoji}
-              </button>
-            ))}
-          </div>
         </div>
       </div>
 
-      {/* Host Episode Switcher Modal (Gated by 20s Sponsor Ad) */}
+      {/* Host Episode Switcher Modal (Zero forced ad interruption!) */}
       {episodeSwitcherOpen && role === 'host' && (
         <div
           role="dialog"
@@ -466,7 +435,7 @@ export const WatchPartyOverlay: React.FC<WatchPartyOverlayProps> = ({
                   </h3>
                 </div>
                 <p className="text-[11px] text-amber-200/85">
-                  Watch a 20s Sponsor Ad to switch the video in sync for everyone
+                  Switch the movie immediately in sync for everyone
                 </p>
               </div>
               <button
@@ -479,7 +448,6 @@ export const WatchPartyOverlay: React.FC<WatchPartyOverlayProps> = ({
               </button>
             </div>
 
-            {/* Real-Time Movie & Episode Search Bar */}
             <div className="px-4 pt-3 pb-1 border-b border-white/[0.06]">
               <div className="relative flex items-center">
                 <Search className="w-4 h-4 text-amber-400/80 absolute left-3 pointer-events-none" />
@@ -580,7 +548,7 @@ export const WatchPartyOverlay: React.FC<WatchPartyOverlayProps> = ({
                         }`}
                       >
                         <Tv className="w-3 h-3" />
-                        <span>{isCurrent ? 'Playing' : '20s Ad Switch'}</span>
+                        <span>{isCurrent ? 'Playing' : 'Switch Live'}</span>
                       </span>
                     </button>
                   );
@@ -591,5 +559,151 @@ export const WatchPartyOverlay: React.FC<WatchPartyOverlayProps> = ({
         </div>
       )}
     </>
+  );
+};
+
+interface WatchPartyReactionDockProps {
+  room: WatchPartyRoom;
+  username: string;
+  playerTotalCoins: number;
+  onDeductSuperReactionCoins: (cost: number, title: string) => Promise<boolean>;
+  onWatchBonusAd?: () => void;
+  onNotify?: (message: string, tone?: 'gold' | 'neutral' | 'error') => void;
+}
+
+export const WatchPartyReactionDock: React.FC<WatchPartyReactionDockProps> = ({
+  room,
+  username,
+  playerTotalCoins,
+  onDeductSuperReactionCoins,
+  onWatchBonusAd,
+  onNotify,
+}) => {
+  const [sending, setSending] = useState(false);
+
+  const handleFreeReaction = async (emoji: WatchPartyEmoji) => {
+    if (sending) return;
+    setSending(true);
+    try {
+      await sendWatchPartyReaction(room.roomId, {
+        username,
+        emoji,
+        isSuper: false,
+        superCost: 0,
+      });
+    } catch {
+      onNotify?.('Unable to send reaction right now.', 'error');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleVipReaction = async (spec: (typeof WATCH_PARTY_VIP_REACTIONS)[number]) => {
+    if (sending) return;
+    if (playerTotalCoins < spec.cost) {
+      onNotify?.(
+        `Need ${spec.cost} Coins for ${spec.emoji} ${spec.label}. Tap +${WATCH_PARTY_VOLUNTARY_AD_COINS} Coins (Watch Ad) to earn more!`,
+        'error'
+      );
+      return;
+    }
+
+    setSending(true);
+    try {
+      const paid = await onDeductSuperReactionCoins(
+        spec.cost,
+        `VIP Reaction: ${spec.emoji} ${spec.label} (${room.roomId})`
+      );
+      if (!paid) return;
+
+      await Promise.all([
+        sendWatchPartyReaction(room.roomId, {
+          username,
+          emoji: spec.emoji,
+          isSuper: true,
+          superCost: spec.cost,
+          vipLabel: spec.label,
+        }),
+        sendWatchPartyMessage(room.roomId, {
+          username,
+          text: `Triggered VIP ${spec.emoji} ${spec.label}!`,
+          isSuper: true,
+          emoji: spec.emoji,
+        }),
+      ]);
+    } catch {
+      onNotify?.('Unable to trigger VIP reaction right now.', 'error');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="shrink-0 relative z-20 w-full bg-[#0E0C13]/95 backdrop-blur-md border-t border-white/10 px-2.5 sm:px-4 py-1.5 flex flex-wrap items-center justify-between gap-2">
+      {/* Left: Free Quick Reactions (😂, 😱, ❤️) + VIP Animated Reactions (🔥 100, 👑 250) */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="flex items-center gap-1">
+          {WATCH_PARTY_FREE_EMOJIS.map((emoji) => (
+            <button
+              key={emoji}
+              type="button"
+              disabled={sending}
+              onClick={() => void handleFreeReaction(emoji)}
+              aria-label={`Free reaction ${emoji}`}
+              className="min-h-[34px] min-w-[34px] px-2 rounded-full bg-white/[0.08] hover:bg-white/[0.16] border border-white/15 text-base flex items-center justify-center active:scale-90 cursor-pointer transition"
+            >
+              {emoji}
+            </button>
+          ))}
+        </div>
+
+        <span className="h-4 w-px bg-white/15 mx-0.5 hidden sm:inline-block" aria-hidden="true" />
+
+        <div className="flex items-center gap-1.5">
+          {WATCH_PARTY_VIP_REACTIONS.map((vip) => {
+            const canAfford = playerTotalCoins >= vip.cost;
+            return (
+              <button
+                key={vip.label}
+                type="button"
+                disabled={sending}
+                onClick={() => void handleVipReaction(vip)}
+                title={`${vip.label} (${vip.cost} Coins)`}
+                className={`min-h-[34px] px-2.5 rounded-full border text-[11px] font-black inline-flex items-center gap-1 whitespace-nowrap active:scale-95 cursor-pointer transition ${
+                  vip.emoji === '👑'
+                    ? 'bg-gradient-to-r from-[#2e2107] to-[#1d1506] border-[#FBBF24]/75 text-[#FCE7A2] shadow-[0_0_14px_rgba(251,191,36,0.28)] hover:border-yellow-300'
+                    : 'bg-gradient-to-r from-orange-950/85 to-rose-950/80 border-orange-400/70 text-orange-200 shadow-[0_0_14px_rgba(249,115,22,0.25)] hover:border-orange-300'
+                } ${!canAfford ? 'opacity-80' : ''}`}
+              >
+                <span className="text-sm leading-none">{vip.emoji}</span>
+                <span>{vip.label}</span>
+                <span className="px-1.5 py-0.5 rounded-full bg-black/55 font-mono-num text-[9px] text-amber-300">
+                  {vip.cost}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Right: Coin Balance + Compact '+200 Coins (Watch Ad)' */}
+      <div className="flex items-center gap-1.5 ml-auto shrink-0">
+        <div className="min-h-[32px] px-2.5 rounded-full bg-black/65 border border-[#D4AF37]/40 inline-flex items-center gap-1 text-[11px] font-mono-num font-extrabold text-[#FCE7A2]">
+          <Coins className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+          <span>{playerTotalCoins.toLocaleString()}</span>
+        </div>
+
+        {onWatchBonusAd && (
+          <button
+            type="button"
+            onClick={onWatchBonusAd}
+            className="min-h-[32px] px-2.5 rounded-full gold-gradient-bg text-[#181307] text-[10px] sm:text-[11px] font-black inline-flex items-center gap-1 whitespace-nowrap shadow-[0_0_12px_rgba(212,175,55,0.4)] hover:brightness-105 active:scale-95 cursor-pointer transition"
+          >
+            <Sparkles className="w-3 h-3 shrink-0" />
+            <span>+{WATCH_PARTY_VOLUNTARY_AD_COINS} Coins (Watch Ad)</span>
+          </button>
+        )}
+      </div>
+    </div>
   );
 };

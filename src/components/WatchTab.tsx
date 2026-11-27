@@ -25,6 +25,7 @@ interface WatchTabProps {
   onSyncHostPlayback?: (playback: { isPlaying: boolean; currentTime: number }) => void;
   onSwitchWatchPartyEpisode?: (episode: DramaEpisode) => Promise<void>;
   onDeductSuperReactionCoins?: (cost: number, title: string) => Promise<boolean>;
+  onWatchBonusAd?: () => void;
   onNotifyWatchParty?: (message: string, tone?: 'gold' | 'neutral' | 'error') => void;
   onToggleMute: () => void;
   onAwardCoinPot: (episode: DramaEpisode, amount: number) => Promise<void>;
@@ -68,6 +69,7 @@ export const WatchTab: React.FC<WatchTabProps> = ({
   onSyncHostPlayback,
   onSwitchWatchPartyEpisode,
   onDeductSuperReactionCoins,
+  onWatchBonusAd,
   onNotifyWatchParty,
   onToggleMute,
   onAwardCoinPot,
@@ -108,6 +110,7 @@ export const WatchTab: React.FC<WatchTabProps> = ({
       onSyncHostPlayback={onSyncHostPlayback}
       onSwitchWatchPartyEpisode={onSwitchWatchPartyEpisode}
       onDeductSuperReactionCoins={onDeductSuperReactionCoins}
+      onWatchBonusAd={onWatchBonusAd}
       onNotifyWatchParty={onNotifyWatchParty}
       onToggleMute={onToggleMute}
       onAwardCoinPot={onAwardCoinPot}

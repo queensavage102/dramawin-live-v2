@@ -32,6 +32,7 @@ import {
   STREAK_DAYS,
   WATCH_PARTY_ENTRY_AD_COUNT,
   WATCH_PARTY_ENTRY_COIN_COST,
+  WATCH_PARTY_VOLUNTARY_AD_COINS,
   buildPersonalInviteLink,
   getCurrentWeekKey,
   getMondayStartTimestampSAST,
@@ -2018,14 +2019,66 @@ function DramaWinApp() {
     [handleEnterWatchPartyRoom, showToast]
   );
 
-  const handleRequestCreateWatchLobby = useCallback(
-    (episode: DramaEpisode, isPublic: boolean) => {
-      setWatchPartyModalOpen(false);
-      setVipPassAdsCompleted(0);
-      setPendingLobbyGate({ kind: 'create', episode, isPublic });
+  const handleCreateFreeWatchPartyRoom = useCallback(
+    async (episode: DramaEpisode, isPublic: boolean): Promise<WatchPartyRoom | null> => {
+      try {
+        const created = await createWatchPartyRoom({
+          episode,
+          hostName: latestStateRef.current.currentPlayer.username,
+          isPublic,
+        });
+        void saveWatchPartySessionState(created.roomId, 'host');
+        showToast(
+          `Room ${created.roomId} created for free! Share your code or enter now.`,
+          undefined,
+          'gold',
+          undefined,
+          3000
+        );
+        return created;
+      } catch (err) {
+        showToast(
+          err instanceof Error ? err.message : 'Unable to create Watch Party room right now.',
+          undefined,
+          'error',
+          undefined,
+          3200
+        );
+        return null;
+      }
     },
-    []
+    [showToast]
   );
+
+  const handleEnterCreatedWatchPartyRoom = useCallback(
+    (room: WatchPartyRoom) => {
+      handleEnterWatchPartyRoom(room, 'host');
+      setWatchPartyModalOpen(false);
+      showToast(
+        `Watch Lobby ${room.roomId} is live! 1.5x Coins active.`,
+        undefined,
+        'gold',
+        undefined,
+        3200
+      );
+    },
+    [handleEnterWatchPartyRoom, showToast]
+  );
+
+  const handleWatchPartyBonusAd = useCallback(() => {
+    startSponsorRewardFlow(
+      async () => {
+        await grantBoostCoins(
+          WATCH_PARTY_VOLUNTARY_AD_COINS,
+          '🎬 Watch Party Bonus Ad (+200 Coins)'
+        );
+      },
+      {
+        claimLabel: 'Claim +200 Coins',
+        readyHeadline: 'Sponsor Ad Complete • +200 Coins Earned!',
+      }
+    );
+  }, [grantBoostCoins, startSponsorRewardFlow]);
 
   const handleRequestJoinWatchLobby = useCallback(
     async (room: WatchPartyRoom) => {
@@ -2911,6 +2964,7 @@ function DramaWinApp() {
             onSyncHostPlayback={handleSyncHostPlayback}
             onSwitchWatchPartyEpisode={handleSwitchWatchPartyEpisode}
             onDeductSuperReactionCoins={handleSpendWatchPartyCoins}
+            onWatchBonusAd={handleWatchPartyBonusAd}
             onNotifyWatchParty={handleNotifyWatchParty}
             onToggleMute={handleToggleMute}
             onAwardCoinPot={handleAwardCoinPot}
@@ -3134,7 +3188,8 @@ function DramaWinApp() {
         episodes={episodes}
         initialEpisode={watchPartyModalInitialEpisode}
         activeRoom={activeWatchPartyRoom}
-        onRequestCreateRoom={handleRequestCreateWatchLobby}
+        onCreateFreeRoom={handleCreateFreeWatchPartyRoom}
+        onEnterCreatedRoom={handleEnterCreatedWatchPartyRoom}
         onRequestJoinRoom={handleRequestJoinWatchLobby}
         onNotify={handleNotifyWatchParty}
         onClose={() => setWatchPartyModalOpen(false)}
