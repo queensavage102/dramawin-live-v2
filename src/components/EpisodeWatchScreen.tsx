@@ -1038,7 +1038,8 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
       </div>
     );
 
-    if (inWatchParty || (videoSource.kind === 'dailymotion' && videoSource.dailymotionId)) {
+    if (videoSource.kind === 'dailymotion' && videoSource.dailymotionId) {
+    
       const dmId = inWatchParty
         ? resolvedWatchPartyDailymotionId
         : videoSource.dailymotionId!;
