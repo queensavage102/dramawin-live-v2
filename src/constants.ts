@@ -28,7 +28,7 @@ export function buildWatchPartyInviteLink(roomId: string): string {
     typeof window !== 'undefined' && window.location?.origin
       ? window.location.origin
       : PUBLIC_APP_SHARE_ORIGIN;
-  return cleanRoom ? `${origin}/?lobby=${cleanRoom}` : origin;
+  return cleanRoom ? `${origin}/?room=${cleanRoom}` : origin;
 }
 
 export const ADMIN_PASSCODE = 'Gideon_123';
@@ -1082,10 +1082,16 @@ export function extractDailymotionVideoId(rawUrl: string): string | null {
   const unwrapped = normalizeYouTubeInput(rawUrl);
   if (!unwrapped) return null;
 
+  // Support bare Dailymotion video IDs (e.g. "x8abcde" or "k5m9abc123")
+  if (/^[xk][a-zA-Z0-9]{5,18}$/i.test(unwrapped)) {
+    return unwrapped;
+  }
+
   const regexPatterns = [
     /(?:dai\.ly\/)([a-zA-Z0-9]+)(?:[?#&_/]|$)/i,
-    /(?:dailymotion\.com\/(?:embed\/)?video\/)([a-zA-Z0-9]+)(?:[_?#&/]|$)/i,
-    /(?:geo\.dailymotion\.com\/player\.html[^#]*[?&]video=)([a-zA-Z0-9]+)(?:[&#]|$)/i,
+    /(?:dailymotion\.com\/(?:embed\/|swf\/|player\/)?video\/)([a-zA-Z0-9]+)(?:[_?#&/]|$)/i,
+    /(?:geo\.dailymotion\.com\/player(?:\/[a-zA-Z0-9]+)?\.html[^#]*[?&]video=)([a-zA-Z0-9]+)(?:[&#]|$)/i,
+    /(?:dailymotion\.com\/[^?#]*[?&]video=)([a-zA-Z0-9]+)(?:[&#]|$)/i,
   ];
 
   for (const regex of regexPatterns) {
@@ -1103,7 +1109,7 @@ export function extractDailymotionVideoId(rawUrl: string): string | null {
           ? `https:${unwrapped}`
           : `https://${unwrapped}`;
     const parsed = new URL(normalized);
-    const host = parsed.hostname.replace(/^(www|m|touch)\./i, '').toLowerCase();
+    const host = parsed.hostname.replace(/^(www|m|touch|geo)\./i, '').toLowerCase();
 
     if (host === 'dai.ly') {
       const firstSeg = parsed.pathname.split('/').filter(Boolean)[0] || '';
@@ -1437,6 +1443,7 @@ export interface ResolvedVideoSource {
   kind: VideoSourceKind;
   url: string;
   rawUrl: string;
+  dailymotionId?: string;
 }
 
 export function describeVideoSourceLabel(rawInput?: string): string {
@@ -1484,10 +1491,11 @@ export function resolveVideoSource(
     return { kind: 'empty', url: '', rawUrl: cleaned };
   }
 
-  // 2) Dailymotion (dailymotion.com/video/... or dai.ly/... -> https://www.dailymotion.com/embed/video/... with quality=auto)
-  const dmEmbed = getDailymotionEmbedUrl(cleaned, options);
-  if (dmEmbed) {
-    return { kind: 'dailymotion', url: dmEmbed, rawUrl: cleaned };
+  // 2) Dailymotion (dailymotion.com/video/... or dai.ly/... or bare x... ID -> official Dailymotion Player Embed SDK)
+  const dmId = extractDailymotionVideoId(cleaned);
+  const dmEmbed = dmId ? getDailymotionEmbedUrl(cleaned, options) : null;
+  if (dmId && dmEmbed) {
+    return { kind: 'dailymotion', url: dmEmbed, rawUrl: cleaned, dailymotionId: dmId };
   }
 
   // 3) Vimeo (vimeo.com/... or player.vimeo.com/video/... -> https://player.vimeo.com/video/...)

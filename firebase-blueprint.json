@@ -574,6 +574,33 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["roomId", "uid", "username", "emoji", "isSuper", "superCost", "createdAt"]
+    },
+    "WatchPartySession": {
+      "title": "WatchPartySession",
+      "description": "Persisted active Watch Party host/guest session and unlocked room IDs for a player.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "activeRoomId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "activeRole": {
+          "type": "string",
+          "enum": ["host", "guest"]
+        },
+        "unlockedRoomIds": {
+          "type": "array"
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "activeRoomId", "activeRole", "unlockedRoomIds", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -640,6 +667,10 @@
     "/watchParties/{roomId}/reactions/{reactionId}": {
       "schema": { "$ref": "#/entities/WatchPartyReaction" },
       "description": "Real-time floating emoji reactions and paid Gold Super-Reactions in a Watch Party room."
+    },
+    "/watchPartySessions/{uid}": {
+      "schema": { "$ref": "#/entities/WatchPartySession" },
+      "description": "Persisted active Watch Party session and unlocked room IDs per authenticated user."
     }
   }
 }

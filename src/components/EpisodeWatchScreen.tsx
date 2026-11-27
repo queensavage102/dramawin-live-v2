@@ -1,21 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   ArrowLeft,
   Check,
-  ChevronDown,
-  ChevronUp,
   Coins,
+  Copy,
   Film,
   Lock,
   LogOut,
-  Maximize2,
-  Minimize2,
   Pause,
   Play,
   Radio,
   RotateCcw,
   Scan,
-  Share2,
   SkipForward,
   Trophy,
   Tv,
@@ -33,7 +30,6 @@ import {
   WATCH_PARTY_PRIVATE_CAPACITY,
   WATCH_PARTY_PUBLIC_CAPACITY,
   buildWatchPartyInviteLink,
-  getEpisodeSeriesId,
   resolveVideoSource,
   sanitizeMediaUrl,
 } from '../constants';
@@ -44,6 +40,11 @@ import {
 } from '../utils/modernCatalog';
 import { useResolvedMediaUrl } from '../utils/mediaStore';
 import { BottomAdBanner } from './BottomAdBanner';
+import {
+  DailymotionPlaybackSnapshot,
+  DailymotionSdkEventName,
+  DailymotionSdkPlayer,
+} from './DailymotionSdkPlayer';
 import { DoubleRewardModal } from './DoubleRewardModal';
 import { IsolatedHtml5Video, IsolatedYouTubeIframe } from './IsolatedYouTubeIframe';
 import { MovieUnlockOverlay } from './MovieUnlockOverlay';
@@ -103,35 +104,7 @@ function formatPlaybackClock(rawSeconds: number): string {
   return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 }
 
-function parseDailymotionMessage(data: unknown): Record<string, unknown> | null {
-  if (typeof data === 'string') {
-    const trimmed = data.trim();
-    if (!trimmed) return null;
-    if (trimmed.startsWith('{')) {
-      try {
-        return JSON.parse(trimmed) as Record<string, unknown>;
-      } catch {
-        return null;
-      }
-    }
-    if (trimmed.includes('=')) {
-      const params = new URLSearchParams(trimmed);
-      const out: Record<string, unknown> = {};
-      params.forEach((v, k) => {
-        const num = Number(v);
-        out[k] = v !== '' && Number.isFinite(num) && /^-?\d+(\.\d+)?$/.test(v) ? num : v;
-      });
-      return out;
-    }
-    return null;
-  }
-  if (data && typeof data === 'object') {
-    return data as Record<string, unknown>;
-  }
-  return null;
-}
-
-// Helper utilities for video playback commands
+// Helper utilities for iframe video playback commands
 
 function postYouTubeCommand(
   iframe: HTMLIFrameElement | null,
@@ -141,21 +114,6 @@ function postYouTubeCommand(
   try {
     iframe?.contentWindow?.postMessage(
       JSON.stringify({ event: 'command', func, args }),
-      '*'
-    );
-  } catch {
-    // Ignore cross-origin postMessage restrictions
-  }
-}
-
-function postDailymotionCommand(
-  iframe: HTMLIFrameElement | null,
-  command: string,
-  parameters: unknown[] = []
-) {
-  try {
-    iframe?.contentWindow?.postMessage(
-      JSON.stringify({ command, parameters }),
       '*'
     );
   } catch {
@@ -198,6 +156,14 @@ interface WatchVideoStageProps {
   onPlayingChange?: (playing: boolean) => void;
   onVideoEnded?: () => void;
   onStallStateChange?: (stalledOver5s: boolean) => void;
+  onSdkSyncEvent?: (
+    eventName: DailymotionSdkEventName,
+    snapshot: DailymotionPlaybackSnapshot
+  ) => void;
+  onStateProviderReady?: (
+    getStateFn: (() => Promise<DailymotionPlaybackSnapshot | null>) | null
+  ) => void;
+  onFallbackNextEpisode?: () => void;
 }
 
 const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
@@ -218,6 +184,9 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
     onPlayingChange,
     onVideoEnded,
     onStallStateChange,
+    onSdkSyncEvent,
+    onStateProviderReady,
+    onFallbackNextEpisode,
   }) => {
     const rawVideoUrl = sanitizeMediaUrl((episode.videoUrl || episode.youtubeUrl || '').trim());
     const customStart =
@@ -256,6 +225,8 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
     const stallPillTimerRef = useRef<number | null>(null);
     const retryDelayTimerRef = useRef<number | null>(null);
     const savedTimeRef = useRef<number>(0);
+    const pendingSeekRef = useRef<number | null>(null);
+    const iframeReadyRef = useRef<boolean>(false);
     const knownDurationRef = useRef<number>(0);
     const lastProgressTimeRef = useRef<number>(-1);
 
@@ -325,6 +296,8 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
       clearRecoveryTimers();
       clearStallPill();
       savedTimeRef.current = 0;
+      pendingSeekRef.current = null;
+      iframeReadyRef.current = false;
       knownDurationRef.current = 0;
       lastProgressTimeRef.current = -1;
       setRetryCount(0);
@@ -364,15 +337,13 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
       if (!seekRequest || seekRequest.nonce <= 0) return;
       const target = Math.max(0, seekRequest.time);
       savedTimeRef.current = target;
+      pendingSeekRef.current = target;
       if (videoSource.kind === 'youtube') {
         postYouTubeCommand(iframeRef.current, 'seekTo', [target, true]);
-      } else if (videoSource.kind === 'dailymotion') {
-        postDailymotionCommand(iframeRef.current, 'seek', [target]);
-        if (!pausedRef.current) {
-          postDailymotionCommand(iframeRef.current, 'play');
-        }
+        postYouTubeCommand(iframeRef.current, pausedRef.current ? 'pauseVideo' : 'playVideo');
       } else if (videoSource.kind === 'vimeo') {
         postVimeoCommand(iframeRef.current, 'setCurrentTime', target);
+        postVimeoCommand(iframeRef.current, pausedRef.current ? 'pause' : 'play');
       }
       if (videoRef.current) {
         try {
@@ -380,6 +351,7 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
             ? Math.max(0, videoRef.current.duration - 0.5)
             : target;
           videoRef.current.currentTime = Math.min(target, maxTime);
+          pendingSeekRef.current = null;
         } catch {
           // Ignore seek errors before readyState
         }
@@ -392,9 +364,6 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
         if (videoSource.kind === 'youtube') {
           postYouTubeCommand(iframeRef.current, 'seekTo', [0, true]);
           postYouTubeCommand(iframeRef.current, 'playVideo');
-        } else if (videoSource.kind === 'dailymotion') {
-          postDailymotionCommand(iframeRef.current, 'seek', [0]);
-          postDailymotionCommand(iframeRef.current, 'play');
         }
         if (videoRef.current) {
           try {
@@ -494,8 +463,6 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
       }
       if (videoSource.kind === 'youtube') {
         postYouTubeCommand(iframeRef.current, 'setPlaybackRate', [playbackRate]);
-      } else if (videoSource.kind === 'dailymotion') {
-        postDailymotionCommand(iframeRef.current, 'playbackSpeed', [playbackRate]);
       } else if (videoSource.kind === 'vimeo') {
         postVimeoCommand(iframeRef.current, 'setPlaybackRate', playbackRate);
       }
@@ -510,8 +477,6 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
           postYouTubeCommand(iframeRef.current, 'seekTo', [savedTimeRef.current, true]);
         }
         postYouTubeCommand(iframeRef.current, paused ? 'pauseVideo' : 'playVideo');
-      } else if (videoSource.kind === 'dailymotion') {
-        postDailymotionCommand(iframeRef.current, paused ? 'pause' : 'play');
       } else if (videoSource.kind === 'vimeo') {
         postVimeoCommand(iframeRef.current, paused ? 'pause' : 'play');
       }
@@ -566,8 +531,6 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
         if (!muted) {
           postYouTubeCommand(iframeRef.current, 'setVolume', [100]);
         }
-      } else if (videoSource.kind === 'dailymotion') {
-        postDailymotionCommand(iframeRef.current, 'muted', [muted]);
       } else if (videoSource.kind === 'vimeo') {
         postVimeoCommand(iframeRef.current, 'setMuted', muted);
         postVimeoCommand(iframeRef.current, 'setVolume', muted ? 0 : 1);
@@ -579,62 +542,11 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
     }, [muted, videoSource.kind, resolvedDirectUrl]);
 
     useEffect(() => {
-      if (videoSource.kind !== 'youtube' && videoSource.kind !== 'dailymotion' && videoSource.kind !== 'vimeo') {
+      if (videoSource.kind !== 'youtube' && videoSource.kind !== 'vimeo') {
         return;
       }
       const handleMessage = (event: MessageEvent) => {
         const origin = typeof event.origin === 'string' ? event.origin.toLowerCase() : '';
-
-        if (videoSource.kind === 'dailymotion') {
-          if (origin && !origin.includes('dailymotion.com')) return;
-          const dm = parseDailymotionMessage(event.data);
-          if (!dm) return;
-          const evName = typeof dm.event === 'string' ? dm.event.toLowerCase() : '';
-          const dmTime = typeof dm.time === 'number' ? dm.time : typeof dm.currentTime === 'number' ? dm.currentTime : null;
-          const dmDur = typeof dm.duration === 'number' ? dm.duration : null;
-
-          if (dmDur !== null && Number.isFinite(dmDur) && dmDur > 0) {
-            knownDurationRef.current = dmDur;
-            onTimeUpdateRef.current?.(savedTimeRef.current, dmDur);
-          }
-
-          if (dmTime !== null && Number.isFinite(dmTime) && dmTime >= 0) {
-            if (isPreviewLockedRef.current && dmTime >= PREVIEW_FREE_SECONDS) {
-              savedTimeRef.current = PREVIEW_FREE_SECONDS - 1;
-              postDailymotionCommand(iframeRef.current, 'seek', [PREVIEW_FREE_SECONDS - 1]);
-              postDailymotionCommand(iframeRef.current, 'pause');
-              clearRecoveryTimers();
-              clearStallPill();
-              onPlayingChangeRef.current?.(false);
-              onPreviewLimitReachedRef.current?.();
-              return;
-            }
-            savedTimeRef.current = dmTime;
-            onTimeUpdateRef.current?.(dmTime, knownDurationRef.current);
-          }
-
-          if (evName === 'playing' || evName === 'play') {
-            clearRecoveryTimers();
-            clearStallPill();
-            setIsRecovering(false);
-            setRecoveryFailed(false);
-            onPlayingChangeRef.current?.(true);
-          } else if (evName === 'pause') {
-            clearRecoveryTimers();
-            clearStallPill();
-            onPlayingChangeRef.current?.(false);
-          } else if (evName === 'video_end' || evName === 'end') {
-            clearRecoveryTimers();
-            clearStallPill();
-            onPlayingChangeRef.current?.(false);
-            onVideoEndedRef.current?.();
-          } else if (evName === 'error') {
-            onPlayingChangeRef.current?.(false);
-            scheduleStallPill();
-            triggerAutoRecover(false);
-          }
-          return;
-        }
 
         if (videoSource.kind === 'vimeo') {
           if (origin && !origin.includes('vimeo.com')) return;
@@ -691,6 +603,24 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
         }
         if (!payload) return;
 
+        if (payload.event === 'onReady') {
+          iframeReadyRef.current = true;
+          if (mutedRef.current) {
+            postYouTubeCommand(iframeRef.current, 'mute');
+          } else {
+            postYouTubeCommand(iframeRef.current, 'unMute');
+            postYouTubeCommand(iframeRef.current, 'setVolume', [100]);
+          }
+          postYouTubeCommand(iframeRef.current, 'setPlaybackRate', [playbackRateRef.current]);
+          const targetSeek = pendingSeekRef.current ?? savedTimeRef.current;
+          if (targetSeek > 0.5) {
+            postYouTubeCommand(iframeRef.current, 'seekTo', [targetSeek, true]);
+            pendingSeekRef.current = null;
+          }
+          postYouTubeCommand(iframeRef.current, pausedRef.current ? 'pauseVideo' : 'playVideo');
+          return;
+        }
+
         if (payload.event === 'onError') {
           onPlayingChangeRef.current?.(false);
           scheduleStallPill();
@@ -736,6 +666,15 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
           clearStallPill();
           setIsRecovering(false);
           setRecoveryFailed(false);
+          if (pausedRef.current) {
+            postYouTubeCommand(iframeRef.current, 'pauseVideo');
+            return;
+          }
+          if (pendingSeekRef.current !== null && pendingSeekRef.current > 0.5) {
+            const target = pendingSeekRef.current;
+            pendingSeekRef.current = null;
+            postYouTubeCommand(iframeRef.current, 'seekTo', [target, true]);
+          }
           onPlayingChangeRef.current?.(true);
         } else if (playerState === 2) {
           clearRecoveryTimers();
@@ -772,8 +711,10 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
     ]);
 
     const handleIframeLoad = useCallback(() => {
+      iframeReadyRef.current = true;
       setIsRecovering(false);
       clearStallPill();
+      const targetSeek = pendingSeekRef.current ?? savedTimeRef.current;
       try {
         if (sourceKindRef.current === 'youtube') {
           iframeRef.current?.contentWindow?.postMessage(
@@ -787,24 +728,18 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
             postYouTubeCommand(iframeRef.current, 'setVolume', [100]);
           }
           postYouTubeCommand(iframeRef.current, 'setPlaybackRate', [playbackRateRef.current]);
-        } else if (sourceKindRef.current === 'dailymotion') {
-          postDailymotionCommand(iframeRef.current, 'muted', [mutedRef.current]);
-          postDailymotionCommand(iframeRef.current, 'playbackSpeed', [playbackRateRef.current]);
-          if (savedTimeRef.current > 1) {
-            postDailymotionCommand(iframeRef.current, 'seek', [savedTimeRef.current]);
+          if (targetSeek > 0.5) {
+            postYouTubeCommand(iframeRef.current, 'seekTo', [targetSeek, true]);
           }
-          postDailymotionCommand(iframeRef.current, pausedRef.current ? 'pause' : 'play');
-          if (!pausedRef.current) {
-            window.setTimeout(() => {
-              if (!pausedRef.current && sourceKindRef.current === 'dailymotion') {
-                postDailymotionCommand(iframeRef.current, 'play');
-              }
-            }, 450);
-          }
+          postYouTubeCommand(iframeRef.current, pausedRef.current ? 'pauseVideo' : 'playVideo');
         } else if (sourceKindRef.current === 'vimeo') {
           postVimeoCommand(iframeRef.current, 'setMuted', mutedRef.current);
           postVimeoCommand(iframeRef.current, 'setVolume', mutedRef.current ? 0 : 1);
           postVimeoCommand(iframeRef.current, 'setPlaybackRate', playbackRateRef.current);
+          if (targetSeek > 0.5) {
+            postVimeoCommand(iframeRef.current, 'setCurrentTime', targetSeek);
+          }
+          postVimeoCommand(iframeRef.current, pausedRef.current ? 'pause' : 'play');
         }
       } catch {
         // Ignore cross-origin postMessage restrictions
@@ -819,13 +754,25 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
         knownDurationRef.current = e.currentTarget.duration;
         onTimeUpdateRef.current?.(e.currentTarget.currentTime || 0, e.currentTarget.duration);
       }
-      if (savedTimeRef.current > 1 && Number.isFinite(e.currentTarget.duration)) {
-        const targetTime = Math.min(savedTimeRef.current, Math.max(0, e.currentTarget.duration - 1));
+      const targetSeek = pendingSeekRef.current ?? savedTimeRef.current;
+      if (targetSeek > 0.5 && Number.isFinite(e.currentTarget.duration)) {
+        const targetTime = Math.min(targetSeek, Math.max(0, e.currentTarget.duration - 1));
         try {
           e.currentTarget.currentTime = targetTime;
+          pendingSeekRef.current = null;
         } catch {
           // Ignore seek errors before readyState
         }
+      }
+      if (pausedRef.current) {
+        e.currentTarget.pause();
+      } else if (e.currentTarget.paused) {
+        void e.currentTarget.play().catch((err: unknown) => {
+          if (err instanceof DOMException && err.name === 'NotAllowedError' && videoRef.current) {
+            videoRef.current.muted = true;
+            void videoRef.current.play().catch(() => {});
+          }
+        });
       }
     }, []);
 
@@ -834,6 +781,14 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
       clearStallPill();
       setIsRecovering(false);
       setRecoveryFailed(false);
+      if (videoRef.current && !pausedRef.current && videoRef.current.paused) {
+        void videoRef.current.play().catch((err: unknown) => {
+          if (err instanceof DOMException && err.name === 'NotAllowedError' && videoRef.current) {
+            videoRef.current.muted = true;
+            void videoRef.current.play().catch(() => {});
+          }
+        });
+      }
     }, [clearRecoveryTimers, clearStallPill]);
 
     const handleVideoPlaying = useCallback(() => {
@@ -841,24 +796,34 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
       clearStallPill();
       setIsRecovering(false);
       setRecoveryFailed(false);
+      if (pausedRef.current && videoRef.current) {
+        videoRef.current.pause();
+        return;
+      }
       onPlayingChangeRef.current?.(true);
     }, [clearRecoveryTimers, clearStallPill]);
 
     const handleVideoPlay = useCallback(
       (e: React.SyntheticEvent<HTMLVideoElement>) => {
+        if (pausedRef.current) {
+          e.currentTarget.pause();
+          return;
+        }
         e.currentTarget.muted = mutedRef.current;
         e.currentTarget.volume = 1;
         e.currentTarget.playbackRate = playbackRateRef.current;
+        const targetSeek = pendingSeekRef.current ?? savedTimeRef.current;
         if (
-          savedTimeRef.current > 1 &&
-          e.currentTarget.currentTime < 0.5 &&
+          targetSeek > 0.5 &&
+          Math.abs(e.currentTarget.currentTime - targetSeek) > 1.2 &&
           Number.isFinite(e.currentTarget.duration)
         ) {
           try {
             e.currentTarget.currentTime = Math.min(
-              savedTimeRef.current,
+              targetSeek,
               Math.max(0, e.currentTarget.duration - 0.5)
             );
+            pendingSeekRef.current = null;
           } catch {
             // Ignore seek errors
           }
@@ -967,11 +932,7 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
     }, [clearRecoveryTimers, clearStallPill]);
 
     const isAnime = (episode.category || '').toLowerCase() === 'anime';
-    const scaleClass = ccSubtitles
-      ? 'scale-[1.45] translate-y-2'
-      : isAnime
-        ? 'scale-[1.85] -translate-y-4'
-        : 'scale-[1.75]';
+    const scaleClass = isAnime ? 'scale-[1.85] -translate-y-4' : 'scale-[1.85]';
 
     const iframeClassName = fitMode
       ? 'pointer-events-none absolute inset-0 z-0 w-full h-full border-0 block bg-transparent scale-100 transition-transform duration-300 ease-out'
@@ -981,17 +942,44 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
       fitMode ? 'object-contain scale-100' : `object-cover ${scaleClass}`
     }`;
 
+    const hasPoster = Boolean(episode.coverImage && episode.coverImage !== 'none');
+
     const recoveryOverlay = (isRecovering || recoveryFailed) && (
-      <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center p-4">
+      <div
+        className={`absolute inset-0 z-30 flex items-center justify-center p-6 ${
+          recoveryFailed ? 'pointer-events-auto bg-[#060608]/90 backdrop-blur-sm' : 'pointer-events-none'
+        }`}
+      >
         {recoveryFailed ? (
-          <button
-            type="button"
-            onClick={handleManualRetry}
-            className="pointer-events-auto inline-flex items-center gap-2 px-4 py-2.5 rounded-full bg-black/85 border border-amber-400/70 text-amber-200 text-xs font-bold shadow-2xl hover:bg-black cursor-pointer"
-          >
-            <RotateCcw className="w-4 h-4 text-amber-300" />
-            <span>Stream stalled — Tap to Retry</span>
-          </button>
+          <div className="relative flex flex-col items-center text-center gap-3 max-w-xs rounded-2xl border border-amber-400/40 bg-black/85 p-5 shadow-2xl">
+            <AlertTriangle className="w-8 h-8 text-amber-400" />
+            <div className="space-y-1">
+              <p className="text-sm font-extrabold text-[#FFF8E7]">Video Unavailable</p>
+              <p className="text-xs text-zinc-400">
+                This stream may be temporarily unavailable or geo-blocked. Tap retry or skip to another episode.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={handleManualRetry}
+                className="pointer-events-auto inline-flex items-center gap-1.5 px-4 py-2 rounded-full gold-gradient-bg text-[#181307] text-xs font-extrabold shadow-lg cursor-pointer"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Retry Stream</span>
+              </button>
+              {onFallbackNextEpisode && (
+                <button
+                  type="button"
+                  onClick={onFallbackNextEpisode}
+                  className="pointer-events-auto inline-flex items-center gap-1 px-3.5 py-2 rounded-full bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-bold text-white cursor-pointer"
+                >
+                  <span>Next Ep</span>
+                  <SkipForward className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
         ) : (
           <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-black/75 border border-amber-400/40 text-amber-200 text-xs font-semibold backdrop-blur-md">
             <RotateCcw className="w-3.5 h-3.5 animate-spin text-amber-300" />
@@ -1001,9 +989,39 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
       </div>
     );
 
+    if (videoSource.kind === 'dailymotion' && videoSource.dailymotionId) {
+      return (
+        <DailymotionSdkPlayer
+          key={`dm-sdk-${episode.id}`}
+          videoId={videoSource.dailymotionId}
+          title={episode.title}
+          posterUrl={hasPoster ? episode.coverImage : undefined}
+          paused={paused}
+          muted={muted}
+          autoplay={true}
+          startSeconds={customStart || 0}
+          playbackRate={playbackRate}
+          ccSubtitles={ccSubtitles}
+          seekRequest={seekRequest}
+          replayNonce={previewReplayNonce}
+          reloadNonce={manualReloadNonce}
+          isPreviewLocked={isPreviewLocked}
+          interactive={false}
+          className={iframeClassName}
+          onTimeUpdate={onTimeUpdate}
+          onPreviewLimitReached={onPreviewLimitReached}
+          onPlayingChange={onPlayingChange}
+          onVideoEnded={onVideoEnded}
+          onStallStateChange={onStallStateChange}
+          onSdkSyncEvent={onSdkSyncEvent}
+          onStateProviderReady={onStateProviderReady}
+          onFallbackNextEpisode={onFallbackNextEpisode}
+        />
+      );
+    }
+
     if (
       videoSource.kind === 'youtube' ||
-      videoSource.kind === 'dailymotion' ||
       videoSource.kind === 'vimeo' ||
       videoSource.kind === 'odysee' ||
       videoSource.kind === 'iframe'
@@ -1033,6 +1051,7 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
             videoRef={videoRef}
             videoKey={`${episode.id}-${resolvedDirectUrl}-r${retryCount}`}
             src={resolvedDirectUrl}
+            poster={hasPoster ? episode.coverImage : undefined}
             autoPlay
             muted={muted}
             onLoadedMetadata={handleVideoLoadedMetadata}
@@ -1055,13 +1074,33 @@ const WatchVideoStage: React.FC<WatchVideoStageProps> = React.memo(
     }
 
     return (
-      <div className="absolute inset-0 w-full h-full flex flex-col items-center justify-center p-6 text-center gap-3 bg-[#060608]">
-        <Film className="w-10 h-10 text-[#D4AF37]" />
-        <p className="text-sm text-[#C4BDB0] max-w-sm">
-          Paste a YouTube, Dailymotion (<span className="font-mono text-[#FCE7A2]">dai.ly</span>), Vimeo, Odysee, Internet Archive, or direct{' '}
-          <span className="font-mono text-[#FCE7A2]">.mp4 / .m3u8</span> URL in{' '}
-          <span className="font-mono text-[#FCE7A2]">/admin → Series Watch Sheet</span>.
-        </p>
+      <div className="relative w-full h-full flex flex-col items-center justify-center p-6 text-center gap-3 bg-[#060608]">
+        {hasPoster && (
+          <img
+            src={episode.coverImage}
+            alt={episode.title}
+            referrerPolicy="no-referrer"
+            className="pointer-events-none absolute inset-0 w-full h-full object-cover opacity-30 blur-sm"
+          />
+        )}
+        <div className="pointer-events-none absolute inset-0 bg-black/60" />
+        <div className="relative z-10 flex flex-col items-center gap-3 max-w-sm">
+          <Film className="w-10 h-10 text-[#D4AF37]" />
+          <p className="text-sm font-bold text-[#FFF8E7]">Video Unavailable</p>
+          <p className="text-xs text-[#C4BDB0]">
+            This video is unavailable or geo-blocked. Switch episodes or check another title.
+          </p>
+          {onFallbackNextEpisode && (
+            <button
+              type="button"
+              onClick={onFallbackNextEpisode}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full gold-gradient-bg text-[#181307] text-xs font-extrabold shadow-lg cursor-pointer"
+            >
+              <span>Next Episode</span>
+              <SkipForward className="w-3.5 h-3.5 fill-current" />
+            </button>
+          )}
+        </div>
       </div>
     );
   }
@@ -1079,7 +1118,6 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
   muted,
   resumePlaybackSignal = 0,
   hasNextEpisode = false,
-  nextEpisodeLabel,
   isArchiveLocked = false,
   watchPartyRoom = null,
   watchPartyRole = 'guest',
@@ -1112,7 +1150,6 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
   const potReward = COIN_POT_BASE_REWARD;
   const safeThreshold = Math.max(500000, qualificationThreshold || 500000);
   const weeklyPct = Math.min(100, Math.max(0, (playerWeeklyCoins / safeThreshold) * 100));
-  const isQualified = playerWeeklyCoins >= safeThreshold;
 
   const [ringProgress, setRingProgress] = useState(0);
   const [rewardModalOpen, setRewardModalOpen] = useState(false);
@@ -1121,12 +1158,15 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
   const [flyingBurst, setFlyingBurst] = useState<{ id: number; amount: number } | null>(null);
   const [isExpandedFull, setIsExpandedFull] = useState(false);
   const [isFitMode, setIsFitMode] = useState(false);
-  const [userPaused, setUserPaused] = useState(false);
+  const [userPaused, setUserPaused] = useState(
+    () => inWatchParty && watchPartyRole === 'guest' && watchPartyRoom ? !watchPartyRoom.isPlaying : false
+  );
   const [tapFeedback, setTapFeedback] = useState<'play' | 'pause' | null>(null);
-  const [hudExpanded, setHudExpanded] = useState(false);
   const [videoReloadNonce, setVideoReloadNonce] = useState(0);
   const [isVideoStalledOver5s, setIsVideoStalledOver5s] = useState(false);
-  const [currentTimeSec, setCurrentTimeSec] = useState(0);
+  const [currentTimeSec, setCurrentTimeSec] = useState(
+    () => (inWatchParty && watchPartyRole === 'guest' && watchPartyRoom ? Math.max(0, watchPartyRoom.currentTime || 0) : 0)
+  );
   const [durationSec, setDurationSec] = useState(0);
   const [seekRequest, setSeekRequest] = useState<{ time: number; nonce: number } | null>(null);
   const [partySwitcherOpen, setPartySwitcherOpen] = useState(false);
@@ -1148,7 +1188,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
         document.body.removeChild(el);
         setInviteCopied(true);
         onNotifyWatchParty?.(
-          `Invite link copied! (?lobby=${watchPartyRoom.roomId})`,
+          `Invite link copied! (?room=${watchPartyRoom.roomId})`,
           'gold'
         );
         window.setTimeout(() => setInviteCopied(false), 2000);
@@ -1163,7 +1203,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
         .then(() => {
           setInviteCopied(true);
           onNotifyWatchParty?.(
-            `Invite link copied! (?lobby=${watchPartyRoom.roomId})`,
+            `Invite link copied! (?room=${watchPartyRoom.roomId})`,
             'gold'
           );
           window.setTimeout(() => setInviteCopied(false), 2000);
@@ -1194,6 +1234,14 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
   const episodeRef = useRef(episode);
   const isVideoPlayingRef = useRef(true);
 
+  const dmGetStateRef = useRef<(() => Promise<DailymotionPlaybackSnapshot | null>) | null>(null);
+  const dmAdPlayingRef = useRef(false);
+  const watchPartyRoomRef = useRef(watchPartyRoom);
+
+  useEffect(() => {
+    watchPartyRoomRef.current = watchPartyRoom;
+  }, [watchPartyRoom]);
+
   useEffect(() => {
     coinPotMultiplierRef.current = coinPotMultiplier;
   }, [coinPotMultiplier]);
@@ -1222,27 +1270,14 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
     episodeRef.current = episode;
   }, [episode]);
 
-  const seriesEpisodes = useMemo(() => {
-    const sId = getEpisodeSeriesId(episode);
-    const seen = new Set<string>();
-    const list = episodes
-      .filter((ep) => {
-        if (!ep?.id || seen.has(ep.id)) return false;
-        if (getEpisodeSeriesId(ep) !== sId) return false;
-        seen.add(ep.id);
-        return true;
-      })
-      .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
-    return list.length > 0 ? list : [episode];
-  }, [episodes, episode]);
-
-  const currentEpPos = Math.max(
-    1,
-    seriesEpisodes.findIndex((ep) => ep.id === episode.id) + 1
-  );
-  const totalSeriesEps = Math.max(1, seriesEpisodes.length);
-
   const tapFeedbackTimerRef = useRef<number | null>(null);
+
+  const handleStateProviderReady = useCallback(
+    (getStateFn: (() => Promise<DailymotionPlaybackSnapshot | null>) | null) => {
+      dmGetStateRef.current = getStateFn;
+    },
+    []
+  );
 
   const markEpisodeFullyCompleted = useCallback(() => {
     if (episodeCompletedFiredRef.current) return;
@@ -1251,11 +1286,110 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
     onRecordEpisodeCompletedRef.current?.(episodeRef.current.id);
   }, []);
 
+  const syncGuestToRoomState = useCallback(
+    async (room: WatchPartyRoom | null | undefined, forceDriftCheck = false) => {
+      if (!room || room.status !== 'active') return;
+      if (rewardModalOpenRef.current || previewLockOpenRef.current) return;
+      if (dmAdPlayingRef.current) return;
+
+      const hostPlaying = Boolean(room.isPlaying);
+      setUserPaused(!hostPlaying);
+      isVideoPlayingRef.current = hostPlaying;
+
+      let liveGuestTime = currentTimeSecRef.current;
+      if (dmGetStateRef.current) {
+        const snap = await dmGetStateRef.current().catch(() => null);
+        if (snap) {
+          if (snap.adIsPlaying) {
+            dmAdPlayingRef.current = true;
+            return;
+          }
+          if (Number.isFinite(snap.currentTime) && snap.currentTime >= 0) {
+            liveGuestTime = snap.currentTime;
+          }
+        }
+      }
+
+      const elapsedSinceUpdate = hostPlaying
+        ? Math.max(0, (Date.now() - (room.playbackUpdatedAtMs || Date.now())) / 1000)
+        : 0;
+      const rawTarget = Math.max(0, (room.currentTime || 0) + elapsedSinceUpdate);
+      const targetTime = effectiveArchiveLocked
+        ? Math.min(PREVIEW_FREE_SECONDS - 1, rawTarget)
+        : rawTarget;
+
+      const driftThreshold = forceDriftCheck ? 2.2 : 3.0;
+      if (Math.abs(liveGuestTime - targetTime) > driftThreshold) {
+        currentTimeSecRef.current = targetTime;
+        setCurrentTimeSec(targetTime);
+        setSeekRequest({ time: targetTime, nonce: Date.now() });
+      }
+    },
+    [effectiveArchiveLocked]
+  );
+
+  const handleSdkSyncEvent = useCallback(
+    (eventName: DailymotionSdkEventName, snapshot: DailymotionPlaybackSnapshot) => {
+      dmAdPlayingRef.current = snapshot.adIsPlaying;
+
+      if (eventName === 'VIDEO_TIMECHANGE') {
+        if (!snapshot.adIsPlaying && Number.isFinite(snapshot.currentTime) && snapshot.currentTime >= 0) {
+          currentTimeSecRef.current = snapshot.currentTime;
+        }
+        return;
+      }
+
+      if (eventName === 'AD_END') {
+        if (inWatchParty && watchPartyRole === 'guest') {
+          void syncGuestToRoomState(watchPartyRoomRef.current, true);
+          return;
+        }
+        if (inWatchParty && watchPartyRole === 'host' && !rewardModalOpenRef.current && !previewLockOpenRef.current) {
+          void (async () => {
+            const liveSnap = (await dmGetStateRef.current?.().catch(() => null)) || snapshot;
+            if (!liveSnap.adIsPlaying) {
+              currentTimeSecRef.current = liveSnap.currentTime;
+              onSyncHostPlaybackRef.current?.({
+                isPlaying: liveSnap.isPlaying,
+                currentTime: liveSnap.currentTime,
+              });
+            }
+          })();
+          return;
+        }
+      }
+
+      if (snapshot.adIsPlaying) return;
+
+      if (Number.isFinite(snapshot.currentTime) && snapshot.currentTime >= 0) {
+        currentTimeSecRef.current = snapshot.currentTime;
+      }
+
+      if (
+        inWatchParty &&
+        watchPartyRole === 'host' &&
+        !rewardModalOpenRef.current &&
+        !previewLockOpenRef.current &&
+        (eventName === 'VIDEO_PLAY' || eventName === 'VIDEO_PAUSE' || eventName === 'VIDEO_SEEKEND')
+      ) {
+        isVideoPlayingRef.current = snapshot.isPlaying;
+        onSyncHostPlaybackRef.current?.({
+          isPlaying: snapshot.isPlaying,
+          currentTime: snapshot.currentTime,
+        });
+      }
+    },
+    [inWatchParty, watchPartyRole, syncGuestToRoomState]
+  );
+
   const handlePlayingChange = useCallback(
     (playing: boolean) => {
+      if (inWatchParty && watchPartyRole === 'guest') {
+        return;
+      }
       if (!rewardModalOpenRef.current && !previewLockOpenRef.current) {
         isVideoPlayingRef.current = playing;
-        if (inWatchParty && watchPartyRole === 'host') {
+        if (inWatchParty && watchPartyRole === 'host' && !dmAdPlayingRef.current) {
           onSyncHostPlaybackRef.current?.({
             isPlaying: playing,
             currentTime: currentTimeSecRef.current,
@@ -1275,26 +1409,32 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
       );
       return;
     }
-    setUserPaused((prev) => {
-      const nextPaused = !prev;
-      isVideoPlayingRef.current = !nextPaused;
-      if (inWatchParty && watchPartyRole === 'host') {
+    const nextPaused = !userPaused;
+    setUserPaused(nextPaused);
+    isVideoPlayingRef.current = !nextPaused;
+    if (inWatchParty && watchPartyRole === 'host') {
+      void (async () => {
+        const snap = await dmGetStateRef.current?.().catch(() => null);
+        const currentPos =
+          snap && !snap.adIsPlaying && Number.isFinite(snap.currentTime)
+            ? snap.currentTime
+            : currentTimeSecRef.current;
+        currentTimeSecRef.current = currentPos;
         onSyncHostPlaybackRef.current?.({
           isPlaying: !nextPaused,
-          currentTime: currentTimeSecRef.current,
+          currentTime: currentPos,
         });
-      }
-      setTapFeedback(nextPaused ? 'pause' : 'play');
-      if (tapFeedbackTimerRef.current !== null) {
-        window.clearTimeout(tapFeedbackTimerRef.current);
-      }
-      tapFeedbackTimerRef.current = window.setTimeout(() => {
-        tapFeedbackTimerRef.current = null;
-        setTapFeedback(null);
-      }, 650);
-      return nextPaused;
-    });
-  }, [inWatchParty, watchPartyRole, watchPartyRoom?.hostName, onNotifyWatchParty]);
+      })();
+    }
+    setTapFeedback(nextPaused ? 'pause' : 'play');
+    if (tapFeedbackTimerRef.current !== null) {
+      window.clearTimeout(tapFeedbackTimerRef.current);
+    }
+    tapFeedbackTimerRef.current = window.setTimeout(() => {
+      tapFeedbackTimerRef.current = null;
+      setTapFeedback(null);
+    }, 650);
+  }, [inWatchParty, watchPartyRole, watchPartyRoom?.hostName, userPaused, onNotifyWatchParty]);
 
   const handleVideoEnded = useCallback(() => {
     markEpisodeFullyCompleted();
@@ -1302,6 +1442,7 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
 
   const handleStageTimeUpdate = useCallback(
     (timeSec: number, durSec: number) => {
+      if (dmAdPlayingRef.current) return;
       lastRemoteTimeUpdateRef.current = Date.now();
       if (Number.isFinite(timeSec) && timeSec >= 0) {
         currentTimeSecRef.current = timeSec;
@@ -1352,28 +1493,10 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
     [inWatchParty, watchPartyRole, watchPartyRoom?.hostName, effectiveArchiveLocked, userPaused, onNotifyWatchParty]
   );
 
-  // Sync Guest playback (play/pause + drift seek) to Host WatchPartyRoom state
+  // Sync Guest playback (play/pause + >3s drift recovery) to Host WatchPartyRoom state
   useEffect(() => {
     if (!inWatchParty || watchPartyRole !== 'guest' || !watchPartyRoom) return;
-    if (rewardModalOpenRef.current || previewLockOpenRef.current) return;
-
-    const hostPlaying = Boolean(watchPartyRoom.isPlaying);
-    setUserPaused(!hostPlaying);
-    isVideoPlayingRef.current = hostPlaying;
-
-    const elapsedSinceUpdate = hostPlaying
-      ? Math.max(0, (Date.now() - (watchPartyRoom.playbackUpdatedAtMs || Date.now())) / 1000)
-      : 0;
-    const rawTarget = Math.max(0, (watchPartyRoom.currentTime || 0) + elapsedSinceUpdate);
-    const targetTime = effectiveArchiveLocked
-      ? Math.min(PREVIEW_FREE_SECONDS - 1, rawTarget)
-      : rawTarget;
-
-    if (Math.abs(currentTimeSecRef.current - targetTime) > 2.5) {
-      currentTimeSecRef.current = targetTime;
-      setCurrentTimeSec(targetTime);
-      setSeekRequest({ time: targetTime, nonce: Date.now() });
-    }
+    void syncGuestToRoomState(watchPartyRoom, false);
   }, [
     inWatchParty,
     watchPartyRole,
@@ -1381,19 +1504,45 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
     watchPartyRoom?.isPlaying,
     watchPartyRoom?.currentTime,
     watchPartyRoom?.playbackUpdatedAtMs,
-    effectiveArchiveLocked,
+    syncGuestToRoomState,
   ]);
 
-  // Host periodic playback sync heartbeat every 4 seconds
+  // Periodic guest drift check every 3s (recovers post-ad or mobile buffering drift > 3s)
+  useEffect(() => {
+    if (!inWatchParty || watchPartyRole !== 'guest') return;
+    const timer = window.setInterval(() => {
+      void syncGuestToRoomState(watchPartyRoomRef.current, false);
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [inWatchParty, watchPartyRole, syncGuestToRoomState]);
+
+  // Host immediate + periodic playback sync heartbeat every 3 seconds via SDK getState()
   useEffect(() => {
     if (!inWatchParty || watchPartyRole !== 'host') return;
-    const timer = window.setInterval(() => {
+    const emitSync = async () => {
       if (rewardModalOpenRef.current || previewLockOpenRef.current) return;
+      if (dmGetStateRef.current) {
+        const snap = await dmGetStateRef.current().catch(() => null);
+        if (snap) {
+          dmAdPlayingRef.current = snap.adIsPlaying;
+          if (snap.adIsPlaying) return;
+          currentTimeSecRef.current = snap.currentTime;
+          onSyncHostPlaybackRef.current?.({
+            isPlaying: !userPaused && snap.isPlaying,
+            currentTime: snap.currentTime,
+          });
+          return;
+        }
+      }
       onSyncHostPlaybackRef.current?.({
-        isPlaying: !userPaused && isVideoPlayingRef.current,
+        isPlaying: !userPaused,
         currentTime: currentTimeSecRef.current,
       });
-    }, 4000);
+    };
+    void emitSync();
+    const timer = window.setInterval(() => {
+      void emitSync();
+    }, 3000);
     return () => window.clearInterval(timer);
   }, [inWatchParty, watchPartyRole, userPaused, episode.id]);
 
@@ -1418,7 +1567,22 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
   );
 
   useEffect(() => {
-    isVideoPlayingRef.current = true;
+    const initialGuestPaused =
+      inWatchParty && watchPartyRole === 'guest' && watchPartyRoom
+        ? !watchPartyRoom.isPlaying
+        : false;
+    const initialGuestTime =
+      inWatchParty && watchPartyRole === 'guest' && watchPartyRoom
+        ? Math.max(
+            0,
+            (watchPartyRoom.currentTime || 0) +
+              (watchPartyRoom.isPlaying
+                ? Math.max(0, (Date.now() - (watchPartyRoom.playbackUpdatedAtMs || Date.now())) / 1000)
+                : 0)
+          )
+        : 0;
+
+    isVideoPlayingRef.current = !initialGuestPaused;
     rewardModalOpenRef.current = false;
     previewLockOpenRef.current = false;
     previewElapsedMsRef.current = 0;
@@ -1430,14 +1594,14 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
     setPreviewReplayNonce(0);
     setRingProgress(0);
     setIsFitMode(false);
-    setUserPaused(false);
+    setUserPaused(initialGuestPaused);
     setTapFeedback(null);
     setVideoReloadNonce(0);
     setIsVideoStalledOver5s(false);
-    setCurrentTimeSec(0);
-    currentTimeSecRef.current = 0;
+    setCurrentTimeSec(initialGuestTime);
+    currentTimeSecRef.current = initialGuestTime;
     setDurationSec(0);
-    setSeekRequest(null);
+    setSeekRequest(initialGuestTime > 0.5 ? { time: initialGuestTime, nonce: Date.now() } : null);
     return () => {
       if (tapFeedbackTimerRef.current !== null) {
         window.clearTimeout(tapFeedbackTimerRef.current);
@@ -1703,6 +1867,9 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
             onPlayingChange={handlePlayingChange}
             onVideoEnded={handleVideoEnded}
             onStallStateChange={setIsVideoStalledOver5s}
+            onSdkSyncEvent={handleSdkSyncEvent}
+            onStateProviderReady={handleStateProviderReady}
+            onFallbackNextEpisode={onNextEpisode && hasNextEpisode ? onNextEpisode : undefined}
           />
 
           {/* Transparent Interactive Tap Overlay <div> with Centered Gold Play/Pause Button */}
@@ -1762,100 +1929,101 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
           {/* 2. Top Bar: Single Slim Horizontal Strip in Watch Lobby or Classic Solo Header */}
           <header className="pointer-events-none absolute inset-x-0 top-0 z-30 bg-gradient-to-b from-black/90 via-black/50 to-transparent px-2.5 sm:px-4 pt-[max(0.4rem,env(safe-area-inset-top))] pb-2">
             {inWatchParty && watchPartyRoom ? (
-              /* Ultra-compact single-line horizontal strip (text-xs py-1) */
-              <div className="pointer-events-auto flex items-center justify-between gap-1.5 text-xs py-1">
-                {/* Back button */}
-                <button
-                  type="button"
-                  onClick={handleClose}
-                  aria-label="Back to catalog"
-                  className="min-h-[30px] min-w-[30px] rounded-full bg-black/70 backdrop-blur-md border border-[#D4AF37]/45 flex items-center justify-center text-[#FCE7A2] hover:border-[#FBBF24] cursor-pointer shrink-0 transition"
-                >
-                  <ArrowLeft className="w-3.5 h-3.5" />
-                </button>
+              /* Clear Watch Party Banner: Room Code + One-Tap Copy Invite Link (?room=CODE) + Controls */
+              <div className="pointer-events-auto flex flex-col gap-1.5 py-1">
+                <div className="flex items-center justify-between gap-2 rounded-2xl bg-slate-950/75 backdrop-blur-md border border-[#D4AF37]/50 px-2.5 py-1.5 shadow-[0_4px_18px_rgba(0,0,0,0.65)]">
+                  <div className="min-w-0 flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={handleClose}
+                      aria-label="Back to catalog"
+                      className="min-h-[28px] min-w-[28px] rounded-full bg-black/70 border border-[#D4AF37]/45 flex items-center justify-center text-[#FCE7A2] hover:border-[#FBBF24] cursor-pointer shrink-0 transition"
+                    >
+                      <ArrowLeft className="w-3.5 h-3.5" />
+                    </button>
 
-                {/* Combined Room Badge: DW-XXXXXX · X/25 or X/8 */}
-                <div className="min-w-0 flex items-center gap-1.5 overflow-hidden">
-                  <div className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-black/80 backdrop-blur-md border border-emerald-400/50 text-[10px] font-bold text-white shadow-sm shrink-0">
-                    <Radio className="w-2.5 h-2.5 text-emerald-400 animate-pulse shrink-0" />
-                    <span className="font-mono-num text-[#FCE7A2] font-black">{watchPartyRoom.roomId}</span>
-                    <span className="text-zinc-500">·</span>
-                    <span className="font-mono-num text-zinc-300">
-                      {Math.max(1, watchPartyViewerCount)}/{isPrivateLobby ? WATCH_PARTY_PRIVATE_CAPACITY : WATCH_PARTY_PUBLIC_CAPACITY}
-                    </span>
-                    {isPrivateLobby ? (
-                      <span className="px-1 rounded bg-amber-400/20 text-amber-300 text-[9px] font-black uppercase">
-                        VIP
+                    <div className="min-w-0 flex items-center gap-1.5 overflow-hidden">
+                      <Radio className="w-3 h-3 text-emerald-400 animate-pulse shrink-0" />
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 shrink-0">
+                        Room
                       </span>
-                    ) : (
-                      <span className="px-1 rounded bg-amber-400/20 text-amber-300 text-[9px] font-black">
-                        1.5x
+                      <span className="font-mono-num text-xs font-black text-[#FCE7A2] shrink-0">
+                        {watchPartyRoom.roomId}
                       </span>
-                    )}
+                      <span className="text-zinc-500 text-[10px] shrink-0">·</span>
+                      <span className="font-mono-num text-[10px] font-bold text-zinc-300 shrink-0">
+                        {Math.max(1, watchPartyViewerCount)}/{isPrivateLobby ? WATCH_PARTY_PRIVATE_CAPACITY : WATCH_PARTY_PUBLIC_CAPACITY}
+                      </span>
+                      <span className="px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-300 text-[9px] font-black uppercase shrink-0">
+                        {isPrivateLobby ? 'VIP' : 'Public'}
+                      </span>
+                    </div>
                   </div>
-                  <span className="hidden sm:inline text-[11px] font-semibold text-zinc-300 truncate max-w-[140px]">
-                    {episode.title}
-                  </span>
-                </div>
 
-                {/* Compact Action strip: Invite, Switch Ep, Leave, Fit, Mute */}
-                <div className="flex items-center gap-1 shrink-0">
                   <button
                     type="button"
                     onClick={handleCopyInviteLink}
-                    className="min-h-[28px] px-2 rounded-full bg-black/75 hover:bg-black/90 border border-[#D4AF37]/50 text-[10px] font-bold text-[#FCE7A2] inline-flex items-center gap-1 cursor-pointer transition shrink-0"
+                    className="min-h-[28px] px-2.5 rounded-full gold-gradient-bg text-[#181307] text-[10px] font-black inline-flex items-center gap-1 cursor-pointer shadow-[0_0_12px_rgba(251,191,36,0.4)] transition shrink-0"
                   >
                     {inviteCopied ? (
-                      <Check className="w-3 h-3 text-emerald-400" />
+                      <Check className="w-3 h-3 text-emerald-900" />
                     ) : (
-                      <Share2 className="w-3 h-3 text-amber-300" />
+                      <Copy className="w-3 h-3" />
                     )}
-                    <span>{inviteCopied ? 'Copied!' : 'Invite'}</span>
+                    <span>{inviteCopied ? 'Copied!' : 'Copy Invite Link'}</span>
                   </button>
+                </div>
 
-                  {watchPartyRole === 'host' && onSwitchWatchPartyEpisode && (
+                <div className="flex items-center justify-between gap-1.5 text-xs px-0.5">
+                  <span className="text-[11px] font-semibold text-zinc-200 truncate max-w-[170px] sm:max-w-[260px] drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)]">
+                    {episode.title}
+                  </span>
+
+                  <div className="flex items-center gap-1 shrink-0">
+                    {watchPartyRole === 'host' && onSwitchWatchPartyEpisode && (
+                      <button
+                        type="button"
+                        onClick={() => setPartySwitcherOpen(true)}
+                        className="min-h-[26px] px-2 rounded-full bg-black/75 border border-[#D4AF37]/60 text-[#FCE7A2] text-[10px] font-black inline-flex items-center gap-1 cursor-pointer shadow shrink-0"
+                      >
+                        <Tv className="w-3 h-3 text-amber-300" />
+                        <span>Switch Ep</span>
+                      </button>
+                    )}
+
+                    {onLeaveWatchParty && (
+                      <button
+                        type="button"
+                        onClick={onLeaveWatchParty}
+                        className="min-h-[26px] px-2 rounded-full bg-red-950/80 hover:bg-red-900 border border-red-400/50 text-[10px] font-bold text-red-200 inline-flex items-center gap-1 cursor-pointer transition shrink-0"
+                      >
+                        <LogOut className="w-3 h-3" />
+                        <span>Leave</span>
+                      </button>
+                    )}
+
                     <button
                       type="button"
-                      onClick={() => setPartySwitcherOpen(true)}
-                      className="min-h-[28px] px-2.5 rounded-full gold-gradient-bg text-[#181307] text-[10px] font-black inline-flex items-center gap-1 cursor-pointer shadow shrink-0"
+                      onClick={() => setIsFitMode((prev) => !prev)}
+                      className={`min-h-[26px] px-2 rounded-full backdrop-blur-md border text-[10px] font-bold inline-flex items-center gap-1 shrink-0 cursor-pointer ${
+                        isFitMode
+                          ? 'border-[#FBBF24] bg-[#241A07]/90 text-[#FFF3B0]'
+                          : 'border-white/20 bg-black/65 text-[#FCE7A2]'
+                      }`}
                     >
-                      <Tv className="w-3 h-3" />
-                      <span>Switch Ep</span>
+                      {isFitMode ? <ZoomIn className="w-3 h-3" /> : <Scan className="w-3 h-3" />}
+                      <span>{isFitMode ? 'Fill' : 'Fit'}</span>
                     </button>
-                  )}
 
-                  {onLeaveWatchParty && (
                     <button
                       type="button"
-                      onClick={onLeaveWatchParty}
-                      className="min-h-[28px] px-2 rounded-full bg-red-950/80 hover:bg-red-900 border border-red-400/50 text-[10px] font-bold text-red-200 inline-flex items-center gap-1 cursor-pointer transition shrink-0"
+                      onClick={onToggleMute}
+                      aria-label={muted ? 'Unmute video' : 'Mute video'}
+                      className="min-h-[26px] min-w-[26px] rounded-full backdrop-blur-md border border-white/20 bg-black/65 flex items-center justify-center text-zinc-300 hover:text-white cursor-pointer shrink-0"
                     >
-                      <LogOut className="w-3 h-3" />
-                      <span>Leave</span>
+                      {muted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5 text-[#D4AF37]" />}
                     </button>
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={() => setIsFitMode((prev) => !prev)}
-                    className={`min-h-[28px] px-2 rounded-full backdrop-blur-md border text-[10px] font-bold inline-flex items-center gap-1 shrink-0 cursor-pointer ${
-                      isFitMode
-                        ? 'border-[#FBBF24] bg-[#241A07]/90 text-[#FFF3B0]'
-                        : 'border-white/20 bg-black/65 text-[#FCE7A2]'
-                    }`}
-                  >
-                    {isFitMode ? <ZoomIn className="w-3 h-3" /> : <Scan className="w-3 h-3" />}
-                    <span>{isFitMode ? 'Fill' : 'Fit'}</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={onToggleMute}
-                    aria-label={muted ? 'Unmute video' : 'Mute video'}
-                    className="min-h-[28px] min-w-[28px] rounded-full backdrop-blur-md border border-white/20 bg-black/65 flex items-center justify-center text-zinc-300 hover:text-white cursor-pointer shrink-0"
-                  >
-                    {muted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5 text-[#D4AF37]" />}
-                  </button>
+                  </div>
                 </div>
               </div>
             ) : (
@@ -1943,149 +2111,55 @@ export const EpisodeWatchScreen: React.FC<EpisodeWatchScreenProps> = ({
             )}
           </header>
 
-          {/* 3. Compact Side / Collapsible Pill: +1000 Coin Pot Ring + Sunday Tournament Progress (Hidden in Watch Lobbies) */}
+          {/* 3. Minimal Circular +1000 Coin Pot Ring Only (Positioned below Sunday Tournament Progress card at top-[175px] right-3) */}
           {!inWatchParty && (
-            <div className="pointer-events-none absolute top-[max(3.5rem,calc(env(safe-area-inset-top)+3.15rem))] right-3 z-30 flex flex-col items-end gap-1.5">
-              <button
-                type="button"
-                onClick={() => setHudExpanded((prev) => !prev)}
-                aria-expanded={hudExpanded}
-                aria-label="Toggle tournament progress and coin pot details"
-                className="pointer-events-auto inline-flex items-center gap-2 rounded-full bg-black/75 hover:bg-black/90 backdrop-blur-md border border-[#D4AF37]/60 pl-1.5 pr-2.5 py-1 shadow-[0_4px_18px_rgba(0,0,0,0.65)] cursor-pointer transition"
+            <div className="pointer-events-none absolute top-[175px] right-3 z-30 flex flex-col items-end gap-1.5">
+              <div
+                aria-label={`Coin Pot +${potReward}`}
+                className="relative w-12 h-12 rounded-full bg-black/75 backdrop-blur-md flex items-center justify-center shadow-[0_0_20px_rgba(251,191,36,0.45)] border border-[#D4AF37]/50"
               >
-                <div className="relative w-[36px] h-[36px] rounded-full bg-black/80 flex items-center justify-center shrink-0">
-                  <svg
-                    width={ringSize}
-                    height={ringSize}
-                    viewBox={`0 0 ${ringSize} ${ringSize}`}
-                    className="-rotate-90 absolute inset-0"
-                    aria-hidden="true"
-                  >
-                    <defs>
-                      <linearGradient id="watch-coin-ring-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-                        <stop offset="0%" stopColor="#FFF7CC" />
-                        <stop offset="50%" stopColor="#D4AF37" />
-                        <stop offset="100%" stopColor="#A88220" />
-                      </linearGradient>
-                    </defs>
-                    <circle
-                      cx={ringSize / 2}
-                      cy={ringSize / 2}
-                      r={radius}
-                      fill="none"
-                      stroke="rgba(255,255,255,0.16)"
-                      strokeWidth={strokeWidth}
-                    />
-                    <circle
-                      cx={ringSize / 2}
-                      cy={ringSize / 2}
-                      r={radius}
-                      fill="none"
-                      stroke="url(#watch-coin-ring-grad)"
-                      strokeWidth={strokeWidth}
-                      strokeLinecap="round"
-                      strokeDasharray={circumference}
-                      strokeDashoffset={dashOffset}
-                      className="transition-[stroke-dashoffset] duration-150 ease-linear"
-                    />
-                  </svg>
-                  <div className="flex flex-col items-center justify-center">
-                    <Coins className="w-3 h-3 text-amber-300" />
-                    <span className="font-mono-num text-[8px] font-extrabold text-amber-200 leading-none">
-                      +{potReward}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex flex-col items-start text-left leading-tight">
-                  <div className="flex items-center gap-1">
-                    <span className="font-mono-num text-[10px] font-extrabold text-[#FCE7A2]">
-                      {Math.round(ringProgress)}%
-                    </span>
-                    {inWatchParty && (
-                      <span className="px-1 rounded bg-amber-400/25 text-[8px] font-black text-amber-300">
-                        1.5x
-                      </span>
-                    )}
-                  </div>
-                  <span className="inline-flex items-center gap-1 text-[9px] font-bold text-amber-300/90">
-                    <Trophy className="w-2.5 h-2.5 shrink-0" />
-                    <span>{isQualified ? 'Qualified' : `${weeklyPct.toFixed(1)}%`}</span>
+                <svg
+                  width={48}
+                  height={48}
+                  viewBox={`0 0 ${ringSize} ${ringSize}`}
+                  className="-rotate-90 absolute inset-0"
+                  aria-hidden="true"
+                >
+                  <defs>
+                    <linearGradient id="watch-coin-ring-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" stopColor="#FFF7CC" />
+                      <stop offset="50%" stopColor="#D4AF37" />
+                      <stop offset="100%" stopColor="#A88220" />
+                    </linearGradient>
+                  </defs>
+                  <circle
+                    cx={ringSize / 2}
+                    cy={ringSize / 2}
+                    r={radius}
+                    fill="none"
+                    stroke="rgba(255,255,255,0.16)"
+                    strokeWidth={strokeWidth}
+                  />
+                  <circle
+                    cx={ringSize / 2}
+                    cy={ringSize / 2}
+                    r={radius}
+                    fill="none"
+                    stroke="url(#watch-coin-ring-grad)"
+                    strokeWidth={strokeWidth}
+                    strokeLinecap="round"
+                    strokeDasharray={circumference}
+                    strokeDashoffset={dashOffset}
+                    className="transition-[stroke-dashoffset] duration-150 ease-linear"
+                  />
+                </svg>
+                <div className="flex flex-col items-center justify-center">
+                  <Coins className="w-3.5 h-3.5 text-amber-300" />
+                  <span className="font-mono-num text-[9px] font-extrabold text-amber-200 leading-none">
+                    +{potReward}
                   </span>
                 </div>
-
-                {hudExpanded ? (
-                  <ChevronUp className="w-3.5 h-3.5 text-[#FCE7A2]/80 shrink-0" />
-                ) : (
-                  <ChevronDown className="w-3.5 h-3.5 text-[#FCE7A2]/80 shrink-0" />
-                )}
-              </button>
-
-              {hudExpanded && (
-                <div className="pointer-events-auto w-64 sm:w-72 rounded-2xl bg-black/88 backdrop-blur-md border border-[#D4AF37]/60 p-3 shadow-[0_12px_32px_rgba(0,0,0,0.85)] space-y-2.5">
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between gap-2 text-[11px]">
-                      <span className="inline-flex items-center gap-1 font-bold text-[#FCE7A2]">
-                        <Trophy className="w-3.5 h-3.5 text-[#FBBF24] shrink-0" />
-                        <span>Sunday Tournament</span>
-                      </span>
-                      <span className="font-mono-num font-bold text-[#FFF8E7]">
-                        {playerWeeklyCoins.toLocaleString()} / {safeThreshold.toLocaleString()}
-                      </span>
-                    </div>
-                    <div
-                      role="progressbar"
-                      aria-valuenow={playerWeeklyCoins}
-                      aria-valuemin={0}
-                      aria-valuemax={safeThreshold}
-                      aria-label="Sunday Tournament Progress"
-                      className="h-1.5 w-full rounded-full bg-white/10 border border-[#D4AF37]/30 overflow-hidden"
-                    >
-                      <div
-                        className={`h-full rounded-full transition-all duration-300 ${
-                          isQualified
-                            ? 'bg-gradient-to-r from-emerald-400 via-teal-300 to-emerald-500'
-                            : 'gold-gradient-bg shadow-[0_0_10px_rgba(251,191,36,0.5)]'
-                        }`}
-                        style={{ width: `${weeklyPct}%` }}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between gap-2 pt-1 border-t border-white/10">
-                    <span className="font-mono-num text-[10px] font-semibold text-zinc-300">
-                      Ep. {currentEpPos} / {totalSeriesEps}
-                    </span>
-
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => void handleToggleFullscreen()}
-                        aria-label={isExpandedFull ? 'Exit full screen' : 'Full screen'}
-                        className="min-h-[30px] min-w-[30px] rounded-full bg-white/10 border border-[#D4AF37]/40 text-[#FCE7A2] flex items-center justify-center cursor-pointer"
-                      >
-                        {isExpandedFull ? (
-                          <Minimize2 className="w-3.5 h-3.5" />
-                        ) : (
-                          <Maximize2 className="w-3.5 h-3.5" />
-                        )}
-                      </button>
-
-                      {onNextEpisode && hasNextEpisode && (
-                        <button
-                          type="button"
-                          onClick={onNextEpisode}
-                          title={nextEpisodeLabel ? `Watch next: ${nextEpisodeLabel}` : 'Next Episode'}
-                          className="min-h-[30px] px-2.5 rounded-full gold-gradient-bg text-[#181307] text-[11px] font-extrabold inline-flex items-center gap-1 cursor-pointer"
-                        >
-                          <span>Next</span>
-                          <SkipForward className="w-3 h-3 fill-current" />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
+              </div>
 
               {isVideoStalledOver5s && (
                 <button

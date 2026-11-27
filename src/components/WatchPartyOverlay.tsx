@@ -232,22 +232,26 @@ export const WatchPartyOverlay: React.FC<WatchPartyOverlayProps> = ({
       return;
     }
 
+    const useSuper = superMode;
+    setChatInput('');
+    if (useSuper) setSuperMode(false);
     setSending(true);
     try {
-      if (superMode) {
+      if (useSuper) {
         const paid = await onDeductSuperReactionCoins(
           WATCH_PARTY_SUPER_COST,
           `Watch Party Gold Highlight Chat (${room.roomId})`
         );
-        if (!paid) return;
+        if (!paid) {
+          setChatInput(clean);
+          return;
+        }
       }
       await sendWatchPartyMessage(room.roomId, {
         username,
         text: clean,
-        isSuper: superMode,
+        isSuper: useSuper,
       });
-      setChatInput('');
-      if (superMode) setSuperMode(false);
     } catch {
       onNotify?.('Unable to send message right now.', 'error');
     } finally {

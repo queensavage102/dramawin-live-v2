@@ -74,6 +74,8 @@ import {
   updateSponsorAdUrl,
 } from './services/dramawinService';
 import {
+  checkWatchPartyUnlockAccess,
+  clearActiveWatchPartySessionState,
   createWatchPartyRoom,
   endWatchPartyRoom,
   fetchWatchPartyRoom,
@@ -81,7 +83,9 @@ import {
   isWatchPartyRoomFull,
   joinWatchPartyRoom,
   leaveWatchPartyRoom,
+  loadRestorableWatchPartySession,
   normalizeRoomCode,
+  saveWatchPartySessionState,
   subscribeWatchPartyParticipants,
   subscribeWatchPartyRoom,
   switchWatchPartyEpisode,
@@ -198,7 +202,10 @@ function extractWatchPartyIdFromLocation(): string | null {
   try {
     const url = new URL(window.location.href);
     const partyParam = normalizeRoomCode(
-      url.searchParams.get('lobby') || url.searchParams.get('party') || ''
+      url.searchParams.get('room') ||
+        url.searchParams.get('lobby') ||
+        url.searchParams.get('party') ||
+        ''
     );
     return partyParam.length >= 4 ? partyParam : null;
   } catch {
@@ -1834,6 +1841,7 @@ function DramaWinApp() {
       setActiveTab('watch');
       setActiveWatchPartyRole(role);
       setActiveWatchPartyRoom(room);
+      void saveWatchPartySessionState(room.roomId, role);
       void joinWatchPartyRoom(
         room.roomId,
         latestStateRef.current.currentPlayer.username,
@@ -1850,6 +1858,7 @@ function DramaWinApp() {
     const roomId = room.roomId;
     setActiveWatchPartyRoom(null);
     setWatchPartyViewerCount(1);
+    void clearActiveWatchPartySessionState();
     void leaveWatchPartyRoom(roomId);
     if (role === 'host') {
       void endWatchPartyRoom(roomId);
@@ -2021,15 +2030,28 @@ function DramaWinApp() {
   const handleRequestJoinWatchLobby = useCallback(
     async (room: WatchPartyRoom) => {
       setWatchPartyModalOpen(false);
-      if (
-        activeWatchPartyRoomRef.current?.roomId === room.roomId ||
-        (auth.currentUser?.uid && room.hostUid === auth.currentUser.uid)
-      ) {
+      if (activeWatchPartyRoomRef.current?.roomId === room.roomId) {
         const role: 'host' | 'guest' =
-          auth.currentUser?.uid && room.hostUid === auth.currentUser.uid ? 'host' : 'guest';
+          auth.currentUser?.uid && room.hostUid === auth.currentUser.uid
+            ? 'host'
+            : activeWatchPartyRoleRef.current;
         handleEnterWatchPartyRoom(room, role);
         return;
       }
+
+      const access = await checkWatchPartyUnlockAccess(room);
+      if (access.hasAccess) {
+        handleEnterWatchPartyRoom(room, access.role);
+        showToast(
+          `Resumed Watch Lobby ${room.roomId}! 1.5x Coins active.`,
+          undefined,
+          'gold',
+          undefined,
+          3000
+        );
+        return;
+      }
+
       const capacityCheck = await isWatchPartyRoomFull(room);
       if (capacityCheck.full) {
         showToast(
@@ -2098,60 +2120,85 @@ function DramaWinApp() {
     showToast,
   ]);
 
-  // Auto-prompt Watch Lobby deep-link (?lobby=ROOM_ID or legacy ?party=ROOM_ID)
+  // Auto-join ?room=CODE invite link OR restore previously unlocked active Watch Party session
   useEffect(() => {
     if (isAdminRoute || !splashDone || autoJoinedPartyRef.current) return;
-    const code = capturedPartyCodeRef.current;
-    if (!code) return;
     autoJoinedPartyRef.current = true;
 
-    void fetchWatchPartyRoom(code)
-      .then(async (room) => {
-        if (!room) {
+    const code = capturedPartyCodeRef.current;
+    if (code) {
+      void fetchWatchPartyRoom(code)
+        .then(async (room) => {
+          if (!room) {
+            showToast(
+              `Watch Lobby "${code}" was not found or has ended.`,
+              undefined,
+              'neutral',
+              undefined,
+              3200
+            );
+            return;
+          }
+          const access = await checkWatchPartyUnlockAccess(room);
+          if (access.hasAccess) {
+            handleEnterWatchPartyRoom(room, access.role);
+            showToast(
+              `Returned to Watch Lobby ${room.roomId}! 1.5x Coins active.`,
+              undefined,
+              'gold',
+              undefined,
+              3200
+            );
+            return;
+          }
+          const capacityCheck = await isWatchPartyRoomFull(room);
+          if (capacityCheck.full) {
+            showToast(
+              `Watch Lobby "${room.roomId}" is full (${capacityCheck.viewerCount}/${capacityCheck.capacity} watching).`,
+              undefined,
+              'error',
+              undefined,
+              3500
+            );
+            return;
+          }
+          setVipPassAdsCompleted(0);
+          setPendingLobbyGate({ kind: 'join', room, fromInviteLink: true });
           showToast(
-            `Watch Lobby "${code}" was not found or has ended.`,
-            undefined,
-            'neutral',
-            undefined,
-            3200
-          );
-          return;
-        }
-        if (auth.currentUser?.uid && room.hostUid === auth.currentUser.uid) {
-          handleEnterWatchPartyRoom(room, 'host');
-          showToast(
-            `Returned to your Watch Lobby ${room.roomId}! 1.5x Coins active.`,
+            `Invited to Lobby ${room.roomId}! Unlock VIP Screening Pass to join.`,
             undefined,
             'gold',
             undefined,
-            3200
-          );
-          return;
-        }
-        const capacityCheck = await isWatchPartyRoomFull(room);
-        if (capacityCheck.full) {
-          showToast(
-            `Watch Lobby "${room.roomId}" is full (${capacityCheck.viewerCount}/${capacityCheck.capacity} watching).`,
-            undefined,
-            'error',
-            undefined,
             3500
           );
+        })
+        .catch(() => {
+          showToast('Unable to load invited Watch Lobby right now.', undefined, 'error', undefined, 2800);
+        });
+      return;
+    }
+
+    // No ?room= param: check if user had an active Watch Party session saved before switching apps
+    void loadRestorableWatchPartySession()
+      .then(async (saved) => {
+        if (!saved || activeWatchPartyRoomRef.current) return;
+        const room = await fetchWatchPartyRoom(saved.roomId);
+        if (!room || room.status !== 'active') {
+          await clearActiveWatchPartySessionState();
           return;
         }
-        setVipPassAdsCompleted(0);
-        setPendingLobbyGate({ kind: 'join', room, fromInviteLink: true });
+        const resolvedRole: 'host' | 'guest' =
+          auth.currentUser?.uid && room.hostUid === auth.currentUser.uid ? 'host' : saved.role;
+        handleEnterWatchPartyRoom(room, resolvedRole);
         showToast(
-          `Invited to Lobby ${room.roomId}! Unlock VIP Screening Pass to join.`,
+          `Resumed your Watch Party ${room.roomId}!`,
           undefined,
           'gold',
           undefined,
-          3500
+          3000
         );
       })
-      .catch(() => {
-        showToast('Unable to load invited Watch Lobby right now.', undefined, 'error', undefined, 2800);
-      });
+      .catch(() => {});
   }, [isAdminRoute, splashDone, handleEnterWatchPartyRoom, showToast]);
 
   // Real-time room + participant presence listeners while inside an active Watch Party
@@ -2168,6 +2215,7 @@ function DramaWinApp() {
           }
           setActiveWatchPartyRoom(null);
           setWatchPartyViewerCount(1);
+          void clearActiveWatchPartySessionState();
           return;
         }
         setActiveWatchPartyRoom(nextRoom);
@@ -2194,10 +2242,28 @@ function DramaWinApp() {
       );
     }, 25000);
 
+    const handleVisibilityResume = () => {
+      if (document.visibilityState !== 'visible') return;
+      void heartbeatWatchPartyParticipant(
+        activePartyRoomId,
+        latestStateRef.current.currentPlayer.username
+      );
+      void fetchWatchPartyRoom(activePartyRoomId)
+        .then((latestRoom) => {
+          if (latestRoom && latestRoom.status === 'active') {
+            setActiveWatchPartyRoom(latestRoom);
+          }
+        })
+        .catch(() => {});
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityResume);
+
     return () => {
       unsubRoom();
       unsubParticipants();
       window.clearInterval(heartbeat);
+      document.removeEventListener('visibilitychange', handleVisibilityResume);
     };
   }, [activePartyRoomId, showToast]);
 

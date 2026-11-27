@@ -22,10 +22,10 @@ import {
   resolveVideoSource,
 } from '../constants';
 import {
+  checkWatchPartyUnlockAccess,
   ensureWatchPartyAuth,
   fetchWatchPartyRoom,
   getWatchPartyCapacity,
-  isWatchPartyPrivate,
   normalizeRoomCode,
   subscribePublicWatchParties,
 } from '../services/watchPartyService';
@@ -203,13 +203,16 @@ export const WatchPartyLobbyModal: React.FC<WatchPartyLobbyModalProps> = ({
 
   const handleJoinByCode = async (rawCode: string) => {
     let targetCode = rawCode.trim();
-    if (/lobby=|party=/i.test(targetCode)) {
+    if (/room=|lobby=|party=/i.test(targetCode)) {
       try {
         const parsed = new URL(targetCode);
         targetCode =
-          parsed.searchParams.get('lobby') || parsed.searchParams.get('party') || targetCode;
+          parsed.searchParams.get('room') ||
+          parsed.searchParams.get('lobby') ||
+          parsed.searchParams.get('party') ||
+          targetCode;
       } catch {
-        const match = targetCode.match(/(?:lobby|party)=([a-zA-Z0-9_-]+)/i);
+        const match = targetCode.match(/(?:room|lobby|party)=([a-zA-Z0-9_-]+)/i);
         if (match?.[1]) targetCode = match[1];
       }
     }
@@ -227,13 +230,16 @@ export const WatchPartyLobbyModal: React.FC<WatchPartyLobbyModalProps> = ({
         setErrorMsg(`Lobby "${cleanCode}" was not found or has already ended.`);
         return;
       }
-      const capacity = getWatchPartyCapacity(room);
-      const viewerCount = Math.max(1, room.viewerCount || 1);
-      if (viewerCount >= capacity) {
-        setErrorMsg(
-          `Room Full (${viewerCount}/${capacity} watching). This Watch Lobby has reached maximum capacity.`
-        );
-        return;
+      const access = await checkWatchPartyUnlockAccess(room);
+      if (!access.hasAccess) {
+        const capacity = getWatchPartyCapacity(room);
+        const viewerCount = Math.max(1, room.viewerCount || 1);
+        if (viewerCount >= capacity) {
+          setErrorMsg(
+            `Room Full (${viewerCount}/${capacity} watching). This Watch Lobby has reached maximum capacity.`
+          );
+          return;
+        }
       }
       onRequestJoinRoom(room);
     } catch {
@@ -252,7 +258,7 @@ export const WatchPartyLobbyModal: React.FC<WatchPartyLobbyModalProps> = ({
         throw new Error('Clipboard unavailable');
       }
       setCopiedCode(true);
-      onNotify?.(`1-Tap Invite link copied! (?lobby=${roomId})`, 'gold');
+      onNotify?.(`1-Tap Invite link copied! (?room=${roomId})`, 'gold');
       window.setTimeout(() => setCopiedCode(false), 2000);
     } catch {
       try {
@@ -265,7 +271,7 @@ export const WatchPartyLobbyModal: React.FC<WatchPartyLobbyModalProps> = ({
         document.execCommand('copy');
         document.body.removeChild(el);
         setCopiedCode(true);
-        onNotify?.(`1-Tap Invite link copied! (?lobby=${roomId})`, 'gold');
+        onNotify?.(`1-Tap Invite link copied! (?room=${roomId})`, 'gold');
         window.setTimeout(() => setCopiedCode(false), 2000);
       } catch {
         onNotify?.(`Share Room Code: ${roomId}`, 'neutral');
@@ -394,7 +400,7 @@ export const WatchPartyLobbyModal: React.FC<WatchPartyLobbyModalProps> = ({
                     void handleJoinByCode(joinCodeInput);
                   }
                 }}
-                placeholder="Paste code (e.g. DW-4TRJJE) or ?lobby= link..."
+                placeholder="Paste code (e.g. DW-4TRJJE) or ?room= link..."
                 className="flex-1 min-w-0 min-h-[42px] px-3 rounded-xl bg-black/60 border border-white/15 text-xs sm:text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:border-[#D4AF37]"
               />
               <button

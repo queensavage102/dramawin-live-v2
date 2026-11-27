@@ -45,6 +45,7 @@ IsolatedYouTubeIframe.displayName = 'IsolatedYouTubeIframe';
 export interface IsolatedHtml5VideoProps {
   videoKey: string;
   src: string;
+  poster?: string;
   className: string;
   autoPlay?: boolean;
   loop?: boolean;
@@ -69,6 +70,7 @@ export const IsolatedHtml5Video = React.memo<IsolatedHtml5VideoProps>(
   ({
     videoKey,
     src,
+    poster,
     className,
     autoPlay = true,
     loop = false,
@@ -93,6 +95,7 @@ export const IsolatedHtml5Video = React.memo<IsolatedHtml5VideoProps>(
         ref={videoRef}
         key={videoKey}
         src={src}
+        poster={poster || undefined}
         controls={controls}
         playsInline
         preload="metadata"

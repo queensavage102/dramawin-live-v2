@@ -33,6 +33,113 @@ import {
 import { isEnglishCatalogTitle } from '../utils/modernCatalog';
 
 const PARTY_CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const ACTIVE_WATCH_PARTY_STORAGE_KEY = 'dramawin_active_watch_party_v1';
+const UNLOCKED_WATCH_PARTIES_STORAGE_KEY = 'dramawin_unlocked_watch_parties_v1';
+
+export interface StoredWatchPartySession {
+  roomId: string;
+  role: 'host' | 'guest';
+  savedAtMs: number;
+}
+
+export function loadLocalActiveWatchPartySession(): StoredWatchPartySession | null {
+  if (typeof window === 'undefined' || !window.localStorage) return null;
+  try {
+    const raw = window.localStorage.getItem(ACTIVE_WATCH_PARTY_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<StoredWatchPartySession>;
+    const roomId = normalizeRoomCode(parsed.roomId || '');
+    if (roomId.length < 4) return null;
+    const role: 'host' | 'guest' = parsed.role === 'host' ? 'host' : 'guest';
+    const savedAtMs = typeof parsed.savedAtMs === 'number' ? parsed.savedAtMs : 0;
+    // Expire stale local sessions older than 24h
+    if (savedAtMs > 0 && Date.now() - savedAtMs > 24 * 60 * 60 * 1000) {
+      window.localStorage.removeItem(ACTIVE_WATCH_PARTY_STORAGE_KEY);
+      return null;
+    }
+    return { roomId, role, savedAtMs };
+  } catch {
+    return null;
+  }
+}
+
+export function saveLocalActiveWatchPartySession(roomId: string, role: 'host' | 'guest'): void {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  const cleanId = normalizeRoomCode(roomId);
+  if (cleanId.length < 4) return;
+  try {
+    const payload: StoredWatchPartySession = {
+      roomId: cleanId,
+      role,
+      savedAtMs: Date.now(),
+    };
+    window.localStorage.setItem(ACTIVE_WATCH_PARTY_STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // Ignore storage quota restrictions
+  }
+}
+
+export function clearLocalActiveWatchPartySession(): void {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    window.localStorage.removeItem(ACTIVE_WATCH_PARTY_STORAGE_KEY);
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function loadLocalUnlockedWatchParties(): Record<string, { role: 'host' | 'guest'; unlockedAtMs: number }> {
+  if (typeof window === 'undefined' || !window.localStorage) return {};
+  try {
+    const raw = window.localStorage.getItem(UNLOCKED_WATCH_PARTIES_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, { role?: string; unlockedAtMs?: number }>;
+    if (!parsed || typeof parsed !== 'object') return {};
+    const cutoff = Date.now() - 48 * 60 * 60 * 1000;
+    const out: Record<string, { role: 'host' | 'guest'; unlockedAtMs: number }> = {};
+    Object.entries(parsed).forEach(([k, v]) => {
+      const code = normalizeRoomCode(k);
+      if (code.length < 4 || !v || typeof v !== 'object') return;
+      const unlockedAtMs = typeof v.unlockedAtMs === 'number' ? v.unlockedAtMs : Date.now();
+      if (unlockedAtMs < cutoff) return;
+      out[code] = {
+        role: v.role === 'host' ? 'host' : 'guest',
+        unlockedAtMs,
+      };
+    });
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function markLocalWatchPartyUnlocked(roomId: string, role: 'host' | 'guest'): void {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  const cleanId = normalizeRoomCode(roomId);
+  if (cleanId.length < 4) return;
+  try {
+    const map = loadLocalUnlockedWatchParties();
+    map[cleanId] = { role, unlockedAtMs: Date.now() };
+    const trimmedEntries = Object.entries(map)
+      .sort((a, b) => b[1].unlockedAtMs - a[1].unlockedAtMs)
+      .slice(0, 20);
+    window.localStorage.setItem(
+      UNLOCKED_WATCH_PARTIES_STORAGE_KEY,
+      JSON.stringify(Object.fromEntries(trimmedEntries))
+    );
+  } catch {
+    // Ignore storage quota restrictions
+  }
+}
+
+export function getLocalWatchPartyUnlockRole(roomId: string): 'host' | 'guest' | null {
+  const cleanId = normalizeRoomCode(roomId);
+  if (cleanId.length < 4) return null;
+  const active = loadLocalActiveWatchPartySession();
+  if (active?.roomId === cleanId) return active.role;
+  const unlocked = loadLocalUnlockedWatchParties();
+  return unlocked[cleanId]?.role || null;
+}
 
 export async function ensureWatchPartyAuth(): Promise<User> {
   if (auth.currentUser) {
@@ -40,6 +147,143 @@ export async function ensureWatchPartyAuth(): Promise<User> {
   }
   const cred = await signInAnonymously(auth);
   return cred.user;
+}
+
+export async function saveWatchPartySessionState(
+  roomId: string,
+  role: 'host' | 'guest'
+): Promise<void> {
+  const cleanId = normalizeRoomCode(roomId);
+  if (cleanId.length < 4) return;
+  saveLocalActiveWatchPartySession(cleanId, role);
+  markLocalWatchPartyUnlocked(cleanId, role);
+
+  try {
+    const user = await ensureWatchPartyAuth();
+    const sessionRef = doc(db, 'watchPartySessions', user.uid);
+    const snap = await getDoc(sessionRef);
+    if (snap.exists()) {
+      const existingData = snap.data() as { unlockedRoomIds?: unknown };
+      const existingIds = Array.isArray(existingData.unlockedRoomIds)
+        ? existingData.unlockedRoomIds
+            .filter((id): id is string => typeof id === 'string')
+            .map(normalizeRoomCode)
+            .filter((id) => id.length >= 4 && id !== cleanId)
+        : [];
+      const nextIds = [cleanId, ...existingIds].slice(0, 20);
+      await updateDoc(sessionRef, {
+        activeRoomId: cleanId,
+        activeRole: role,
+        unlockedRoomIds: nextIds,
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await setDoc(sessionRef, {
+        uid: user.uid,
+        activeRoomId: cleanId,
+        activeRole: role,
+        unlockedRoomIds: [cleanId],
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+  } catch {
+    // LocalStorage session remains persisted as fallback
+  }
+}
+
+export async function clearActiveWatchPartySessionState(): Promise<void> {
+  clearLocalActiveWatchPartySession();
+  try {
+    const user = auth.currentUser;
+    if (!user) return;
+    const sessionRef = doc(db, 'watchPartySessions', user.uid);
+    const snap = await getDoc(sessionRef);
+    if (!snap.exists()) return;
+    await updateDoc(sessionRef, {
+      activeRoomId: '',
+      activeRole: 'guest',
+      updatedAt: serverTimestamp(),
+    });
+  } catch {
+    // Ignore transient errors on clear
+  }
+}
+
+export async function loadRestorableWatchPartySession(): Promise<StoredWatchPartySession | null> {
+  const local = loadLocalActiveWatchPartySession();
+  if (local) return local;
+
+  try {
+    const user = await ensureWatchPartyAuth();
+    const snap = await getDoc(doc(db, 'watchPartySessions', user.uid));
+    if (!snap.exists()) return null;
+    const data = snap.data() as { activeRoomId?: unknown; activeRole?: unknown };
+    const roomId = normalizeRoomCode(typeof data.activeRoomId === 'string' ? data.activeRoomId : '');
+    if (roomId.length < 4) return null;
+    return {
+      roomId,
+      role: data.activeRole === 'host' ? 'host' : 'guest',
+      savedAtMs: Date.now(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function checkWatchPartyUnlockAccess(
+  room: WatchPartyRoom
+): Promise<{ hasAccess: boolean; role: 'host' | 'guest' }> {
+  const cleanId = normalizeRoomCode(room.roomId);
+  const localRole = getLocalWatchPartyUnlockRole(cleanId);
+
+  try {
+    const user = await ensureWatchPartyAuth();
+    if (room.hostUid === user.uid) {
+      markLocalWatchPartyUnlocked(cleanId, 'host');
+      return { hasAccess: true, role: 'host' };
+    }
+
+    if (localRole) {
+      return { hasAccess: true, role: localRole };
+    }
+
+    const [partSnap, sessionSnap] = await Promise.all([
+      getDoc(doc(db, 'watchParties', cleanId, 'participants', user.uid)).catch(() => null),
+      getDoc(doc(db, 'watchPartySessions', user.uid)).catch(() => null),
+    ]);
+
+    if (partSnap && partSnap.exists()) {
+      const partData = partSnap.data() as Partial<WatchPartyParticipant>;
+      const partRole: 'host' | 'guest' = partData.role === 'host' ? 'host' : 'guest';
+      markLocalWatchPartyUnlocked(cleanId, partRole);
+      return { hasAccess: true, role: partRole };
+    }
+
+    if (sessionSnap && sessionSnap.exists()) {
+      const sData = sessionSnap.data() as {
+        activeRoomId?: unknown;
+        activeRole?: unknown;
+        unlockedRoomIds?: unknown;
+      };
+      const unlockedList = Array.isArray(sData.unlockedRoomIds)
+        ? sData.unlockedRoomIds.filter((id): id is string => typeof id === 'string').map(normalizeRoomCode)
+        : [];
+      const activeId = normalizeRoomCode(typeof sData.activeRoomId === 'string' ? sData.activeRoomId : '');
+      if (activeId === cleanId || unlockedList.includes(cleanId)) {
+        const restoredRole: 'host' | 'guest' =
+          activeId === cleanId && sData.activeRole === 'host' ? 'host' : 'guest';
+        markLocalWatchPartyUnlocked(cleanId, restoredRole);
+        return { hasAccess: true, role: restoredRole };
+      }
+    }
+  } catch {
+    if (localRole) {
+      return { hasAccess: true, role: localRole };
+    }
+  }
+
+  return { hasAccess: false, role: 'guest' };
 }
 
 export function generateWatchPartyRoomId(): string {
@@ -448,7 +692,7 @@ export async function syncWatchPartyPlayback(
   roomId: string,
   playback: { isPlaying: boolean; currentTime: number }
 ): Promise<void> {
-  const user = auth.currentUser;
+  const user = auth.currentUser || (await ensureWatchPartyAuth().catch(() => null));
   if (!user) return;
   const cleanId = normalizeRoomCode(roomId);
   const safeTime = Math.max(0, Math.min(86400, Number.isFinite(playback.currentTime) ? playback.currentTime : 0));

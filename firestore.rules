@@ -313,6 +313,17 @@ service cloud.firestore {
         && data.createdAt is timestamp;
     }
 
+    function isValidWatchPartySession(data) {
+      return data.keys().hasAll(['uid', 'activeRoomId', 'activeRole', 'unlockedRoomIds', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'activeRoomId', 'activeRole', 'unlockedRoomIds', 'createdAt', 'updatedAt'])
+        && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.activeRoomId is string && data.activeRoomId.size() <= 64
+        && data.activeRole in ['host', 'guest']
+        && data.unlockedRoomIds is list && data.unlockedRoomIds.size() <= 20 && (data.unlockedRoomIds.size() == 0 || data.unlockedRoomIds[0] is string)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     // Public leaderboard (no PII)
     match /leaderboard/{playerId} {
       allow get: if isSignedIn() && isValidId(playerId) && (resource == null || existing().isPublic == true);
@@ -714,6 +725,28 @@ service cloud.firestore {
             isAdmin()
           );
       }
+    }
+
+    // Persisted active Watch Party host/guest session & unlocked room IDs (owner only)
+    match /watchPartySessions/{uid} {
+      allow get: if isSignedIn() && isValidId(uid) && uid == request.auth.uid;
+      allow list: if isSignedIn() && existing().uid == request.auth.uid;
+      allow create: if isSignedIn()
+        && isValidId(uid)
+        && uid == request.auth.uid
+        && isValidWatchPartySession(incoming())
+        && incoming().uid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isSignedIn()
+        && isValidId(uid)
+        && uid == request.auth.uid
+        && isValidWatchPartySession(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['activeRoomId', 'activeRole', 'unlockedRoomIds', 'updatedAt']);
+      allow delete: if isSignedIn() && isValidId(uid) && uid == request.auth.uid;
     }
   }
 }

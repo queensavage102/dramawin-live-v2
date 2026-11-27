@@ -63,6 +63,7 @@ import {
   uploadPosterImageToFirebaseStorage,
   useResolvedMediaUrl,
 } from '../utils/mediaStore';
+import { DailymotionSdkPlayer } from './DailymotionSdkPlayer';
 
 export interface AdminEpisodeFormInput {
   title: string;
@@ -198,6 +199,25 @@ const AdminVideoPreview: React.FC<{ videoUrl: string; title: string }> = ({
   const raw = sanitizeMediaUrl(videoUrl.trim());
   const source = resolveVideoSource(raw, { autoplay: false, muted: false });
   const resolvedDirect = useResolvedMediaUrl(source.kind === 'direct' ? source.url : '');
+  const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    setHasError(false);
+  }, [resolvedDirect, source.url]);
+
+  if (source.kind === 'dailymotion' && source.dailymotionId) {
+    return (
+      <DailymotionSdkPlayer
+        key={`dm-admin-preview-${source.dailymotionId}`}
+        videoId={source.dailymotionId}
+        title={title || 'Video Preview'}
+        autoplay={false}
+        paused={true}
+        interactive={true}
+        className="w-full h-full border-0 block bg-[#060608] transform-gpu"
+      />
+    );
+  }
 
   if (
     source.kind === 'youtube' ||
@@ -218,7 +238,7 @@ const AdminVideoPreview: React.FC<{ videoUrl: string; title: string }> = ({
     );
   }
 
-  if (source.kind === 'direct' && resolvedDirect) {
+  if (source.kind === 'direct' && resolvedDirect && !hasError) {
     return (
       <video
         key={`vid-preview-${resolvedDirect}`}
@@ -226,6 +246,7 @@ const AdminVideoPreview: React.FC<{ videoUrl: string; title: string }> = ({
         controls
         playsInline
         preload="metadata"
+        onError={() => setHasError(true)}
         className="w-full h-full object-contain bg-[#060608] transform-gpu"
       />
     );
@@ -235,7 +256,9 @@ const AdminVideoPreview: React.FC<{ videoUrl: string; title: string }> = ({
     <div className="w-full h-full flex flex-col items-center justify-center bg-[#08080B] text-[#8D867A] gap-1.5 p-3 text-center">
       <Video className="w-6 h-6 text-[#D4AF37]/50" />
       <span className="text-[11px]">
-        Paste a YouTube, Dailymotion (dai.ly), Vimeo, Internet Archive, MP4 / M3U8, or Bunny Stream URL
+        {hasError
+          ? 'Video preview failed to load — verify the stream URL or CORS headers.'
+          : 'Paste a YouTube, Dailymotion (dai.ly), Vimeo, Internet Archive, MP4 / M3U8, or Bunny Stream URL'}
       </span>
     </div>
   );

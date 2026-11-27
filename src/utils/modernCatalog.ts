@@ -333,10 +333,10 @@ async function queryDailymotionGenre(
 ): Promise<ModernShowItem[]> {
   const searchQuery =
     genre === 'Anime'
-      ? 'anime+english+sub+episode'
+      ? 'english+dub+anime+full+episode'
       : encodeURIComponent(`${genre} short film english`);
   const fetchLimit = Math.min(50, limit * 3);
-  const url = `https://api.dailymotion.com/videos?search=${searchQuery}&fields=id,title,thumbnail_720_url,language&limit=${fetchLimit}&family_filter=1&flags=no_live`;
+  const url = `https://api.dailymotion.com/videos?search=${searchQuery}&fields=id,title,thumbnail_720_url,language&limit=${fetchLimit}&family_filter=1&flags=no_live&languages=en`;
 
   const response = await fetch(url, { signal });
   if (!response.ok) {
@@ -365,7 +365,7 @@ export async function searchDailymotionShows(
 ): Promise<ModernShowItem[]> {
   const clean = searchText.trim();
   if (clean.length < 2) return [];
-  const url = `https://api.dailymotion.com/videos?search=${encodeURIComponent(clean)}+english&fields=id,title,thumbnail_720_url,language&limit=15&family_filter=1&flags=no_live`;
+  const url = `https://api.dailymotion.com/videos?search=${encodeURIComponent(clean)}+english&fields=id,title,thumbnail_720_url,language&limit=15&family_filter=1&flags=no_live&languages=en`;
   const response = await fetch(url, { signal });
   if (!response.ok) return [];
   const payload = (await response.json()) as DailymotionSearchResponse;

@@ -44,6 +44,7 @@ import {
 } from '../utils/externalCatalog';
 import { useResolvedMediaUrl } from '../utils/mediaStore';
 import { BottomAdBanner } from './BottomAdBanner';
+import { DailymotionSdkPlayer } from './DailymotionSdkPlayer';
 import { DoubleRewardModal } from './DoubleRewardModal';
 import { FeaturedShortPosterArtwork } from './FeaturedShortPosterArtwork';
 import { IsolatedHtml5Video, IsolatedYouTubeIframe } from './IsolatedYouTubeIframe';
@@ -104,34 +105,6 @@ function formatPlaybackClock(rawSeconds: number): string {
   return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 }
 
-function parseDailymotionMessage(data: unknown): Record<string, unknown> | null {
-  if (typeof data === 'string') {
-    const trimmed = data.trim();
-    if (!trimmed) return null;
-    if (trimmed.startsWith('{')) {
-      try {
-        return JSON.parse(trimmed) as Record<string, unknown>;
-      } catch {
-        return null;
-      }
-    }
-    if (trimmed.includes('=')) {
-      const params = new URLSearchParams(trimmed);
-      const out: Record<string, unknown> = {};
-      params.forEach((v, k) => {
-        const num = Number(v);
-        out[k] = v !== '' && Number.isFinite(num) && /^-?\d+(\.\d+)?$/.test(v) ? num : v;
-      });
-      return out;
-    }
-    return null;
-  }
-  if (data && typeof data === 'object') {
-    return data as Record<string, unknown>;
-  }
-  return null;
-}
-
 function postYouTubeCommand(
   iframe: HTMLIFrameElement | null,
   func: string,
@@ -140,21 +113,6 @@ function postYouTubeCommand(
   try {
     iframe?.contentWindow?.postMessage(
       JSON.stringify({ event: 'command', func, args }),
-      '*'
-    );
-  } catch {
-    // Ignore cross-origin postMessage restrictions
-  }
-}
-
-function postDailymotionCommand(
-  iframe: HTMLIFrameElement | null,
-  command: string,
-  parameters: unknown[] = []
-) {
-  try {
-    iframe?.contentWindow?.postMessage(
-      JSON.stringify({ command, parameters }),
       '*'
     );
   } catch {
@@ -216,6 +174,8 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
   const [isStalledOver5s, setIsStalledOver5s] = useState(false);
   const [currentTimeSec, setCurrentTimeSec] = useState(0);
   const [durationSec, setDurationSec] = useState(0);
+  const [seekRequest, setSeekRequest] = useState<{ time: number; nonce: number } | null>(null);
+  const [replayNonce, setReplayNonce] = useState(0);
 
   const playerContainerRef = useRef<HTMLElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -463,6 +423,8 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
     setRingProgress(0);
     setCurrentTimeSec(0);
     setDurationSec(0);
+    setSeekRequest(null);
+    setReplayNonce(0);
     setIsFitMode(false);
     setTapFeedback(null);
     return () => {
@@ -528,11 +490,6 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
         if (!isPlayingRef.current) {
           postYouTubeCommand(iframeRef.current, 'pauseVideo');
         }
-      } else if (sourceKindRef.current === 'dailymotion') {
-        postDailymotionCommand(iframeRef.current, 'muted', [mutedRef.current]);
-        if (!isPlayingRef.current) {
-          postDailymotionCommand(iframeRef.current, 'pause');
-        }
       } else if (sourceKindRef.current === 'vimeo') {
         postVimeoCommand(iframeRef.current, 'setMuted', mutedRef.current);
         postVimeoCommand(iframeRef.current, 'setVolume', mutedRef.current ? 0 : 1);
@@ -581,8 +538,7 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
         postYouTubeCommand(iframeRef.current, 'seekTo', [clamped, true]);
         postYouTubeCommand(iframeRef.current, 'pauseVideo');
       } else if (sourceKindRef.current === 'dailymotion') {
-        postDailymotionCommand(iframeRef.current, 'seek', [clamped]);
-        postDailymotionCommand(iframeRef.current, 'pause');
+        setSeekRequest({ time: clamped, nonce: Date.now() });
       } else if (sourceKindRef.current === 'vimeo') {
         postVimeoCommand(iframeRef.current, 'setCurrentTime', clamped);
         postVimeoCommand(iframeRef.current, 'pause');
@@ -610,7 +566,7 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
     if (sourceKindRef.current === 'youtube') {
       postYouTubeCommand(iframeRef.current, 'seekTo', [target, true]);
     } else if (sourceKindRef.current === 'dailymotion') {
-      postDailymotionCommand(iframeRef.current, 'seek', [target]);
+      setSeekRequest({ time: target, nonce: Date.now() });
     } else if (sourceKindRef.current === 'vimeo') {
       postVimeoCommand(iframeRef.current, 'setCurrentTime', target);
     }
@@ -805,8 +761,6 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
         postYouTubeCommand(iframeRef.current, 'seekTo', [savedTimeRef.current, true]);
       }
       postYouTubeCommand(iframeRef.current, isPlaying ? 'playVideo' : 'pauseVideo');
-    } else if (videoSource.kind === 'dailymotion') {
-      postDailymotionCommand(iframeRef.current, isPlaying ? 'play' : 'pause');
     } else if (videoSource.kind === 'vimeo') {
       postVimeoCommand(iframeRef.current, isPlaying ? 'play' : 'pause');
     }
@@ -849,8 +803,6 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
       if (!muted) {
         postYouTubeCommand(iframeRef.current, 'setVolume', [100]);
       }
-    } else if (videoSource.kind === 'dailymotion') {
-      postDailymotionCommand(iframeRef.current, 'muted', [muted]);
     } else if (videoSource.kind === 'vimeo') {
       postVimeoCommand(iframeRef.current, 'setMuted', muted);
       postVimeoCommand(iframeRef.current, 'setVolume', muted ? 0 : 1);
@@ -864,74 +816,12 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
   useEffect(() => {
     if (
       videoSource.kind !== 'youtube' &&
-      videoSource.kind !== 'dailymotion' &&
       videoSource.kind !== 'vimeo'
     ) {
       return;
     }
     const handleMessage = (event: MessageEvent) => {
       const origin = typeof event.origin === 'string' ? event.origin.toLowerCase() : '';
-
-      if (videoSource.kind === 'dailymotion') {
-        if (origin && !origin.includes('dailymotion.com')) return;
-        const dm = parseDailymotionMessage(event.data);
-        if (!dm) return;
-        const evName = typeof dm.event === 'string' ? dm.event.toLowerCase() : '';
-        const dmTime =
-          typeof dm.time === 'number'
-            ? dm.time
-            : typeof dm.currentTime === 'number'
-              ? dm.currentTime
-              : null;
-        const dmDur = typeof dm.duration === 'number' ? dm.duration : null;
-
-        if (dmDur !== null && Number.isFinite(dmDur) && dmDur > 0) {
-          knownDurationRef.current = dmDur;
-          handleTimeProgress(savedTimeRef.current, dmDur);
-        }
-
-        if (dmTime !== null && Number.isFinite(dmTime) && dmTime >= 0) {
-          if (isCurrentArchiveLockedRef.current && dmTime >= PREVIEW_FREE_SECONDS) {
-            savedTimeRef.current = PREVIEW_FREE_SECONDS - 1;
-            postDailymotionCommand(iframeRef.current, 'seek', [PREVIEW_FREE_SECONDS - 1]);
-            postDailymotionCommand(iframeRef.current, 'pause');
-            clearRecoveryTimers();
-            clearStallPill();
-            setIsPlaying(false);
-            isPlayingRef.current = false;
-            previewLockOpenRef.current = true;
-            setPreviewLockOpen(true);
-            return;
-          }
-          savedTimeRef.current = dmTime;
-          handleTimeProgress(dmTime, knownDurationRef.current);
-        }
-
-        if ((evName === 'playing' || evName === 'play') && !rewardModalOpenRef.current) {
-          clearRecoveryTimers();
-          clearStallPill();
-          setIsRecovering(false);
-          setRecoveryFailed(false);
-          setIsPlaying(true);
-          isPlayingRef.current = true;
-        } else if (evName === 'pause') {
-          clearRecoveryTimers();
-          clearStallPill();
-          setIsPlaying(false);
-          isPlayingRef.current = false;
-        } else if (evName === 'video_end' || evName === 'end') {
-          clearRecoveryTimers();
-          clearStallPill();
-          setIsPlaying(false);
-          isPlayingRef.current = false;
-          markEpisodeFullyCompleted();
-        } else if (evName === 'error') {
-          setIsPlaying(false);
-          scheduleStallPill();
-          triggerAutoRecover(false);
-        }
-        return;
-      }
 
       if (videoSource.kind === 'vimeo') {
         if (origin && !origin.includes('vimeo.com')) return;
@@ -1421,8 +1311,54 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
                 </div>
               </div>
             </div>
+          ) : videoSource.kind === 'dailymotion' && videoSource.dailymotionId ? (
+            <DailymotionSdkPlayer
+              key={`fy-dm-sdk-${currentEpisode.id}`}
+              videoId={videoSource.dailymotionId}
+              title={currentEpisode.title}
+              posterUrl={
+                currentEpisode.coverImage && currentEpisode.coverImage !== 'none'
+                  ? currentEpisode.coverImage
+                  : undefined
+              }
+              paused={!isPlaying || rewardModalOpen || previewLockOpen}
+              muted={muted}
+              autoplay={true}
+              startSeconds={customStartSeconds}
+              seekRequest={seekRequest}
+              replayNonce={replayNonce}
+              reloadNonce={retryCount}
+              isPreviewLocked={isCurrentArchiveLocked}
+              interactive={false}
+              className={isFitMode ? FORYOU_IFRAME_FIT_CLASS : FORYOU_IFRAME_FILL_CLASS}
+              onTimeUpdate={handleTimeProgress}
+              onPreviewLimitReached={() => {
+                if (!isCurrentArchiveLockedRef.current) return;
+                clearRecoveryTimers();
+                clearStallPill();
+                setIsPlaying(false);
+                isPlayingRef.current = false;
+                previewLockOpenRef.current = true;
+                setPreviewLockOpen(true);
+              }}
+              onPlayingChange={(playing) => {
+                if (!rewardModalOpenRef.current && !previewLockOpenRef.current) {
+                  clearRecoveryTimers();
+                  clearStallPill();
+                  setIsRecovering(false);
+                  setRecoveryFailed(false);
+                  setIsPlaying(playing);
+                  isPlayingRef.current = playing;
+                }
+              }}
+              onVideoEnded={markEpisodeFullyCompleted}
+              onStallStateChange={(stalled) => {
+                if (stalled) setIsStalledOver5s(true);
+                else clearStallPill();
+              }}
+              onFallbackNextEpisode={feedEpisodes.length > 1 ? handleNext : undefined}
+            />
           ) : videoSource.kind === 'youtube' ||
-            videoSource.kind === 'dailymotion' ||
             videoSource.kind === 'vimeo' ||
             videoSource.kind === 'odysee' ||
             videoSource.kind === 'iframe' ? (
@@ -1442,6 +1378,11 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
               videoRef={videoRef}
               videoKey={`fy-vid-${currentEpisode.id}-${resolvedMediaUrl}-r${retryCount}`}
               src={resolvedMediaUrl}
+              poster={
+                currentEpisode.coverImage && currentEpisode.coverImage !== 'none'
+                  ? currentEpisode.coverImage
+                  : undefined
+              }
               autoPlay
               loop={false}
               muted={muted}
@@ -1475,8 +1416,9 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
               <div className="pointer-events-none absolute inset-0 bg-black/55" />
               <div className="relative z-10 flex flex-col items-center gap-3 max-w-xs">
                 <Film className="w-10 h-10 text-amber-400" />
+                <p className="text-sm font-extrabold text-[#FFF8E7]">Video Unavailable</p>
                 <p className="text-xs text-zinc-300">
-                  Stream unavailable right now — tap Next for another episode.
+                  This video is unavailable or geo-blocked — tap Next for another episode.
                 </p>
                 {feedEpisodes.length > 1 && (
                   <button
@@ -1493,23 +1435,48 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
           )}
 
           {!isFeaturedPreviewSlide && (isRecovering || recoveryFailed) && (
-            <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center p-4">
+            <div
+              className={`absolute inset-0 z-20 flex items-center justify-center p-6 ${
+                recoveryFailed ? 'pointer-events-auto bg-[#060608]/85 backdrop-blur-sm' : 'pointer-events-none'
+              }`}
+            >
               {recoveryFailed ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    clearRecoveryTimers();
-                    setRecoveryFailed(false);
-                    setIsRecovering(true);
-                    setIsPlaying(true);
-                    isPlayingRef.current = true;
-                    setRetryCount((prev) => prev + 1);
-                  }}
-                  className="pointer-events-auto inline-flex items-center gap-2 px-4 py-2.5 rounded-full bg-black/85 border border-amber-400/70 text-amber-200 text-xs font-bold shadow-2xl cursor-pointer"
-                >
-                  <RotateCcw className="w-4 h-4 text-amber-300" />
-                  <span>Stream stalled — Tap to Retry</span>
-                </button>
+                <div className="relative flex flex-col items-center text-center gap-3 max-w-xs rounded-2xl border border-amber-400/40 bg-black/85 p-5 shadow-2xl">
+                  <Film className="w-8 h-8 text-amber-400" />
+                  <div className="space-y-1">
+                    <p className="text-sm font-extrabold text-[#FFF8E7]">Video Unavailable</p>
+                    <p className="text-xs text-zinc-400">
+                      Tap retry to reconnect or skip to the next episode.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        clearRecoveryTimers();
+                        setRecoveryFailed(false);
+                        setIsRecovering(true);
+                        setIsPlaying(true);
+                        isPlayingRef.current = true;
+                        setRetryCount((prev) => prev + 1);
+                      }}
+                      className="pointer-events-auto inline-flex items-center gap-1.5 px-4 py-2 rounded-full gold-gradient-bg text-[#181307] text-xs font-extrabold shadow-lg cursor-pointer"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Retry Stream</span>
+                    </button>
+                    {feedEpisodes.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={handleNext}
+                        className="pointer-events-auto inline-flex items-center gap-1 px-3.5 py-2 rounded-full bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-bold text-white cursor-pointer"
+                      >
+                        <span>Next Ep</span>
+                        <SkipForward className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
               ) : (
                 <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-black/75 border border-amber-400/40 text-amber-200 text-xs font-semibold backdrop-blur-md">
                   <RotateCcw className="w-3.5 h-3.5 animate-spin text-amber-300" />
@@ -1908,8 +1875,7 @@ export const ForYouTab: React.FC<ForYouTabProps> = ({
                 postYouTubeCommand(iframeRef.current, 'seekTo', [0, true]);
                 postYouTubeCommand(iframeRef.current, 'playVideo');
               } else if (videoSource.kind === 'dailymotion') {
-                postDailymotionCommand(iframeRef.current, 'seek', [0]);
-                postDailymotionCommand(iframeRef.current, 'play');
+                setReplayNonce((prev) => prev + 1);
               } else if (videoSource.kind === 'vimeo') {
                 postVimeoCommand(iframeRef.current, 'setCurrentTime', 0);
                 postVimeoCommand(iframeRef.current, 'play');
